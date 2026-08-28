@@ -1,0 +1,17 @@
+import rateLimit from 'express-rate-limit';
+
+import { env } from '../config/env.js';
+
+/**
+ * Guards the paid LLM endpoint. Without this, /api/architecture/plan is an
+ * open proxy to your Groq credits — anyone who finds the URL can burn them.
+ */
+export const planRateLimiter = rateLimit({
+  windowMs: env.PLAN_RATE_LIMIT_WINDOW_MS,
+  limit: env.PLAN_RATE_LIMIT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: 'Too many architecture requests. Wait a moment and try again.',
+  },
+});
