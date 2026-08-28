@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Composer from '../components/Composer';
 import ErrorAlert from '../components/ErrorAlert';
+import RenderPanel from '../components/RenderPanel';
 import GraphCanvas from '../components/GraphCanvas';
 import JsonDrawer from '../components/JsonDrawer';
 import NodeInspector from '../components/NodeInspector';
@@ -41,6 +42,9 @@ export default function ArchitecturePlanPage() {
 
       <Composer />
       <ErrorAlert />
+
+      {/* Hero render: photorealistic image above the 2D/3D views */}
+      <RenderPanel />
 
       {/* ??$$$ — view-mode toggle buttons */}
       <div className="view-toggle-bar">
@@ -89,4 +93,4 @@ export default function ArchitecturePlanPage() {
       <JsonDrawer />
     </>
   );
-}
+}

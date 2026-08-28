@@ -33,7 +33,16 @@ const envSchema = z.object({
   PLAN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   PLAN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 
+  // Guards the paid image generation endpoint.
+  RENDER_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  RENDER_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
   MAX_REVISIONS: z.coerce.number().int().positive().default(25),
+
+  // Image generation provider configuration.
+  IMAGE_PROVIDER: z.enum(['cloudflare']).default('cloudflare'),
+  CLOUDFLARE_ACCOUNT_ID: emptyToUndefined,
+  CLOUDFLARE_API_TOKEN: emptyToUndefined,
 });
 
 const parsed = envSchema.safeParse(process.env);

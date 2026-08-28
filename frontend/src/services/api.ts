@@ -95,4 +95,21 @@ export const api = {
 
   deleteProject: (id: string) =>
     request<{ ok: true }>(`/projects/${id}`, { method: 'DELETE' }),
+
+  renderArchitecture: (body: {
+    graph: ArchitectureGraph;
+    projectId?: string | null;
+    force?: boolean;
+    angle?: string;
+  }) =>
+    request<{
+      status: 'ready' | 'pending' | 'unavailable';
+      url?: string;
+      prompt?: string;
+      negativePrompt?: string;
+      cached?: boolean;
+    }>('/architecture/render', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };

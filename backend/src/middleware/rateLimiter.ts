@@ -15,3 +15,17 @@ export const planRateLimiter = rateLimit({
     error: 'Too many architecture requests. Wait a moment and try again.',
   },
 });
+
+/**
+ * Guards the paid image generation endpoint. Image generation is expensive,
+ * so this limit is independent of the planning limit.
+ */
+export const renderRateLimiter = rateLimit({
+  windowMs: env.RENDER_RATE_LIMIT_WINDOW_MS,
+  limit: env.RENDER_RATE_LIMIT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: 'Too many render requests. Wait a moment and try again.',
+  },
+});
