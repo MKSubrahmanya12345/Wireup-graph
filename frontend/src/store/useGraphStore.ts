@@ -7,6 +7,7 @@ import {
   type ArchitectureNode,
   type Issue,
   type PlanResponse,
+  type RepairRecord,
   type VerificationReport,
 } from '../types/architecture';
 
@@ -26,6 +27,8 @@ interface GraphState {
   /** Deterministic engineering violations from the last plan. */
   issues: Issue[];
   blocking: boolean;
+  /** Automatic corrections the backend made to the model's raw output. */
+  repairs: RepairRecord[];
 
   /** View-only state. Never sent to the server. */
   selectedNodeId: string | null;
@@ -39,7 +42,7 @@ interface GraphState {
   /** Commits a dragged position into the canonical graph (x/y, not a view-only object). */
   moveNode: (id: string, position: { x: number; y: number }) => void;
 
-  // ??$$$ — Commits a 3D drag into the canonical graph node's spatial.position3d.
+  // Commits a 3D drag into the canonical graph node's spatial.position3d.
   // Follows the identical pattern to moveNode: local state during drag, store commit on release.
   moveNode3D: (id: string, xyz: { x: number; y: number; z: number }) => void;
 
@@ -64,6 +67,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
 
   issues: [],
   blocking: false,
+  repairs: [],
 
   selectedNodeId: null,
 
@@ -92,7 +96,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       },
     })),
 
-  // ??$$$ — identical shape to moveNode; commits 3D position on drag-stop.
+  // identical shape to moveNode; commits 3D position on drag-stop.
   moveNode3D: (id, xyz) =>
     set((state) => ({
       graph: {
@@ -130,12 +134,26 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
         projectId,
       })) as PlanResponse;
 
-      const { verification = null, projectId: returnedId = null, ...nextGraph } = response;
+      // Strip every envelope field. Leaving them in `nextGraph` puts
+      // revisionId/blocking/repairs inside the canonical graph, which then
+      // gets POSTed back to the planner on the next turn.
+      const {
+        verification = null,
+        projectId: returnedId = null,
+        issues: nextIssues = [],
+        blocking: nextBlocking = false,
+        repairs: nextRepairs = [],
+        revisionId: _revisionId,
+        ...nextGraph
+      } = response;
 
       set({
         graph: nextGraph,
         verification,
         projectId: returnedId ?? projectId,
+        issues: nextIssues,
+        blocking: nextBlocking,
+        repairs: nextRepairs,
         status: 'idle',
         error: null,
         lastUpdated: new Date().toISOString(),
@@ -183,6 +201,7 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       lastUpdated: null,
       issues: [],
       blocking: false,
+      repairs: [],
     }),
 
   dismissError: () => set({ error: null, status: 'idle' }),

@@ -1,25 +1,34 @@
 import { useState } from 'react';
 import Composer from '../components/Composer';
+import ConfirmBar from '../components/ConfirmBar';
 import ErrorAlert from '../components/ErrorAlert';
 import RenderPanel from '../components/RenderPanel';
 import GraphCanvas from '../components/GraphCanvas';
+import IntakePanel from '../components/IntakePanel';
+import IssuesPanel from '../components/IssuesPanel';
 import JsonDrawer from '../components/JsonDrawer';
 import NodeInspector from '../components/NodeInspector';
+import RepairsPanel from '../components/RepairsPanel';
 import VerificationPanel from '../components/VerificationPanel';
 import { ConnectionMatrix, DependencyChain, SoftwareSurface } from '../components/DetailCards';
+import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
-// ??$$$ — 3D viewport; lazy-loaded so Three.js bundle doesn't block initial paint
+// 3D viewport; lazy-loaded so Three.js bundle doesn't block initial paint
 import ThreeViewport from '../three/ThreeViewport';
 
-// ??$$$ — View mode: which panes are visible in the canvas area.
+// View mode: which panes are visible in the canvas area.
 type ViewMode = 'split' | '3d' | '2d';
 
 export default function ArchitecturePlanPage() {
   const graph = useGraphStore((state) => state.graph);
   const lastUpdated = useGraphStore((state) => state.lastUpdated);
+  const stage = useDesignSession((state) => state.stage);
+  const requirements = useDesignSession((state) => state.requirements);
 
-  // ??$$$ — Local view preference; not persisted to store.
+  // Local view preference; not persisted to store.
   const [viewMode, setViewMode] = useState<ViewMode>('split');
+
+  const hasDraft = graph.nodes.length > 0;
 
   return (
     <>
@@ -28,7 +37,9 @@ export default function ArchitecturePlanPage() {
           <div className="eyebrow">Architecture workspace / 01</div>
           <h1>System architecture</h1>
           <p className="heading-sub">
-            {graph.summary || 'Turn a project brief into a reviewable hardware plan.'}
+            {requirements?.intent ||
+              graph.summary ||
+              'Turn a project brief into a reviewable hardware plan.'}
           </p>
         </div>
         <div className="header-meta">
@@ -43,10 +54,14 @@ export default function ArchitecturePlanPage() {
       <Composer />
       <ErrorAlert />
 
+      {/* The human↔AI loop. The AI decides what it can, then asks only what it
+          cannot — this panel is where those questions surface. */}
+      {stage === 'questioning' && <IntakePanel />}
+
       {/* Hero render: photorealistic image above the 2D/3D views */}
       <RenderPanel />
 
-      {/* ??$$$ — view-mode toggle buttons */}
+      {/* view-mode toggle buttons */}
       <div className="view-toggle-bar">
         <span className="view-toggle-label">VIEW</span>
         {(['split', '3d', '2d'] as ViewMode[]).map((mode) => (
@@ -62,7 +77,7 @@ export default function ArchitecturePlanPage() {
         ))}
       </div>
 
-      {/* ??$$$ — workspace-grid: inspector stays on the right (unchanged).
+      {/* workspace-grid: inspector stays on the right (unchanged).
           Left cell is the canvas split area, which changes with viewMode. */}
       <div className="workspace-grid">
         <div className={`canvas-split canvas-split--${viewMode}`}>
@@ -82,7 +97,17 @@ export default function ArchitecturePlanPage() {
         <NodeInspector />
       </div>
 
-      <VerificationPanel />
+      {/* Output validation. IssuesPanel is the deterministic engineering
+          verdict; RepairsPanel is what the backend had to fix to get here;
+          ConfirmBar is the human's accept/revise step. */}
+      {hasDraft && (
+        <>
+          <IssuesPanel />
+          <RepairsPanel />
+          <VerificationPanel />
+          <ConfirmBar />
+        </>
+      )}
 
       <section className="details-grid">
         <ConnectionMatrix />

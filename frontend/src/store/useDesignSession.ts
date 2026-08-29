@@ -165,18 +165,30 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         feedback,
       });
 
-      const { verification = null, issues = [], blocking = false, ...nextGraph } = response;
+      // Strip every envelope field so only the canonical graph is stored —
+      // anything left here gets POSTed back to the planner next turn.
+      const {
+        verification = null,
+        issues = [],
+        blocking = false,
+        repairs = [],
+        projectId: returnedId = null,
+        revisionId: _revisionId,
+        ...nextGraph
+      } = response;
 
-      useGraphStore.setState({
+      useGraphStore.setState((state) => ({
         graph: nextGraph,
         verification,
         issues,
         blocking,
+        repairs,
+        projectId: returnedId ?? state.projectId,
         selectedNodeId: nextGraph.nodes[0]?.id ?? null,
         status: 'idle',
         error: null,
         lastUpdated: new Date().toISOString(),
-      });
+      }));
 
       set((state) => ({
         stage: 'reviewing',

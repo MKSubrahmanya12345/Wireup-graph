@@ -3,7 +3,7 @@
  * The Three.js <Canvas> host. Lights, environment, OrbitControls, axis helper, grid.
  * Reads nodes from props (passed from ThreeViewport) so this component stays pure.
  *
- * ??$$$ — Canvas is kept outside the React re-render path for unrelated state;
+ * Canvas is kept outside the React re-render path for unrelated state;
  * only graph nodes and selectedNodeId flow in as props.
  */
 
@@ -20,7 +20,7 @@ interface SceneCanvasProps {
   onSelectNode: (id: string | null) => void;
 }
 
-// ??$$$ — Axis label helper: a small text label at the tip of each axis.
+// Axis label helper: a small text label at the tip of each axis.
 function AxisLabels() {
   return (
     <>
@@ -37,7 +37,7 @@ function AxisLabels() {
   );
 }
 
-// ??$$$ — Use primitive Three.Line objects to avoid JSX <line> conflicting with SVG's <line>.
+// Use primitive Three.Line objects to avoid JSX <line> conflicting with SVG's <line>.
 function AxisLines() {
   const xLine = useMemo(() => {
     const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(1.5, 0, 0)];
@@ -75,7 +75,7 @@ export default function SceneCanvas({ nodes, selectedNodeId, onSelectNode }: Sce
       shadows
       gl={{ antialias: true, alpha: false }}
       style={{ background: '#f1f5f3' }}
-      // ??$$$ — pane click deselects node (mirrors onPaneClick in GraphCanvas)
+      // pane click deselects node (mirrors onPaneClick in GraphCanvas)
       onPointerMissed={handlePaneClick}
     >
       {/* Ambient + directional lights */}

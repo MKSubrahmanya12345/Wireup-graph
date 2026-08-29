@@ -3,8 +3,8 @@
  * Renders one ArchitectureNode as a 3D mesh.
  * Geometry and material are memoized — they are NOT recreated on every render.
  *
- * ??$$$ — mesh selection syncs to useGraphStore.selectNode so both views share state.
- * ??$$$ — drag logic lives here in local state; moveNode3D fires only on drag-stop
+ * mesh selection syncs to useGraphStore.selectNode so both views share state.
+ * drag logic lives here in local state; moveNode3D fires only on drag-stop
  *         (mirrors the GraphCanvas.tsx → onNodeDragStop pattern exactly).
  */
 
@@ -23,7 +23,7 @@ interface ComponentMeshProps {
   onDragEnd?: (id: string) => void;
 }
 
-// ??$$$ — Material is created ONCE per node type (22 types × 2 states = ~44 objects max)
+// Material is created ONCE per node type (22 types × 2 states = ~44 objects max)
 // using a module-level cache so they survive re-renders.
 const materialCache = new Map<string, THREE.MeshStandardMaterial>();
 
@@ -69,7 +69,7 @@ export default function ComponentMesh({ node, isSelected, onDragStart, onDragEnd
     [node.spatial?.rotation3d?.x, node.spatial?.rotation3d?.y, node.spatial?.rotation3d?.z],
   );
 
-  // ??$$$ — local transient position during drag; committed on drag-stop.
+  // local transient position during drag; committed on drag-stop.
   const [localPos, setLocalPos] = useState<{ x: number; y: number; z: number } | null>(null);
   const isDragging = useRef(false);
   const dragPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
@@ -127,7 +127,7 @@ export default function ComponentMesh({ node, isSelected, onDragStart, onDragEnd
       isDragging.current = false;
       e.stopPropagation();
       if (localPos) {
-        // ??$$$ — commit to store ONLY on drag-stop (exact mirror of moveNode pattern)
+        // commit to store ONLY on drag-stop (exact mirror of moveNode pattern)
         moveNode3D(node.id, localPos);
         setLocalPos(null);
       }

@@ -28,7 +28,7 @@ export interface NodeProperty {
   value: string;
 }
 
-// ??$$$ — Optional 3D placement. All fields are optional so existing graphs
+// Optional 3D placement. All fields are optional so existing graphs
 // without 3D data remain valid. 2D → 3D fallback mapping (documented contract):
 //   position3d = { x: (node.x - 400) / 200, y: 0, z: (node.y - 300) / 200 }
 //   dimensions  = default per node type (see partGeometry.ts)
@@ -52,7 +52,7 @@ export interface ArchitectureNode {
   properties: NodeProperty[];
   ports: NodePort[];
   details: string[];
-  // ??$$$ — optional 3D spatial fields; absent = use 2D fallback
+  // optional 3D spatial fields; absent = use 2D fallback
   spatial?: SpatialPlacement;
 }
 
@@ -133,11 +133,24 @@ export interface Issue {
   evidence?: Record<string, string | number>;
 }
 
+/**
+ * One automatic correction the backend made to the model's output.
+ * Mirrors backend/src/data/repairGraph.ts.
+ */
+export interface RepairRecord {
+  code: string;
+  severity: 'info' | 'warning';
+  message: string;
+  targetId?: string;
+}
+
 export interface PlanResponse extends ArchitectureGraph {
   verification?: VerificationReport | null;
   /** Deterministic engineering violations. Never LLM-generated. */
   issues?: Issue[];
   blocking?: boolean;
+  /** What the backend had to fix before the graph would render. */
+  repairs?: RepairRecord[];
   projectId?: string | null;
   revisionId?: string | null;
 }

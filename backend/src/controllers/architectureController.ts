@@ -46,7 +46,9 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   }
 
   // An explicitly supplied graph wins; otherwise continue from the saved one.
-  const baseGraph = normaliseGraph(parsed.data.graph ?? project?.graph ?? {});
+  const { graph: baseGraph, repaired: clientGraphWasUnusable } = normaliseGraph(
+    parsed.data.graph ?? project?.graph ?? {},
+  );
 
   let result;
   try {
@@ -60,10 +62,26 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
     throw error;
   }
 
-  const { graph, verification, issues, blocking } = result;
+  const { graph, verification, issues, blocking, repairs } = result;
+
+  // If the incoming graph was unusable we had to start from empty, which makes
+  // the planner rebuild rather than edit. That is visible, not silent.
+  const allRepairs = clientGraphWasUnusable
+    ? [
+        {
+          code: 'GRAPH_REPLACED' as const,
+          severity: 'warning' as const,
+          message:
+            'The graph sent to the planner was not readable, so this draft was rebuilt from your brief instead of edited in place.',
+        },
+        ...repairs,
+      ]
+    : repairs;
 
   if (!isPersistenceEnabled()) {
-    res.status(200).json({ ...graph, verification, issues, blocking, projectId: null, revisionId: null });
+    res
+      .status(200)
+      .json({ ...graph, verification, issues, blocking, repairs: allRepairs, projectId: null, revisionId: null });
     return;
   }
 
@@ -96,6 +114,7 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
     verification,
     issues,
     blocking,
+    repairs: allRepairs,
     projectId: String(project._id),
     revisionId: savedRevision ? String(savedRevision._id) : null,
   });
