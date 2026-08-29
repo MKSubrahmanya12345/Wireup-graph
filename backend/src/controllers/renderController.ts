@@ -30,7 +30,7 @@ export const renderArchitectureImage = asyncHandler(async (req: Request, res: Re
 
   const { graph: graphInput, force, angle } = parsed.data;
 
-  const graph = normaliseGraph(graphInput);
+  const { graph } = normaliseGraph(graphInput);
 
   const result = await renderArchitecture({
     graph,

@@ -4,7 +4,7 @@
  * Returns { w, h, d } in metres for BoxGeometry construction.
  * All callers should memoize the result — do NOT call per render.
  *
- * ??$$$ — no generative 3D here; shapes are programmatic primitives
+ * no generative 3D here; shapes are programmatic primitives
  * keyed entirely to node type and optional spatial.dimensions.
  */
 

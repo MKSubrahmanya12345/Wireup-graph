@@ -34,6 +34,24 @@ export function runStructuralChecks(
     scope: 'graph',
   });
 
+  // Duplicate connection ids collide as React keys and overwrite each other's
+  // checks below, so a failing link can be hidden by a passing namesake.
+  const connectionIds = connections.map((connection) => connection.id);
+  const duplicateConnectionIds = connectionIds.filter(
+    (id, index) => connectionIds.indexOf(id) !== index,
+  );
+  const connectionIdsAreUnique =
+    new Set(connectionIds).size === connectionIds.length && !ids.has('');
+  checks.push({
+    id: 'connection-ids',
+    title: 'Stable connection identifiers',
+    status: connectionIdsAreUnique ? 'pass' : 'fail',
+    detail: connectionIdsAreUnique
+      ? 'Every connection has a unique id.'
+      : `Duplicate connection id(s): ${[...new Set(duplicateConnectionIds)].join(', ')}.`,
+    scope: 'graph',
+  });
+
   for (const connection of connections) {
     const endpointsResolve = ids.has(connection.from) && ids.has(connection.to) && connection.from !== connection.to;
     checks.push({

@@ -6,9 +6,9 @@ import {
 } from '../data/componentCatalog.js';
 import { runStructuralChecks } from '../data/architectureVerifier.js';
 import { runEngineeringChecks, hasBlockingIssue, type Issue } from '../data/engineeringRules.js';
+import { repairGraph, type RepairRecord } from '../data/repairGraph.js';
 import { logger } from '../config/logger.js';
 import {
-  architectureGraphSchema,
   verificationReportSchema,
   type ArchitectureGraph,
   type VerificationReport,
@@ -24,12 +24,12 @@ import {
 export interface PlanResult {
   graph: ArchitectureGraph;
   verification: VerificationReport;
-  // ??$$$ — issues and blocking were missing from PlanResult; controller expected them.
   issues: Issue[];
   blocking: boolean;
+  /** What the deterministic repair pass had to fix in the model's output. */
+  repairs: RepairRecord[];
 }
 
-// ??$$$ — Options arg added to match the controller call signature.
 export interface PlanOptions {
   requirements?: RequirementsSpec | null;
   feedback?: string[];
@@ -50,7 +50,6 @@ const VERIFIER_MAX_TOKENS = 4_500;
 export async function planAndVerify(
   request: string,
   graph: ArchitectureGraph,
-  // ??$$$ — 3rd arg added; was missing, causing TS2554 in controller.
   options: PlanOptions = {},
 ): Promise<PlanResult> {
   const trimmedRequest = request.slice(0, MAX_REQUEST_CHARS);
@@ -70,9 +69,13 @@ export async function planAndVerify(
     PLANNER_MAX_TOKENS,
   );
 
-  const nextGraph = architectureGraphSchema.parse(extractJson(plannerContent));
+  // Repair before validating. The model's JSON is almost right — port names
+  // instead of ids, a reused id, an endpoint it forgot to emit — and every one
+  // of those silently detaches an edge in the UI. Fix it deterministically and
+  // say what was fixed, rather than shipping a graph that quietly disagrees
+  // with its own connection list.
+  const { graph: nextGraph, repairs } = repairGraph(extractJson(plannerContent));
 
-  // ??$$$ — run deterministic engineering rules (was missing from planAndVerify)
   const issues = runEngineeringChecks(nextGraph, requirements);
   const blocking = hasBlockingIssue(issues);
 
@@ -116,7 +119,7 @@ export async function planAndVerify(
     };
   }
 
-  return { graph: nextGraph, verification, issues, blocking };
+  return { graph: nextGraph, verification, issues, blocking, repairs };
 }
 
 /** Keeps every structural check, appending model checks that target something new. */

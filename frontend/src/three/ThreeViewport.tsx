@@ -4,7 +4,7 @@
  * Reads useGraphStore directly, handles empty + loading states explicitly,
  * and owns the selection bridge (click in 3D → selectNode in store).
  *
- * ??$$$ — SceneCanvas receives only graph nodes and selectedNodeId as props.
+ * SceneCanvas receives only graph nodes and selectedNodeId as props.
  * All store access lives here, not inside SceneCanvas, to keep the canvas
  * component pure and avoid unnecessary rebuilds from unrelated store changes.
  */
@@ -13,7 +13,7 @@ import { useCallback } from 'react';
 import { useGraphStore } from '../store/useGraphStore';
 import SceneCanvas from './SceneCanvas';
 
-// ??$$$ — Minimal Layers icon (same visual language as LayersIcon in GraphCanvas)
+// Minimal Layers icon (same visual language as LayersIcon in GraphCanvas)
 function CubeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -51,7 +51,7 @@ export default function ThreeViewport() {
         </div>
       </div>
 
-      {/* ??$$$ — canvas-wrap height matches GraphCanvas (.canvas-wrap height: 486px) */}
+      {/* canvas-wrap height matches GraphCanvas (.canvas-wrap height: 486px) */}
       <div className="canvas-wrap" style={{ position: 'relative', height: '486px' }}>
         {/* Always render canvas (keeps GPU context alive), overlay states on top */}
         <SceneCanvas

@@ -58,7 +58,7 @@ const portSchema = z.object({
   signal: z.enum(SIGNAL_TYPES).catch('other'),
 });
 
-// ??$$$ — optional number preprocessor mirrors requirements.ts pattern.
+// optional number preprocessor mirrors requirements.ts pattern.
 // LLMs emit 0/null/"" to mean "unknown". We normalise those to undefined
 // so they round-trip safely through Zod's .optional() (which rejects null).
 const optionalFiniteNumber = z.preprocess(
@@ -70,14 +70,14 @@ const optionalFiniteNumber = z.preprocess(
   z.number().optional(),
 );
 
-// ??$$$ — 3-component vector: all fields preprocessed.
+// 3-component vector: all fields preprocessed.
 const vec3Schema = z.object({
   x: optionalFiniteNumber.default(0),
   y: optionalFiniteNumber.default(0),
   z: optionalFiniteNumber.default(0),
 });
 
-// ??$$$ — SpatialPlacement: fully optional block on each node.
+// SpatialPlacement: fully optional block on each node.
 // position3d in metres, robot-local frame.
 // rotation3d in euler radians (XYZ order).
 // dimensions is the bounding box in metres (w/h/d).
@@ -91,7 +91,7 @@ const spatialPlacementSchema = z.object({
     h: optionalFiniteNumber.default(0.03),
     d: optionalFiniteNumber.default(0.05),
   }).optional(),
-  // ??$$$ — massGrams: positive-only; 0 and null treated as unknown.
+  // massGrams: positive-only; 0 and null treated as unknown.
   massGrams: z.preprocess(
     (value) => {
       if (value === null || value === undefined || value === '') return undefined;
@@ -100,9 +100,9 @@ const spatialPlacementSchema = z.object({
     },
     z.number().positive().optional(),
   ),
-  // ??$$$ — modelRef: e.g. 'sg90' | '18650' | a gltf url
+  // modelRef: e.g. 'sg90' | '18650' | a gltf url
   modelRef: z.string().nullish().transform((v) => v ?? undefined),
-  // ??$$$ — parentId: kinematic mount (leg servo → body)
+  // parentId: kinematic mount (leg servo → body)
   parentId: z.string().nullish().transform((v) => v ?? undefined),
 }).optional();
 
@@ -117,7 +117,7 @@ export const architectureNodeSchema = z.object({
   properties: z.array(propertySchema).default([]),
   ports: z.array(portSchema).default([]),
   details: z.array(z.string()).default([]),
-  // ??$$$ — optional 3D spatial fields; existing graphs without them still validate.
+  // optional 3D spatial fields; existing graphs without them still validate.
   spatial: spatialPlacementSchema,
 });
 
@@ -223,10 +223,15 @@ export function emptyGraph(): ArchitectureGraph {
 }
 
 /**
- * Lenient parse: an unusable client graph degrades to an empty one (the
- * planner will rebuild it) rather than failing the whole request.
+ * Lenient parse of an incoming graph.
+ *
+ * `repaired` is false when the payload was not graph-shaped at all. Callers
+ * must not treat that as "empty on purpose": the planner is told to update the
+ * graph in place, so silently substituting an empty one makes it rebuild from
+ * scratch and quietly discard a saved design. Surface the fallback instead.
  */
-export function normaliseGraph(input: unknown): ArchitectureGraph {
+export function normaliseGraph(input: unknown): { graph: ArchitectureGraph; repaired: boolean } {
   const result = architectureGraphSchema.safeParse(input ?? {});
-  return result.success ? result.data : emptyGraph();
+  if (result.success) return { graph: result.data, repaired: false };
+  return { graph: emptyGraph(), repaired: true };
 }

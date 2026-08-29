@@ -1,0 +1,9 @@
+# Local scratch / verification harnesses — never commit
+.probe/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Dependency manifests generated in-sandbox (repo pins bun/pnpm)
+package-lock.json
