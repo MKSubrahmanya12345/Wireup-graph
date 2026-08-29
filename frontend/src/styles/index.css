@@ -604,3 +604,65 @@ h1 { margin: 6px 0 0; font-size: clamp(24px, 3vw, 32px); letter-spacing: -0.055e
   font-size: 10px; font-weight: 600; cursor: pointer;
 }
 .render-retry-btn:hover { background: #f5d5c5; }
+
+/* ============================================================
+   Validation panel — RAG loop UI
+   ============================================================ */
+.validation-panel {
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--panel); overflow: hidden; margin-top: 15px;
+}
+.validation-panel .panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 15px; border-bottom: 1px solid var(--line);
+}
+.validation-panel h2 { margin: 0; font-size: 14px; letter-spacing: -0.02em; }
+.status-badge {
+  padding: 4px 9px; border-radius: 100px; font: 9px "DM Mono", monospace;
+  text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+}
+.status-badge.in-progress { background: var(--yellow-pale); color: #8b6b2b; }
+.status-badge.perfect { background: var(--green-pale); color: var(--green); }
+.panel-body { padding: 15px; }
+.perfect-banner {
+  padding: 10px 12px; border-radius: 6px; background: var(--green-pale);
+  color: var(--green); font-size: 11px; font-weight: 700; margin-bottom: 12px;
+  border: 1px solid #cde8df;
+}
+.summary { margin: 0 0 14px; font-size: 11px; line-height: 1.55; color: var(--ink-soft); }
+.doubts-section h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: -0.01em; }
+.doubts-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.doubt-item {
+  border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+  background: #fbfcfb; font-size: 10px;
+}
+.doubt-item.resolved { border-color: #cde8df; background: #f0f8f5; }
+.doubt-item.open { border-color: #e6b7aa; }
+.doubt-prompt { font-weight: 700; font-size: 11px; margin-bottom: 4px; }
+.doubt-why, .doubt-impact { color: var(--muted); margin-bottom: 4px; }
+.doubt-resolve { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.doubt-resolve label { font-weight: 600; color: var(--ink); }
+.doubt-resolve select {
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px;
+  font-size: 10px; background: var(--panel); color: var(--ink); cursor: pointer;
+}
+.doubt-resolved-label { margin-top: 8px; color: var(--green); font-weight: 700; }
+.loops-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.loops-section h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: -0.01em; }
+.loops-section table { width: 100%; border-collapse: collapse; font-size: 9px; }
+.loops-section th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); color: var(--muted); font: 9px "DM Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em; }
+.loops-section td { padding: 6px 8px; border-bottom: 1px solid #eef2f0; color: var(--ink-soft); }
+.panel-footer { display: flex; gap: 10px; padding: 12px 15px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.primary-button {
+  height: 36px; padding: 0 16px; border: 0; border-radius: 5px;
+  background: var(--teal); color: #f8fbf8; font-size: 11px; font-weight: 800;
+  cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+}
+.primary-button:hover { background: var(--teal-dark); }
+.primary-button:disabled { opacity: 0.6; cursor: wait; }
+.secondary-button {
+  height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--ink-soft); font-size: 11px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.secondary-button:hover { border-color: var(--teal); color: var(--teal-dark); }

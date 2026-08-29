@@ -10,6 +10,7 @@ import JsonDrawer from '../components/JsonDrawer';
 import NodeInspector from '../components/NodeInspector';
 import RepairsPanel from '../components/RepairsPanel';
 import VerificationPanel from '../components/VerificationPanel';
+import ValidationPanel from '../components/ValidationPanel';
 import { ConnectionMatrix, DependencyChain, SoftwareSurface } from '../components/DetailCards';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
@@ -105,6 +106,7 @@ export default function ArchitecturePlanPage() {
           <IssuesPanel />
           <RepairsPanel />
           <VerificationPanel />
+          <ValidationPanel />
           <ConfirmBar />
         </>
       )}
