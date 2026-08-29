@@ -10,6 +10,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { GraphDSA, type DSADoubtRecord, type DSAValidationLoopRecord } from '../models/GraphDSA.js';
 import { buildRAGValidation, retrieveEvidenceForGraph } from './ragValidationService.js';
+import { searchWebForComponents } from './ragWebSearchService.js';
+import { resolveDoubtsAutomatically } from './autoDoubtResolver.js';
+import { validateAllDimensions } from './multiDimensionValidation.js';
+import { generateAgenticPRD } from './agenticPRDGenerator.js';
+import { compareGraphs } from './loopDiffService.js';
 import { isPersistenceEnabled } from '../config/db.js';
 import { logger } from '../config/logger.js';
 import type { ArchitectureGraph } from '../schemas/architecture.js';
@@ -47,11 +52,30 @@ export async function runValidationLoop(
   const projectName = input.projectName ?? input.graph.project ?? 'Untitled project';
   const notes = input.notes ?? [];
 
-  // Retrieve RAG evidence
-  const evidence = retrieveEvidenceForGraph(input.graph);
+  // Retrieve RAG evidence from catalog + web search
+  const catalogEvidence = retrieveEvidenceForGraph(input.graph);
+  const webEvidence = await searchWebForComponents(input.graph);
+  const allEvidence = [...catalogEvidence, ...webEvidence.map((e) => ({
+    sourceId: e.url,
+    sourceTitle: e.title,
+    sourceUrl: e.url,
+    retrievedAt: e.retrievedAt,
+    contentSnippet: e.snippet,
+    relevanceScore: 0.85,
+  }))];
+
+  // Auto-resolve doubts where possible
+  const autoResolutions = resolveDoubtsAutomatically(
+    input.doubts ?? [],
+    input.graph,
+    input.requirements ?? null,
+  );
+
+  // Build multi-dimension validation
+  const dimensionResults = validateAllDimensions(input.graph);
 
   // Build validation report
-  const ragReport = buildRAGValidation(input.graph, input.requirements, evidence);
+  const ragReport = buildRAGValidation(input.graph, input.requirements, allEvidence);
 
   // Convert doubts to DSADoubtRecord format
   const doubts: DSADoubtRecord[] = (input.doubts ?? []).map((q) => ({
@@ -67,6 +91,16 @@ export async function runValidationLoop(
     resolvedAt: input.resolvedDoubts?.[q.id] ? new Date() : undefined,
   }));
 
+  // Apply auto-resolutions to doubts
+  for (const auto of autoResolutions) {
+    const doubtIndex = doubts.findIndex((d) => d.id === auto.questionId);
+    if (doubtIndex >= 0 && auto.resolved) {
+      doubts[doubtIndex].resolved = true;
+      doubts[doubtIndex].resolution = auto.resolution;
+      doubts[doubtIndex].resolvedAt = new Date();
+    }
+  }
+
   const resolvedCount = doubts.filter((d) => d.resolved).length;
   const totalDoubts = doubts.length;
 
@@ -74,7 +108,10 @@ export async function runValidationLoop(
   const isPerfect = !ragReport.blocking && ragReport.score >= 90 && resolvedCount >= totalDoubts && totalDoubts > 0 ? true : false;
   // Also allow perfect when no doubts remain and no blocking errors
   const perfectIfComplete = !ragReport.blocking && totalDoubts === 0 && ragReport.score >= 85;
-  const finalPerfect = isPerfect || perfectIfComplete;
+  // Compute perfect status considering multi-dimension results
+  const anyDimensionBlocking = dimensionResults.some((d) => d.blocking);
+  const avgDimensionScore = dimensionResults.reduce((sum, d) => sum + d.score, 0) / Math.max(1, dimensionResults.length);
+  const finalPerfect = !ragReport.blocking && !anyDimensionBlocking && ragReport.score >= 85 && avgDimensionScore >= 80 && (resolvedCount >= totalDoubts || totalDoubts === 0);
 
   // Build the loop record
   const loopRecord: DSAValidationLoopRecord = {
@@ -85,34 +122,28 @@ export async function runValidationLoop(
     doubtsAsked: totalDoubts,
     doubtsResolved: resolvedCount,
     validationIssues: ragReport.issues.map((i) => i.id),
-    ragEvidenceIds: evidence.map((e) => e.sourceId),
+    ragEvidenceIds: allEvidence.map((e) => e.sourceId),
     notes,
   };
 
-  // Build PRD document
-  const prdDocument = {
+  // Build agentic PRD
+  const agenticPRD = generateAgenticPRD(
     projectName,
-    summary: input.graph.summary || '',
-    architectureGraph: input.graph,
-    verification: {
-      status: ragReport.status,
-      score: ragReport.score,
-      summary: ragReport.summary,
-      checks: ragReport.issues,
-    },
-    componentSources: ragReport.componentSources,
-    ragEvidence: evidence.map((e) => ({
-      sourceId: e.sourceId,
-      sourceTitle: e.sourceTitle,
-      sourceUrl: e.sourceUrl,
-      snippet: e.contentSnippet,
-      relevance: e.relevanceScore,
-    })),
-    validationLoop: loopRecord,
+    input.graph.summary || '',
+    input.graph,
+    ragReport,
+    allEvidence,
     doubts,
-    isPerfect: finalPerfect,
+    [loopRecord],
+    finalPerfect,
+  );
+
+  // Build PRD document (enhanced with agentic sections)
+  const prdDocument = {
+    ...agenticPRD,
+    multiDimensionResults: dimensionResults,
+    loopDiff: null,
     generatedAt: new Date().toISOString(),
-    version: '1.0.0',
   };
 
   // Save to DB if persistence enabled
@@ -128,7 +159,7 @@ export async function runValidationLoop(
           architectureGraph: input.graph,
           verification: ragReport,
           engineeringIssues: ragReport.issues,
-          ragEvidence: evidence,
+          ragEvidence: allEvidence,
           validationLoops: [loopRecord],
           doubts,
           isPerfect: finalPerfect,
@@ -145,7 +176,7 @@ export async function runValidationLoop(
               architectureGraph: input.graph,
               verification: ragReport,
               engineeringIssues: ragReport.issues,
-              ragEvidence: evidence,
+              ragEvidence: allEvidence,
               doubts,
               isPerfect: finalPerfect,
               prdDocument,
