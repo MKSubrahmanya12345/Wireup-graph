@@ -112,4 +112,57 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  // Validation loop endpoints
+  runValidationLoop: (body: {
+    graph: ArchitectureGraph;
+    projectName?: string;
+    doubts?: unknown[];
+    resolvedDoubts?: Record<string, string>;
+    requirements?: RequirementsSpec | null;
+    notes?: string[];
+  }) =>
+    request<{
+      loopId: string;
+      status: 'in_progress' | 'perfect' | 'blocked';
+      doubtsAsked: number;
+      doubtsResolved: number;
+      isPerfect: boolean;
+      score: number;
+      summary: string;
+      doubts: unknown[];
+      validationLoops: unknown[];
+      persistenceEnabled: boolean;
+    }>('/validation/loop', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  checkPerfectStatus: (body: {
+    graph: ArchitectureGraph;
+    doubts?: unknown[];
+    resolvedDoubts?: Record<string, string>;
+    requirements?: RequirementsSpec | null;
+  }) =>
+    request<{
+      isPerfect: boolean;
+      score: number;
+      blocking: boolean;
+      doubtsResolved: number;
+      totalDoubts: number;
+      summary: string;
+    }>('/validation/check-perfect', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  listPerfectGraphDSAs: () =>
+    request<{ count: number; perfectDSAs: unknown[]; persistenceEnabled: boolean }>(
+      '/validation/dsa/perfect',
+    ),
+
+  getGraphDSA: (id: string) =>
+    request<{ id: string; projectName: string; isPerfect: boolean; prdDocument: unknown; updatedAt: string }>(
+      `/validation/dsa/${id}`,
+    ),
 };
