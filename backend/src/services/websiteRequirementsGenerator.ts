@@ -4,7 +4,7 @@ import {
   websiteRequirementsSchema,
   type WebsiteRequirements,
 } from '../schemas/build.js';
-import { callLlm, extractJson, type LlmProvider } from './llmService.js';
+import { callLlm, parseLlmJson, type LlmProvider } from './llmService.js';
 
 /**
  * Agentic website-requirements analyser.
@@ -96,7 +96,10 @@ export async function generateWebsiteRequirements(
     },
   );
 
-  return websiteRequirementsSchema.parse(extractJson(content));
+  return parseLlmJson(content, websiteRequirementsSchema, {
+    label: 'Website requirements response',
+    provider: input.provider,
+  });
 }
 
 /** Builds a firmware summary object from a generated firmware result. */
