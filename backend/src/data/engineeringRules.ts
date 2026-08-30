@@ -52,7 +52,7 @@ export function runEngineeringChecks(
   for (const node of nodes) {
     if ((degree.get(node.id) ?? 0) > 0) continue;
     const spec = specFor.get(node.id);
-    const isSourceish = isPowerSource(spec, node.type);
+    const isSourceish = isPowerSource(spec, node.type, node.id, node.name);
     issues.push({
       id: `orphan-${node.id}`,
       severity: isSourceish ? 'error' : 'warning',
@@ -83,7 +83,7 @@ export function runEngineeringChecks(
     link(connection.to, connection.from);
   }
 
-  const sources = nodes.filter((node) => isPowerSource(specFor.get(node.id), node.type));
+  const sources = nodes.filter((node) => isPowerSource(specFor.get(node.id), node.type, node.id, node.name));
   const reached = new Set<string>();
   const queue = sources.map((node) => node.id);
   while (queue.length) {
@@ -95,7 +95,7 @@ export function runEngineeringChecks(
 
   const loads = nodes.filter((node) => {
     const spec = specFor.get(node.id);
-    return !isPowerSource(spec, node.type) && nominalDraw(spec) > 0;
+    return !isPowerSource(spec, node.type, node.id, node.name) && nominalDraw(spec) > 0;
   });
 
   const unpowered = loads.filter((node) => !reached.has(node.id));
