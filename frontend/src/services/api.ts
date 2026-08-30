@@ -112,6 +112,17 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  /** Deterministic repair loop for page 02 — normalises the graph and
+   *  re-runs the engineering rules. No LLM, no credits. */
+  repairArchitecture: (body: {
+    graph: ArchitectureGraph;
+    requirements?: RequirementsSpec | null;
+  }) =>
+    request<PlanResponse>('/architecture/repair', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   /** Pass 0 of the loop: decide everything, ask only what it cannot. */
   interpretBrief: (body: {
     brief: string;

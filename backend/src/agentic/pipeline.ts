@@ -11,6 +11,7 @@ import { resolveBuildPlan, slugify } from './planResolver.js';
 import { retrievalSources } from './knowledge/retriever.js';
 import { synthesizeFirmware } from './firmwareSynth.js';
 import { synthesizeSoftware, type SoftwareSynthResult } from './softwareSynth.js';
+import { extractPublishedJsonFields, mapMetricFieldsToFirmware } from './jsonContract.js';
 import { validateFirmware } from './firmwareValidator.js';
 import { validateSoftware } from './softwareValidator.js';
 import { createWorkDir } from './terminal.js';
@@ -91,12 +92,21 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     let firmware: FirmwareResult = synthesizeFirmware(plan);
     let firmwareSource: 'deterministic' | 'llm-assisted' = 'deterministic';
 
+    // The JSON contract the dashboard is generated against: one field per KB
+    // metric plus the status badge key. The firmware MUST publish these exact
+    // names — enforced at the firmware gate and re-checked downstream.
+    const expectedJsonFields = [
+      ...new Set(plan.modules.flatMap((m) => m.metrics.map((metric) => metric.jsonField))),
+      'state',
+    ];
+
     if (llmAvailable) {
       try {
         say('firmware', `${input.provider ?? env.LLM_PROVIDER} available — asking the LLM for a first draft (it still has to survive the compiler).`);
         const draft = await generateFirmwareLlm(brief, projectName, graphParsed, {
           provider: input.provider,
           model: input.model,
+          jsonContract: { endpoint: '/api/sensors', fields: expectedJsonFields },
         });
         firmware = firmwareResultSchema.parse(draft);
         firmwareSource = 'llm-assisted';
@@ -118,27 +128,40 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       firmwareReport = await validateFirmware(firmware.files, {
         workDir: path.join(work.root, 'firmware'),
         boardDefine: plan.board.archDefine,
+        expectedJsonFields,
       });
       reportToEvents('firmware-validate', firmwareReport, emit);
 
       if (firmwareReport.ok) {
-        say('firmware-validate', `firmware compiles clean — ${firmware.files.length} files, attempt ${attempt}`, 'ok');
+        const compilerSkipped = firmwareReport.findings.some((f) => f.code === 'GPP-MISSING');
+        say(
+          'firmware-validate',
+          compilerSkipped
+            ? `firmware passes the structural + contract gate (${firmware.files.length} files, attempt ${attempt}) — g++ unavailable, real compile skipped`
+            : `firmware compiles clean — ${firmware.files.length} files, attempt ${attempt}`,
+          'ok',
+        );
         break;
       }
 
       const errors = firmwareReport.findings.filter((f) => f.severity === 'error');
-      say('firmware-validate', `${errors.length} error(s): ${errors.map((e) => e.code).join(', ')}`, 'error');
+      say('firmware-validate', `${errors.length} error(s): ${[...new Set(errors.map((e) => e.code))].join(', ')}`, 'error');
 
       if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
 
       // Repair policy: deterministic fix-ups first; if the draft came from the
-      // LLM and cannot be fixed structurally, swap in the KB synthesiser.
+      // LLM and cannot be fixed structurally (or breaks the JSON contract the
+      // dashboard is built against), swap in the KB synthesiser — its fields
+      // are the contract by construction.
       const repaired = repairFirmware(firmware, errors, plan);
       if (repaired) {
         say('firmware-repair', 'repair pass applied: unknown includes stripped / entrypoint normalised');
         firmware = repaired;
       } else if (firmwareSource === 'llm-assisted') {
-        say('firmware-repair', 'LLM draft is unrepairable — replacing with knowledge-base synthesis', 'warn');
+        const reason = errors.some((e) => e.code === 'FW-CONTRACT-FIELD')
+          ? 'LLM draft does not publish the JSON fields the dashboard contract requires — replacing with knowledge-base synthesis'
+          : 'LLM draft is unrepairable — replacing with knowledge-base synthesis';
+        say('firmware-repair', reason, 'warn');
         firmware = synthesizeFirmware(plan);
         firmwareSource = 'deterministic';
       } else {
@@ -166,11 +189,12 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     say('software', `merged ${software.files.length} files (scaffold + device wiring)`);
     say('software', `metrics: ${plan.modules.flatMap((m) => m.metrics.map((x) => x.id)).join(', ') || 'none'}; controls: ${plan.modules.flatMap((m) => m.controls.map((x) => x.id)).join(', ') || 'none'}`);
 
-    const firmwareJsonFields = collectFirmwareJsonFields(firmware);
+    let firmwareJsonFields = collectFirmwareJsonFields(firmware);
     say('software', `firmware publishes JSON fields: ${firmwareJsonFields.join(', ') || '(none detected)'}`);
 
     let softwareReport: ValidationReport | null = null;
     let softwareIterations = 0;
+    let previousSoftwareFingerprint = '';
 
     for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
       softwareIterations = attempt;
@@ -192,13 +216,34 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
 
       const repaired = await repairSoftware(software, errors, plan, firmwareJsonFields);
-      if (repaired) {
+
+      if (repaired === 'swap-firmware') {
+        // The dashboard contract can only be satisfied by the KB firmware.
+        // Swap it in (deterministic fields are the contract by construction)
+        // and regenerate the wiring against it.
+        say('software-repair', `firmware does not publish the fields the dashboard needs (${errors.filter((e) => e.code === 'FIELD-NOT-PUBLISHED').length} mismatch) — replacing the LLM draft with knowledge-base firmware so the pair agrees`, 'warn');
+        firmware = synthesizeFirmware(plan);
+        firmwareSource = 'deterministic';
+        firmwareJsonFields = collectFirmwareJsonFields(firmware);
+        say('software-repair', `replacement firmware publishes JSON fields: ${firmwareJsonFields.join(', ')}`);
+        software = await synthesizeSoftware(plan);
+      } else if (repaired) {
         software = repaired;
-        say('software-repair', 'regenerated device wiring from the knowledge base and re-validating');
+        say('software-repair', 'device wiring regenerated against the firmware that actually exists — re-validating');
       } else {
         say('software-repair', 'no repair strategy available — stopping with diagnostics', 'error');
         break;
       }
+
+      // Progress guard: if this iteration produced byte-identical wiring to the
+      // last failed one, more loops cannot help — report and stop instead of
+      // freezing on the same errors.
+      const fingerprint = softwareFingerprint(software);
+      if (fingerprint === previousSoftwareFingerprint) {
+        say('software-repair', 'repair produced no change — the loop cannot make progress; stopping with diagnostics', 'error');
+        break;
+      }
+      previousSoftwareFingerprint = fingerprint;
     }
 
     if (!softwareReport?.ok) {
@@ -276,14 +321,9 @@ function reportToEvents(stage: string, report: ValidationReport, emit: EmitFn): 
 
 /** JSON fields the firmware publishes — extracted from sensor JSON emission lines. */
 function collectFirmwareJsonFields(firmware: FirmwareResult): string[] {
-  const fields = new Set<string>();
-  for (const file of firmware.files) {
-    for (const match of file.content.matchAll(/\\"([a-z_]+)\\"\s*:/g)) {
-      fields.add(match[1] ?? '');
-    }
-  }
-  // Control state variables also serialise as "<id>" or "<field>" keys.
-  return [...fields].filter((f) => !['error', 'not found'].includes(f));
+  // Shared extractor with firmwareValidator/softwareValidator — one source of
+  // truth for what the firmware publishes, in every spelling real code uses.
+  return extractPublishedJsonFields(firmware.files.map((f) => f.content));
 }
 
 /** Deterministic fix-ups for LLM-drafted firmware. */
@@ -341,15 +381,24 @@ function repairFirmware(
   return null;
 }
 
-/** Deterministic repair for software trees: regenerate the AI-owned files. */
+/**
+ * Deterministic repair for software trees.
+ *
+ * Strategies, in order:
+ *  1. FIELD-NOT-PUBLISHED / CONTRACT-FIELD — point every metric path at a
+ *     field the firmware actually publishes (returns fresh wiring).
+ *  2. Firmware publishes nothing that satisfies the contract — return
+ *     'swap-firmware' so the caller replaces an LLM draft with the KB
+ *     synthesiser (whose fields are the contract by construction).
+ *  3. Anything else touching only the generated files — regenerate from KB.
+ *  4. Scaffold errors are fatal — return null (no strategy).
+ */
 async function repairSoftware(
   software: SoftwareSynthResult,
   errors: ValidationFinding[],
   plan: import('./types.js').DeviceBuildPlan,
   firmwareJsonFields: string[],
-): Promise<SoftwareSynthResult | null> {
-  // If any finding touches the two generated files (or the consistency
-  // findings), regenerate those files from the KB; scaffold errors are fatal.
+): Promise<SoftwareSynthResult | 'swap-firmware' | null> {
   const scaffoldBroken = errors.some(
     (e) =>
       e.file &&
@@ -357,9 +406,28 @@ async function repairSoftware(
   );
   if (scaffoldBroken) return null;
 
-  const fresh = await synthesizeSoftware(plan);
-  void firmwareJsonFields;
-  return fresh;
+  const fieldErrors = errors.filter(
+    (e) => e.code === 'FIELD-NOT-PUBLISHED' || e.code === 'CONTRACT-FIELD',
+  );
+  if (fieldErrors.length > 0) {
+    const { overrides, unmapped } = mapMetricFieldsToFirmware(plan, firmwareJsonFields);
+    if (unmapped.length === 0) {
+      // Every KB metric can read a field the firmware publishes.
+      return synthesizeSoftware(plan, overrides);
+    }
+    // The firmware can never satisfy the contract → swap it for the KB synth.
+    return 'swap-firmware';
+  }
+
+  return synthesizeSoftware(plan);
+}
+
+/** Byte-level identity of the generated wiring — the loop's progress guard. */
+function softwareFingerprint(software: SoftwareSynthResult): string {
+  return software.files
+    .filter((f) => f.path === 'frontend/src/lib/deviceSpec.ts' || f.path === 'backend/src/config/deviceEndpoints.ts' || f.path === 'backend/.env.example')
+    .map((f) => `${f.path}:${f.content}`)
+    .join('\\n');
 }
 
 /** Final contract check between the two zips. */

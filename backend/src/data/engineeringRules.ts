@@ -16,10 +16,24 @@ export interface Issue {
   evidence?: Record<string, string | number>;
 }
 
-/** Pulls a voltage out of labels like "5V Output" or "3.3 V". */
+/**
+ * Pulls a voltage out of labels like "5V Output" or "3.3 V".
+ *
+ * Rail shorthand is handled explicitly: "3V3" is a 3.3 V rail, NOT 3 V —
+ * misreading it produced the phantom VOLTAGE_MISMATCH that blocked valid
+ * ESP32 → DHT22 plans ("supplies 3 V, but DHT22 requires 3.3–6 V").
+ */
 function parseVoltage(label: string | null | undefined): number | undefined {
   if (!label) return undefined;
-  const match = label.match(/(\d+(?:\.\d+)?)\s*v/i);
+  const text = label.trim();
+
+  // Rail notation with the decimal implied: 3V3 → 3.3, 5V5 → 5.5, 1V8 → 1.8.
+  const rail = text.match(/^(\d+)\s*[vV](\d+)\b/);
+  if (rail) return Number(`${rail[1]}.${rail[2]}`);
+
+  // Plain form: "3.3 V", "5V", "12 V". The lookahead stops "V" from matching
+  // words like "Version" ("rev 2" or "V2 board" must not read as a voltage).
+  const match = text.match(/(\d+(?:\.\d+)?)\s*[vV](?![a-zA-Z])/);
   return match ? Number(match[1]) : undefined;
 }
 

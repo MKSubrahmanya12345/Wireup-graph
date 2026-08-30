@@ -26,17 +26,41 @@ export default function GraphPage() {
   const graph = useGraphStore((state) => state.graph);
   const status = useGraphStore((state) => state.status);
   const blocking = useGraphStore((state) => state.blocking);
+  const issues = useGraphStore((state) => state.issues);
+  const autoRepair = useGraphStore((state) => state.autoRepair);
   const stage = useDesignSession((state) => state.stage);
   const revise = useDesignSession((state) => state.revise);
   const accept = useDesignSession((state) => state.accept);
   const brief = useDesignSession((state) => state.brief);
   const [viewMode, setViewMode] = useState<ViewMode>('2d');
   const [revisionNote, setRevisionNote] = useState('');
+  const [repairing, setRepairing] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const navigate = useNavigate();
 
   const hasGraph = graph.nodes.length > 0;
   const working = stage === 'planning' || stage === 'interpreting' || status === 'planning';
+  const hasFixableIssues = issues.length > 0;
+
+  /** Deterministic repair loop — fixes what is mechanically fixable, then
+   *  reports what remains instead of leaving the page frozen. */
+  const handleAutoRepair = async () => {
+    if (repairing) return;
+    setRepairing(true);
+    await autoRepair();
+    setRepairing(false);
+    const { blocking: stillBlocking, issues: remaining, repairs } = useGraphStore.getState();
+    const errorCount = remaining.filter((issue) => issue.severity === 'error').length;
+    if (repairs.length === 0) {
+      toast('Nothing to auto-repair — the remaining issues need a design change. Say what to change below and Revise.');
+    } else if (stillBlocking || errorCount > 0) {
+      toast(
+        `Repair pass: ${repairs.length} fix(es) applied. ${errorCount} issue(s) remain — describe the fix below and Revise.`,
+      );
+    } else {
+      toast(`Repair pass: ${repairs.length} fix(es) applied — graph re-validated.`);
+    }
+  };
 
   const handleExport = async () => {
     const viewportEl = getViewportElement();
@@ -186,6 +210,17 @@ export default function GraphPage() {
           >
             {working ? 'Regenerating…' : 'Revise'}
           </button>
+          {hasFixableIssues && (
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={working || repairing}
+              onClick={() => void handleAutoRepair()}
+              title="Deterministic repair pass: normalises the graph and re-runs the engineering rules. No LLM."
+            >
+              {repairing ? 'Repairing…' : '⟳ Auto-repair issues'}
+            </button>
+          )}
           <button type="button" className="primary-button" onClick={handleAccept} disabled={working || blocking}>
             Proceed to build →
           </button>

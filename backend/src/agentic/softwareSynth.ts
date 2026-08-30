@@ -26,9 +26,10 @@ function tsString(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
-function renderDeviceSpec(plan: DeviceBuildPlan): string {
+function renderDeviceSpec(plan: DeviceBuildPlan, fieldOverrides: Record<string, string> = {}): string {
   const metricEntries = plan.modules.flatMap((module) =>
     module.metrics.map((metric) => {
+      const field = fieldOverrides[metric.id] ?? metric.jsonField;
       const minMax =
         metric.min !== undefined && metric.max !== undefined
           ? `\n    min: ${metric.min},\n    max: ${metric.max},`
@@ -37,7 +38,7 @@ function renderDeviceSpec(plan: DeviceBuildPlan): string {
     id: ${tsString(metric.id)},
     label: ${tsString(metric.label)},
     unit: ${tsString(metric.unit)},
-    path: ${tsString(`${metric.id}.${metric.jsonField}`)},
+    path: ${tsString(`${metric.id}.${field}`)},
     numeric: true,${minMax}
   },`;
     }),
@@ -264,7 +265,7 @@ function renderWebsiteRequirements(plan: DeviceBuildPlan): WebsiteRequirements {
   };
 }
 
-const SCAFFOLD_REPLACEMENTS = new Map<string, (plan: DeviceBuildPlan) => string>([
+const SCAFFOLD_REPLACEMENTS = new Map<string, (plan: DeviceBuildPlan, fieldOverrides: Record<string, string>) => string>([
   ['frontend/src/lib/deviceSpec.ts', renderDeviceSpec],
   ['backend/src/config/deviceEndpoints.ts', renderDeviceEndpoints],
 ]);
@@ -325,8 +326,18 @@ the board's own \`${plan.slug}\` hotspot)._
 `;
 }
 
-/** Merge scaffold + generated wiring into the final software tree. */
-export async function synthesizeSoftware(plan: DeviceBuildPlan): Promise<SoftwareSynthResult> {
+/**
+ * Merge scaffold + generated wiring into the final software tree.
+ *
+ * `fieldOverrides` re-points a metric id at a JSON field the firmware actually
+ * publishes (e.g. the LLM draft emits `temperature` while the KB calls it
+ * `temperature_c`). Omit to use the knowledge-base fields — the deterministic
+ * firmware publishes exactly those.
+ */
+export async function synthesizeSoftware(
+  plan: DeviceBuildPlan,
+  fieldOverrides: Record<string, string> = {},
+): Promise<SoftwareSynthResult> {
   const scaffold = await loadScaffold();
   const envExampleLines = [
     'PORT=8080',
@@ -346,7 +357,7 @@ export async function synthesizeSoftware(plan: DeviceBuildPlan): Promise<Softwar
   for (const file of scaffold) {
     const replacement = SCAFFOLD_REPLACEMENTS.get(file.path);
     if (replacement) {
-      files.push({ path: file.path, content: replacement(plan) });
+      files.push({ path: file.path, content: replacement(plan, fieldOverrides) });
       continue;
     }
     if (file.path === 'backend/.env.example') {

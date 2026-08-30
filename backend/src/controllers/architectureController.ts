@@ -13,7 +13,16 @@ import {
 import { interpretBodySchema } from '../schemas/requirements.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
 import { deterministicPlan, interpretDeterministically } from '../agentic/architect.js';
+import {
+  catalogMatches,
+  catalogSources,
+  officialComponentCatalog,
+} from '../data/componentCatalog.js';
+import { runStructuralChecks } from '../data/architectureVerifier.js';
+import { hasBlockingIssue, runEngineeringChecks } from '../data/engineeringRules.js';
+import { repairGraph } from '../data/repairGraph.js';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 
 /**
  * POST /api/architecture/plan
@@ -166,6 +175,73 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
     }
     throw error;
   }
+});
+
+/**
+ * POST /api/architecture/repair
+ *
+ * Body: { graph, requirements? }
+ *
+ * The deterministic repair loop for page 02. No LLM, no credits: structure is
+ * normalised (rail labels, dangling ports, duplicate ids), then the graph is
+ * re-run through the engineering rules and structural checks. The UI calls
+ * this so fixable issues are fixed — with the repairs listed — instead of
+ * freezing the page on a blocking banner. Anything genuinely unfixable
+ * without a design decision stays visible as a remaining issue.
+ */
+export const repairArchitecture = asyncHandler(async (req: Request, res: Response) => {
+  const body = z
+    .object({
+      graph: z.unknown(),
+      requirements: z.unknown().nullable().optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!body.success) {
+    throw ApiError.badRequest('Repair requires a graph object.', body.error.flatten());
+  }
+
+  const { graph: baseGraph, repaired: clientGraphWasUnusable } = normaliseGraph(body.data.graph ?? {});
+  const { graph, repairs } = repairGraph(baseGraph);
+
+  const issues = runEngineeringChecks(graph, null);
+  const blocking = hasBlockingIssue(issues);
+  const structuralChecks = runStructuralChecks(graph, officialComponentCatalog);
+  const matchedSources = catalogMatches(graph as unknown as Record<string, unknown>);
+
+  const passCount = structuralChecks.filter((check) => check.status === 'pass').length;
+  const verification = {
+    status: (blocking ? 'blocked' : issues.some((issue) => issue.severity === 'warning') ? 'review' : 'verified') as
+      | 'blocked'
+      | 'review'
+      | 'verified',
+    score: Math.round((passCount / Math.max(1, structuralChecks.length)) * 100),
+    summary:
+      'Deterministic repair pass: structure normalised (rail labels, endpoints, ids) and re-checked by the engineering rules. No LLM was involved.',
+    checks: structuralChecks,
+    sources: catalogSources(matchedSources),
+  };
+
+  const allRepairs = clientGraphWasUnusable
+    ? [
+        {
+          code: 'GRAPH_REPLACED' as const,
+          severity: 'warning' as const,
+          message:
+            'The graph sent for repair was not readable, so repair ran from an empty graph — replan from the brief instead.',
+        },
+        ...repairs,
+      ]
+    : repairs;
+
+  res.status(200).json({
+    ...graph,
+    verification,
+    issues,
+    blocking,
+    repairs: allRepairs,
+    projectId: null,
+    revisionId: null,
+  });
 });
 
 /** Kept exported for parity with the frontend client, which never calls it. */

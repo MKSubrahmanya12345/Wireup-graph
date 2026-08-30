@@ -50,6 +50,9 @@ interface GraphState {
   loadProject: (id: string) => Promise<void>;
   reset: () => void;
   dismissError: () => void;
+
+  /** Deterministic repair loop — normalises the graph and re-runs the rules. */
+  autoRepair: () => Promise<void>;
 }
 
 const STARTER_REQUEST =
@@ -166,6 +169,48 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
           error instanceof Error
             ? error.message
             : 'Could not update the architecture plan.',
+      });
+    }
+  },
+
+  autoRepair: async () => {
+    const { graph, projectId } = get();
+    set({ status: 'planning', error: null });
+    try {
+      const response = (await api.repairArchitecture({
+        graph,
+      })) as PlanResponse;
+
+      // Same envelope-stripping as submitPlan: only the canonical graph stays.
+      const {
+        verification = null,
+        projectId: returnedId = null,
+        issues: nextIssues = [],
+        blocking: nextBlocking = false,
+        repairs: nextRepairs = [],
+        revisionId: _revisionId,
+        ...nextGraph
+      } = response;
+
+      set({
+        graph: nextGraph,
+        verification,
+        projectId: returnedId ?? projectId,
+        issues: nextIssues,
+        blocking: nextBlocking,
+        repairs: nextRepairs,
+        status: 'idle',
+        error: null,
+        lastUpdated: new Date().toISOString(),
+        selectedNodeId: nextGraph.nodes[0]?.id ?? null,
+      });
+    } catch (error) {
+      set({
+        status: 'error',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Could not repair the architecture graph.',
       });
     }
   },

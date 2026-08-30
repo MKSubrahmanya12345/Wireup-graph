@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { env } from '../config/env.js';
 import type { BuildFile } from '../schemas/build.js';
+import { extractPublishedJsonFields } from './jsonContract.js';
 import { materialise, runCommand, type CommandResult } from './terminal.js';
 import type { ValidationFinding, ValidationReport } from './types.js';
 
@@ -134,6 +135,13 @@ export interface FirmwareValidationOptions {
   boardDefine?: string;
   commands?: CommandResult[];
   terminal?: boolean;
+  /**
+   * JSON field names the software contract requires (one per KB metric, e.g.
+   * `temperature_c`, `humidity_pct`). When provided, the sketch must publish
+   * every one of them — the dashboard reads exactly these keys. Enforced at
+   * the structural tier so it holds even when g++ is unavailable.
+   */
+  expectedJsonFields?: string[];
 }
 
 export async function validateFirmware(
@@ -143,6 +151,28 @@ export async function validateFirmware(
   const startedAt = Date.now();
   const commands: CommandResult[] = [];
   const { checks, findings } = structuralChecks(files);
+
+  // ── Stage 1b: JSON contract — the dashboard reads these exact keys ────────
+  const expectedJsonFields = options.expectedJsonFields ?? [];
+  if (expectedJsonFields.length > 0) {
+    const published = extractPublishedJsonFields(files.map((f) => f.content));
+    const missing = expectedJsonFields.filter((field) => !published.includes(field));
+    checks.push({
+      name: 'json-contract',
+      ok: missing.length === 0,
+      detail: missing.length
+        ? `Firmware does not publish: ${missing.join(', ')}`
+        : `Firmware publishes all ${expectedJsonFields.length} contract fields: ${expectedJsonFields.join(', ')}`,
+    });
+    for (const field of missing) {
+      findings.push({
+        severity: 'error',
+        code: 'FW-CONTRACT-FIELD',
+        message: `The dashboard reads "${field}" but this firmware never publishes it. Emit "${field}" in the /api/sensors JSON.`,
+        hint: 'LLM-drafted firmware must use the exact field names from the knowledge base — the software zip is generated against them.',
+      });
+    }
+  }
 
   const terminalEnabled = options.terminal ?? env.AGENTIC_TERMINAL_VALIDATION !== '0';
   if (!terminalEnabled || findings.some((f) => f.severity === 'error')) {

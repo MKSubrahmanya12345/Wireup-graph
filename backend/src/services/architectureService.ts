@@ -150,11 +150,26 @@ export async function planAndVerify(
   return { graph: nextGraph, verification, issues, blocking, repairs };
 }
 
-/** Keeps every structural check, appending model checks that target something new. */
+/**
+ * Keeps every structural check, appending model checks that target something
+ * new. Dedupes on id AND on (title, scope, targetId) — the reviewer model
+ * often re-states a structural check verbatim under its own id, which used to
+ * surface as the same "Connection endpoints resolve" entry three times.
+ */
 function mergeChecks(
   structural: VerificationReport['checks'],
   modelChecks: VerificationReport['checks'],
 ): VerificationReport['checks'] {
-  const seen = new Set(structural.map((check) => check.id));
-  return [...structural, ...modelChecks.filter((check) => !seen.has(check.id))];
+  const seenIds = new Set(structural.map((check) => check.id));
+  const seenSubstance = new Set(
+    structural.map((check) => `${check.title}|${check.scope}|${check.targetId ?? ''}`),
+  );
+  return [
+    ...structural,
+    ...modelChecks.filter(
+      (check) =>
+        !seenIds.has(check.id) &&
+        !seenSubstance.has(`${check.title}|${check.scope}|${check.targetId ?? ''}`),
+    ),
+  ];
 }
