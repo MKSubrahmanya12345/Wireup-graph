@@ -6,6 +6,50 @@ import { z } from 'zod';
  * hardcoded scaffold with AI-generated device wiring.
  */
 
+// ── shared null-tolerant helpers ──────────────────────────────────────────
+// Bedrock models (Kimi, MiniMax, Nova…) emit explicit `null` for fields that
+// don't apply; Zod's .default()/.optional() only treat `undefined` as absent.
+// A union with the fallback value normalises null/non-string inputs without
+// losing the inferred output type.
+const optionalTextOrDefault = (fallback: string) =>
+  z
+    .union([z.string(), z.literal(null), z.undefined()])
+    .transform((value) => (typeof value === 'string' && value.trim() ? value.trim() : fallback));
+
+const optionalText = z
+  .union([
+    z
+      .string()
+      .trim()
+      .transform((value) => (value ? value : undefined)),
+    z.literal(null),
+    z.undefined(),
+  ])
+  .transform((value) => (typeof value === 'string' ? value : undefined));
+
+const stringArray = z
+  .union([z.array(z.any()), z.literal(null), z.undefined()])
+  .transform((value) => (Array.isArray(value) ? value : []))
+  .transform((entries) =>
+    entries
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )
+  .default([]);
+
+const objectArray = <T extends z.ZodTypeAny>(schema: T) =>
+  z
+    .union([z.array(z.any()), z.literal(null), z.undefined()])
+    .transform((value) =>
+      (Array.isArray(value) ? value : []).filter(
+        (entry): entry is Record<string, unknown> =>
+          entry !== null && typeof entry === 'object' && !Array.isArray(entry),
+      ),
+    )
+    .pipe(z.array(schema))
+    .default([]);
+
 export const buildFileSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
@@ -14,18 +58,38 @@ export type BuildFile = z.infer<typeof buildFileSchema>;
 
 // ── Firmware ──────────────────────────────────────────────────────────────
 export const firmwareFileSchema = z.object({
-  path: z.string().min(1),
-  content: z.string(),
+  path: optionalTextOrDefault(''),
+  content: optionalTextOrDefault(''),
 });
 
+/**
+ * Firmware file lists: non-arrays become [], non-object entries drop, and
+ * entries without a usable path drop as well (a file with no path cannot be
+ * written — keeping it would only crash the scaffold writer later).
+ */
+const firmwareFiles = z
+  .union([z.array(z.any()), z.literal(null), z.undefined()])
+  .transform((value) =>
+    (Array.isArray(value) ? value : []).filter(
+      (entry): entry is Record<string, unknown> =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        !Array.isArray(entry) &&
+        typeof entry.path === 'string' &&
+        !!entry.path.trim(),
+    ),
+  )
+  .pipe(z.array(firmwareFileSchema))
+  .default([]);
+
 export const firmwareResultSchema = z.object({
-  platform: z.string().default('arduino'),
-  board: z.string().default('Arduino-compatible'),
-  language: z.string().default('C++'),
-  framework: z.string().default('Arduino'),
-  files: z.array(firmwareFileSchema).default([]),
-  buildSteps: z.array(z.string()).default([]),
-  notes: z.array(z.string()).default([]),
+  platform: optionalTextOrDefault('arduino'),
+  board: optionalTextOrDefault('Arduino-compatible'),
+  language: optionalTextOrDefault('C++'),
+  framework: optionalTextOrDefault('Arduino'),
+  files: firmwareFiles,
+  buildSteps: stringArray,
+  notes: stringArray,
 });
 export type FirmwareResult = z.infer<typeof firmwareResultSchema>;
 
@@ -37,62 +101,72 @@ export const firmwareBodySchema = z.object({
 });
 
 // ── Website requirements ──────────────────────────────────────────────────
+const optionalNumber = z
+  .any()
+  .transform((value) => {
+    if (value === null || value === undefined || value === '') return undefined;
+    const num = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(num) ? num : undefined;
+  });
+
 export const readEndpointSchema = z.object({
-  name: z.string().default(''),
-  path: z.string().default(''),
+  name: optionalTextOrDefault(''),
+  path: optionalTextOrDefault(''),
   method: z.enum(['GET', 'POST', 'PUT']).catch('GET'),
-  description: z.string().default(''),
-  dataType: z.string().default('text'),
-  unit: z.string().optional(),
-  sampleIntervalMs: z.number().optional(),
+  description: optionalTextOrDefault(''),
+  dataType: optionalTextOrDefault('text'),
+  unit: optionalText,
+  sampleIntervalMs: optionalNumber,
 });
 
 export const controlEndpointSchema = z.object({
-  name: z.string().default(''),
-  path: z.string().default(''),
+  name: optionalTextOrDefault(''),
+  path: optionalTextOrDefault(''),
   method: z.enum(['GET', 'POST', 'PUT']).catch('POST'),
-  description: z.string().default(''),
-  bodyType: z.string().default('json'),
-  commandOptions: z.array(z.string()).default([]),
+  description: optionalTextOrDefault(''),
+  bodyType: optionalTextOrDefault('json'),
+  commandOptions: stringArray,
 });
 
 export const dataFieldSchema = z.object({
-  field: z.string().default(''),
-  type: z.string().default(''),
-  unit: z.string().optional(),
-  source: z.string().default(''),
+  field: optionalTextOrDefault(''),
+  type: optionalTextOrDefault(''),
+  unit: optionalText,
+  source: optionalTextOrDefault(''),
 });
 
 export const websiteRequirementsSchema = z.object({
-  requested: z.boolean().default(false),
-  summary: z.string().default(''),
+  requested: z.boolean().catch(false),
+  summary: optionalTextOrDefault(''),
   device: z
     .object({
-      name: z.string().default(''),
+      name: optionalTextOrDefault(''),
       connection: z
         .enum(['wifi', 'ethernet', 'serial', 'ble', 'cellular', 'other'])
         .catch('wifi'),
-      localIpHint: z.string().nullish(),
-      port: z.number().optional(),
-      protocol: z.string().default('http'),
-      endpointBase: z.string().default(''),
-      ssidHint: z.string().nullish(),
-      credentialsRequired: z.boolean().default(false),
+      localIpHint: optionalText,
+      port: optionalNumber,
+      protocol: optionalTextOrDefault('http'),
+      endpointBase: optionalTextOrDefault(''),
+      ssidHint: optionalText,
+      credentialsRequired: z.boolean().catch(false),
     })
-    .default({}),
-  readEndpoints: z.array(readEndpointSchema).default([]),
-  controlEndpoints: z.array(controlEndpointSchema).default([]),
+    .nullish()
+    .transform((value) => value ?? {}),
+  readEndpoints: objectArray(readEndpointSchema),
+  controlEndpoints: objectArray(controlEndpointSchema),
   telemetry: z
     .object({
-      livePath: z.string().default('/api/telemetry/live'),
-      historyPath: z.string().default('/api/telemetry/history'),
-      sampleRateMs: z.number().optional(),
-      retentionDays: z.number().optional(),
+      livePath: optionalTextOrDefault('/api/telemetry/live'),
+      historyPath: optionalTextOrDefault('/api/telemetry/history'),
+      sampleRateMs: optionalNumber,
+      retentionDays: optionalNumber,
     })
-    .default({}),
-  dataModel: z.array(dataFieldSchema).default([]),
-  security: z.array(z.string()).default([]),
-  notes: z.array(z.string()).default([]),
+    .nullish()
+    .transform((value) => value ?? {}),
+  dataModel: objectArray(dataFieldSchema),
+  security: stringArray,
+  notes: stringArray,
 });
 export type WebsiteRequirements = z.infer<typeof websiteRequirementsSchema>;
 
@@ -105,19 +179,20 @@ export const websiteRequirementsBodySchema = z.object({
 
 // ── Website build ─────────────────────────────────────────────────────────
 export const websiteBuildSchema = z.object({
-  projectName: z.string().default('wireup-device'),
-  deviceSpecTs: z.string().min(1),
-  deviceEndpointsTs: z.string().min(1),
+  projectName: optionalTextOrDefault('wireup-device'),
+  deviceSpecTs: optionalTextOrDefault(''),
+  deviceEndpointsTs: optionalTextOrDefault(''),
   envExample: z
     .object({
-      deviceIp: z.string().nullish(),
-      devicePort: z.number().optional(),
-      deviceProtocol: z.string().optional(),
-      endpointsJson: z.string().nullish(),
+      deviceIp: optionalText,
+      devicePort: optionalNumber,
+      deviceProtocol: optionalText,
+      endpointsJson: optionalText,
     })
-    .default({}),
-  readmeSection: z.string().default(''),
-  buildNotes: z.array(z.string()).default([]),
+    .nullish()
+    .transform((value) => value ?? {}),
+  readmeSection: optionalTextOrDefault(''),
+  buildNotes: stringArray,
 });
 
 export const websiteBuildBodySchema = z.object({

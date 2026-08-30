@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { z } from 'zod';
+
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 
@@ -207,6 +209,34 @@ export function extractJson(content: string): unknown {
     if (start === -1 || end <= start) throw new LlmError('LLM returned non-JSON output');
     return JSON.parse(withoutFence.slice(start, end + 1));
   }
+}
+
+/**
+ * Extract JSON from an LLM response and validate it against a Zod schema.
+ *
+ * Throws LlmError (→ 502 upstream) instead of letting a raw ZodError become an
+ * unhandled 500: malformed model output is a provider failure, not a server
+ * bug. The first few validation issues are included so the model (or the user
+ * reading the error) can see exactly which field came back wrong.
+ */
+export function parseLlmJson<T>(
+  content: string,
+  // Accept any schema whose output is T regardless of its input type — these
+  // schemas are built to accept null/omitted fields and normalise them.
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  opts: { label?: string; provider?: LlmProvider } = {},
+): T {
+  const result = schema.safeParse(extractJson(content));
+  if (result.success) return result.data;
+  const problems = result.error.issues
+    .slice(0, 3)
+    .map((issue) => `${issue.path.join('.') || 'output'}: ${issue.message}`)
+    .join('; ');
+  throw new LlmError(
+    `${opts.label ?? 'LLM response'} did not match the expected schema (${problems})`,
+    502,
+    opts.provider,
+  );
 }
 
 /** True when explicit IAM keys, a profile, a role source, or local AWS files are configured. */

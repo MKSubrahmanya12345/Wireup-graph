@@ -443,6 +443,51 @@ export function repairGraph(raw: unknown): RepairResult {
     connections.push(copy);
   }
 
+  // ---- 3b. dependencies + software: stable, unique ids --------------------
+  // Same contract as nodes: the UI keys on these ids, and Bedrock models
+  // frequently emit null for them. Blank ids get a slug; duplicate ids get a
+  // numeric suffix.
+  const rawDependencies = asArray<Record<string, unknown>>(source.dependencies);
+  const rawSoftware = asArray<Record<string, unknown>>(source.software);
+
+  const backfillIds = (
+    items: Record<string, unknown>[],
+    kindLabel: string,
+    indexBase: number,
+  ): Record<string, unknown>[] =>
+    items.map((item, position) => {
+      const copy = { ...item };
+      let id = text(copy.id);
+      if (!id) {
+        id = slugify(text(copy.name) || `${kindLabel}-${indexBase + position + 1}`, `${kindLabel}-${indexBase + position + 1}`);
+        copy.id = id;
+        repairs.push({
+          code: 'NODE_MISSING_ID',
+          severity: 'info',
+          message: `A ${kindLabel} entry (${text(copy.name) || 'unnamed'}) had no id, so it was given "${id}".`,
+          targetId: id,
+        });
+      }
+      if (usedIds.has(id)) {
+        const base = id;
+        let suffix = 2;
+        while (usedIds.has(`${base}-${suffix}`)) suffix += 1;
+        id = `${base}-${suffix}`;
+        copy.id = id;
+        repairs.push({
+          code: 'NODE_DUPLICATE_ID',
+          severity: 'info',
+          message: `Two entries shared the id "${base}"; the second is now "${id}".`,
+          targetId: id,
+        });
+      }
+      usedIds.add(id);
+      return copy;
+    });
+
+  const dependencies = backfillIds(rawDependencies, 'dependency', 0);
+  const software = backfillIds(rawSoftware, 'software', 0);
+
   // ---- 4. coordinates ------------------------------------------------------
   // Only nodes with no usable coordinate get placed. A user-dragged node keeps
   // its position, which the planner is explicitly told to preserve.
@@ -469,7 +514,13 @@ export function repairGraph(raw: unknown): RepairResult {
   }
 
   // ---- 5. validate, then de-overlap ---------------------------------------
-  const parsed = architectureGraphSchema.safeParse({ ...source, nodes, connections });
+  const parsed = architectureGraphSchema.safeParse({
+    ...source,
+    nodes,
+    connections,
+    dependencies,
+    software,
+  });
   if (!parsed.success) {
     throw new Error(
       `Planner returned a graph that could not be repaired: ${parsed.error.issues

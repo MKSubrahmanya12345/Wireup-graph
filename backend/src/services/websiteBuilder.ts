@@ -5,7 +5,7 @@ import {
   type WebsiteBuildPlan,
   type WebsiteRequirements,
 } from '../schemas/build.js';
-import { callLlm, extractJson, type LlmProvider } from './llmService.js';
+import { callLlm, LlmError, parseLlmJson, type LlmProvider } from './llmService.js';
 import { loadScaffold } from './scaffoldService.js';
 
 /**
@@ -181,7 +181,22 @@ export async function buildWebsite(input: WebsiteBuildInput) {
     },
   );
 
-  const plan = websiteBuildSchema.parse(extractJson(content));
+  const plan = parseLlmJson(content, websiteBuildSchema, {
+    label: 'Website build response',
+    provider: input.provider,
+  });
+
+  // The two generated code blocks are the whole point of this call; an empty
+  // result means the model explained instead of generating, and merging empty
+  // strings would silently overwrite scaffold tokens.
+  if (!plan.deviceSpecTs.trim() || !plan.deviceEndpointsTs.trim()) {
+    throw new LlmError(
+      'Website build response was missing the generated device code (deviceSpec/deviceEndpoints).',
+      502,
+      input.provider,
+    );
+  }
+
   const { merged, generated } = applyGeneratedFiles(scaffold, plan);
 
   return {

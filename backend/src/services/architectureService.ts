@@ -18,7 +18,7 @@ import {
   PLANNER_SYSTEM_PROMPT,
   VERIFIER_SYSTEM_PROMPT,
 } from './groqService.js';
-import { callLlm, extractJson, type LlmProvider } from './llmService.js';
+import { callLlm, extractJson, LlmError, parseLlmJson, type LlmProvider } from './llmService.js';
 
 export interface PlanResult {
   graph: ArchitectureGraph;
@@ -80,7 +80,18 @@ export async function planAndVerify(
   // of those silently detaches an edge in the UI. Fix it deterministically and
   // say what was fixed, rather than shipping a graph that quietly disagrees
   // with its own connection list.
-  const { graph: nextGraph, repairs } = repairGraph(extractJson(plannerContent));
+  let nextGraph: ArchitectureGraph;
+  let repairs: RepairRecord[];
+  try {
+    ({ graph: nextGraph, repairs } = repairGraph(extractJson(plannerContent)));
+  } catch (error) {
+    if (error instanceof LlmError) throw error;
+    throw new LlmError(
+      `Planner output could not be turned into a graph: ${error instanceof Error ? error.message : String(error)}`,
+      502,
+      options.provider,
+    );
+  }
 
   const issues = runEngineeringChecks(nextGraph, requirements);
   const blocking = hasBlockingIssue(issues);
@@ -111,7 +122,13 @@ export async function planAndVerify(
       },
     );
 
-    const candidate = verificationReportSchema.parse(extractJson(verifierContent));
+    // parseLlmJson throws LlmError on malformed output; the surrounding catch
+    // falls back to the 'unavailable' verification report, exactly as it does
+    // for a network failure.
+    const candidate = parseLlmJson(verifierContent, verificationReportSchema, {
+      label: 'Architecture verification response',
+      provider: options.provider,
+    });
     verification = {
       ...candidate,
       // Structural checks are the floor — the model may add, never subtract.

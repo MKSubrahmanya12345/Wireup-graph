@@ -5,7 +5,7 @@ import {
   type Question,
   type RequirementsSpec,
 } from '../schemas/requirements.js';
-import { callLlm, extractJson, type LlmProvider } from './llmService.js';
+import { callLlm, extractJson, LlmError, type LlmProvider } from './llmService.js';
 
 /**
  * Pass 0: turn a free-text brief into a structured intent contract, and ask
@@ -129,10 +129,29 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
     },
   );
 
-  const parsed = interpretResponseSchema.parse(extractJson(content));
+  // safeParse rather than parse: a model that returns slightly-off JSON should
+  // surface as an upstream (502) failure, not an unhandled ZodError → 500.
+  const parsedResult = interpretResponseSchema.safeParse(extractJson(content));
+  if (!parsedResult.success) {
+    throw new LlmError(
+      `Interpret response failed validation: ${parsedResult.error.issues
+        .slice(0, 3)
+        .map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`)
+        .join('; ')}`,
+      502,
+      input.provider ?? 'groq',
+    );
+  }
+
+  const parsed = parsedResult.data;
 
   // Enforce the question budget server-side regardless of what the model returns.
-  const questions = parsed.questions.slice(0, MAX_QUESTIONS);
+  const questions = parsed.questions.slice(0, MAX_QUESTIONS).map((question, index) => ({
+    ...question,
+    // The schema tolerates a missing/blank id; give the question a stable one
+    // so answer round-trips (answers are keyed by question id) cannot collide.
+    id: question.id || `question-${index + 1}`,
+  }));
 
   return {
     requirements: parsed.requirements,

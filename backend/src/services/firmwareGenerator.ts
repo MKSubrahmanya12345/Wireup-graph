@@ -3,7 +3,7 @@ import {
   firmwareResultSchema,
   type FirmwareResult,
 } from '../schemas/build.js';
-import { callLlm, extractJson, type LlmProvider } from './llmService.js';
+import { callLlm, LlmError, parseLlmJson, type LlmProvider } from './llmService.js';
 
 /**
  * Agentic firmware generator.
@@ -78,5 +78,16 @@ export async function generateFirmware(
     },
   );
 
-  return firmwareResultSchema.parse(extractJson(content));
+  const result = parseLlmJson(content, firmwareResultSchema, {
+    label: 'Firmware generation response',
+    provider: options?.provider,
+  });
+
+  // A firmware result with no usable files cannot produce a build; the
+  // model may have "explained" why instead of writing code.
+  if (result.files.length === 0) {
+    throw new LlmError('Firmware generation returned no files.', 502, options?.provider);
+  }
+
+  return result;
 }
