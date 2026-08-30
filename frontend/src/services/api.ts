@@ -182,6 +182,8 @@ export async function streamAgenticBuild(
     graph: unknown;
     provider?: string;
     model?: string;
+    /** Page-01's sample-interval answer — honored in firmware/config.h. */
+    sampleIntervalMs?: number;
   },
   onEvent: (event: AgenticEvent) => void,
   signal?: AbortSignal,

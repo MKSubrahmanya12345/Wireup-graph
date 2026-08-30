@@ -220,6 +220,33 @@ function codeFor(module: ResolvedModule): ModuleCode {
       return code;
     }
 
+    case 'ssd1306': {
+      // I2C OLED — displays the first two sensor metrics. The refresh lines
+      // are rendered in sketchSource (they read the sensor-state globals).
+      const code = emptyCode();
+      code.includes.push('#include <Wire.h>', '#include <Adafruit_GFX.h>', '#include <Adafruit_SSD1306.h>');
+      code.globals.push(
+        'Adafruit_SSD1306 wireupDisplay(128, 64, &Wire, -1);',
+        'bool displayOk = false;',
+        'unsigned long lastDisplayMs = 0;',
+      );
+      code.setup.push(
+        'displayOk = wireupDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);',
+        'if (displayOk) {',
+        '  wireupDisplay.clearDisplay();',
+        '  wireupDisplay.setTextSize(1);',
+        '  wireupDisplay.setTextColor(SSD1306_WHITE);',
+        '  wireupDisplay.setCursor(0, 0);',
+        '  wireupDisplay.println(F("Wireup"));',
+        '  wireupDisplay.display();',
+        '}',
+        'if (!displayOk) Serial.println(F("[wireup] OLED not found at 0x3C — check SDA/SCL wiring"));',
+      );
+      code.needsWire = true;
+      code.notes.push(...module.firmwareNotes);
+      return code;
+    }
+
     case 'servo-sg90': {
       const code = emptyCode();
       const macro = pinMacro(module);
@@ -288,6 +315,56 @@ function stateDeclarations(plan: DeviceBuildPlan): string[] {
   return decls;
 }
 
+/** Periodic OLED refresh lines — the first two metrics of the build. */
+function displayUpdateLines(plan: DeviceBuildPlan): string[] {
+  const metrics = plan.modules.flatMap((m) => m.metrics).slice(0, 2);
+  const VAR: Record<string, string> = {
+    temperature_c: 'lastTemperatureC',
+    humidity_pct: 'lastHumidityPct',
+    pressure_hpa: 'lastPressureHpa',
+    distance_cm: 'lastDistanceCm',
+    moisture_pct: 'lastMoisturePct',
+    gas_ppm: 'lastGasPpm',
+    motion: 'motionNow',
+  };
+  const UNIT: Record<string, string> = {
+    temperature_c: ' C',
+    humidity_pct: ' %',
+    pressure_hpa: ' hPa',
+    distance_cm: ' cm',
+    moisture_pct: ' %',
+    gas_ppm: ' ppm',
+    motion: '',
+  };
+
+  const lines = [
+    'if (displayOk && millis() - lastDisplayMs >= 1000) {',
+    '  lastDisplayMs = millis();',
+    '  wireupDisplay.clearDisplay();',
+    '  wireupDisplay.setCursor(0, 0);',
+  ];
+  if (metrics.length === 0) {
+    lines.push(
+      '  wireupDisplay.println(String(F("up ")) + String((millis() - bootMs) / 1000UL) + F(" s"));',
+    );
+  } else {
+    for (const metric of metrics) {
+      const label = metric.label.slice(0, 5);
+      if (metric.jsonField === 'motion') {
+        lines.push(`  wireupDisplay.println(String(F("${label} ")) + (motionNow ? F("on") : F("off")));`);
+      } else {
+        const stateVar = VAR[metric.jsonField] ?? 'lastTemperatureC';
+        const unit = UNIT[metric.jsonField] ?? '';
+        lines.push(
+          `  wireupDisplay.println(String(F("${label} ")) + (sensorOk ? String(${stateVar}, 1) : F("--")) + F("${unit}"));`,
+        );
+      }
+    }
+  }
+  lines.push('  wireupDisplay.display();', '}');
+  return lines;
+}
+
 function sketchSource(plan: DeviceBuildPlan, codes: ModuleCode[]): string {
   const sensorModules = plan.modules.filter((m) => m.kind === 'sensor');
   const includes = new Set<string>();
@@ -300,6 +377,8 @@ function sketchSource(plan: DeviceBuildPlan, codes: ModuleCode[]): string {
   const jsonLines = codes.flatMap((code) => code.json);
   const routeLines = codes.flatMap((code) => code.routes);
   const needsWire = codes.some((code) => code.needsWire);
+  const hasDisplay = plan.modules.some((m) => m.deviceId === 'ssd1306');
+  const displayLines = hasDisplay ? displayUpdateLines(plan) : [];
 
   const pinsBlock = plan.modules
     .flatMap((module) =>
@@ -726,7 +805,7 @@ void setup() {
 
 ${setupLines.map((line) => `  ${line}`).join('\n')}
 
-${needsWire ? '  Serial.println(F("[wireup] I2C (Wire) up on SDA/SCL"));' : ''}
+${needsWire ? '  Wire.begin();\n  Serial.println(F("[wireup] I2C (Wire) up on SDA/SCL"));' : ''}
 #if ENABLE_OTA
   ArduinoOTA.setHostname(DEVICE_NAME);
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -756,6 +835,7 @@ void loop() {
   server.handleClient();
   sampleSensors();
   recordHistory();
+${displayLines.map((line) => `  ${line}`).join('\n')}
 #if ENABLE_OTA
   ArduinoOTA.handle();
 #endif

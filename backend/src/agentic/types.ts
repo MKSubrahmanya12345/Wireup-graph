@@ -131,6 +131,12 @@ export interface PipelineInput {
   graph: ArchitectureGraph;
   provider?: 'groq' | 'bedrock';
   model?: string;
+  /**
+   * The human's answer to page-01's "how often should the device sample?"
+   * question. Without it the build silently falls back to the KB default —
+   * the question existed but its answer never reached the firmware.
+   */
+  sampleIntervalMs?: number;
 }
 
 export type EmitFn = (event: BuildEvent) => void;

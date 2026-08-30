@@ -25,7 +25,7 @@ const PLACEHOLDER_PATTERN = /\bTODO\b|\bFIXME\b|your code here|implementation go
 const STUB_HEADERS = new Set([
   'Arduino.h', 'Wire.h', 'WiFi.h', 'WebServer.h', 'ESPmDNS.h', 'DHT.h',
   'OneWire.h', 'DallasTemperature.h', 'ESP32Servo.h', 'Adafruit_BME280.h',
-  'Preferences.h', 'ArduinoOTA.h',
+  'Preferences.h', 'ArduinoOTA.h', 'Adafruit_GFX.h', 'Adafruit_SSD1306.h',
 ]);
 /** Real system headers g++ resolves itself. */
 const SYSTEM_HEADERS = new Set(['stdint.h', 'string.h', 'math.h', 'stdio.h', 'stdlib.h']);
@@ -233,6 +233,43 @@ export async function validateFirmware(
               ? 'Compiler timed out'
               : `${errors.length} compiler error(s) in ${unit.path}`,
     });
+  }
+
+  // ── Stage 2b: embedded dashboard JS gate ─────────────────────────────────
+  // The firmware serves a dashboard (HTML + JS) at /. C++ compilation proves
+  // nothing about that JS — extract it from the raw string and node --check
+  // it. The backend runs on node, so the checker always exists.
+  for (const file of files) {
+    if (!file.content.includes('WIREUP_HTML')) continue;
+    const raw = file.content.match(/R"WIREUP_HTML\(([\s\S]*?)\)WIREUP_HTML"/)?.[1];
+    const script = raw?.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    if (!raw) {
+      findings.push({ severity: 'error', code: 'DASHBOARD-JS', message: 'Embedded dashboard raw string is malformed.', file: file.path });
+      continue;
+    }
+    if (!script) {
+      findings.push({ severity: 'error', code: 'DASHBOARD-JS', message: 'Embedded dashboard has no <script> block.', file: file.path });
+      continue;
+    }
+    const dashJs = path.join(fwDir, '.wireup-dashboard.js');
+    await writeFile(dashJs, script, 'utf8');
+    const jsCheck = await runCommand(['node', '--check', dashJs], { cwd: fwDir, timeoutMs: 30_000 });
+    commands.push(jsCheck);
+    const ok = jsCheck.exitCode === 0;
+    checks.push({
+      name: 'dashboard-js (node --check)',
+      ok,
+      detail: ok ? 'Embedded dashboard script parses cleanly' : 'Dashboard script has a syntax error',
+    });
+    if (!ok) {
+      findings.push({
+        severity: 'error',
+        code: 'DASHBOARD-JS',
+        message: jsCheck.output.split('\n').slice(0, 4).join(' | '),
+        file: file.path,
+        hint: 'The dashboard HTML is served to browsers — fix the script syntax.',
+      });
+    }
   }
 
   return finish('firmware', checks, findings, commands, startedAt);

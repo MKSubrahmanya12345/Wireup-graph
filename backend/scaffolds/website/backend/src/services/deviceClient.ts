@@ -58,21 +58,19 @@ async function fetchDevice(
 }
 
 /**
- * All live readings, one field per read endpoint.
+ * All live readings, one FULL payload per read endpoint.
  *
- * Read endpoints share the device's /api/sensors payload; `field` pins the
- * exact JSON key this metric reads, so history stores a NUMBER (21.4) instead
- * of the whole payload object ([object Object]).
+ * The live payload must stay nested (`live.temperature.temperature_c`): the
+ * dashboard's metric paths resolve through the endpoint id first. Extracting
+ * the number here would flatten `live.temperature` to a primitive and break
+ * every live card. History extraction happens at the telemetry layer via
+ * `endpoint.field` — see routes/telemetry.ts.
  */
 export async function getLiveReadings(): Promise<Record<string, unknown>> {
   const entries = await Promise.all(
     readEndpoints().map(async (endpoint) => {
       const payload = await fetchDevice(endpoint);
-      const value =
-        endpoint.field !== undefined
-          ? (getPath(payload, endpoint.field) ?? payload)
-          : payload;
-      return [endpoint.id, value] as const;
+      return [endpoint.id, payload] as const;
     }),
   );
   return Object.fromEntries(entries);
@@ -101,6 +99,7 @@ export async function getDeviceInfo(): Promise<Record<string, unknown>> {
     method: 'GET',
     kind: 'json',
   });
-  const uptime = getPath(status, 'uptime');
+  // The firmware's /api/status publishes `uptime_s` (seconds).
+  const uptime = getPath(status, 'uptime_s') ?? getPath(status, 'uptime');
   return { ...info, uptime: uptime ?? null };
 }

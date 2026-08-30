@@ -33,6 +33,7 @@ const { validateFirmware } = await import('../src/agentic/firmwareValidator.ts')
 const { validateSoftware } = await import('../src/agentic/softwareValidator.ts');
 const { runAgenticPipeline } = await import('../src/agentic/pipeline.ts');
 const { resolveBuildPlan } = await import('../src/agentic/planResolver.ts');
+const { DEVICE_KNOWLEDGE } = await import('../src/agentic/knowledge/devices.ts');
 const { normaliseGraph } = await import('../src/schemas/architecture.ts');
 const { runEngineeringChecks, hasBlockingIssue } = await import('../src/data/engineeringRules.ts');
 const { repairGraph } = await import('../src/data/repairGraph.ts');
@@ -247,10 +248,30 @@ describe('agentic pipeline end-to-end (the build the user runs)', () => {
       deviceClient?.content.includes('application/x-www-form-urlencoded'),
       'control commands must be form-encoded (ESP32 server.arg parses form, not JSON)',
     );
-    assert.ok(
-      deviceClient?.content.includes('endpoint.field'),
-      'live readings must extract the metric field for history (no [object Object])',
+
+    // ── History extracts numbers at the telemetry layer; live stays nested ─
+    const telemetry = result.software.files.find(
+      (f) => f.path === 'backend/src/routes/telemetry.ts',
     );
+    assert.ok(
+      telemetry?.content.includes('endpoint?.field'),
+      'history must extract the metric field (no [object Object])',
+    );
+    assert.ok(
+      telemetry?.content.includes('getPath'),
+      'telemetry must use the dotted-path reader for extraction',
+    );
+    assert.ok(
+      deviceClient?.content.includes('FULL payload'),
+      'live readings must keep the full nested payload (metric paths resolve through the endpoint id)',
+    );
+
+    // ── The generated app was actually BOOTED, not just compiled ──────────
+    const smokeCheck = result.validation.software.checks.find(
+      (check) => check.name === 'runtime smoke (boot + live)',
+    );
+    assert.ok(smokeCheck, 'software validation must include the runtime smoke gate');
+    assert.ok(smokeCheck.ok, smokeCheck?.detail);
 
     // ── LAN access: CORS is open, mDNS host wired ─────────────────────────
     const envExample = result.software.files.find((f) => f.path === 'backend/.env.example');
@@ -275,4 +296,135 @@ describe('agentic pipeline end-to-end (the build the user runs)', () => {
     const sketch = firmware.files.map((f) => f.content).join('\n');
     assert.ok(sketch.includes('bodyOrArg("state")'), 'toggle routes must parse form or JSON bodies');
   });
+});
+
+describe('page-01 answers and page-02 pins reach the build', () => {
+  it('honors the sample-interval answer over the KB default', () => {
+    const { plan } = resolveBuildPlan(BRIEF, PROJECT, normaliseGraph({}).graph, 60_000);
+    assert.equal(plan.sampleIntervalMs, 60_000);
+    const config = synthesizeFirmware(plan).files.find((f) => f.path === 'firmware/config.h')?.content ?? '';
+    assert.ok(config.includes('#define SAMPLE_INTERVAL_MS 60000'), config.slice(0, 400));
+  });
+
+  it('honors pins declared on the approved graph (port labels)', () => {
+    const graph = normaliseGraph({
+      project: PROJECT,
+      nodes: [
+        {
+          id: 'mcu-main',
+          type: 'controller',
+          name: 'ESP32 DevKit',
+          partNumber: 'ESP32-DEVKIT',
+          ports: [{ id: 'mcu-gpio-data', label: 'GPIO (assigned)', direction: 'bidirectional', signal: 'digital' }],
+        },
+        {
+          id: 'sensor-dht22',
+          type: 'sensor',
+          name: 'DHT22 (AM2302) Temperature & Humidity Sensor',
+          partNumber: 'AM2302',
+          ports: [
+            { id: 'sensor-dht22-vcc', label: 'VCC', direction: 'in', signal: 'power' },
+            { id: 'sensor-dht22-gnd', label: 'GND', direction: 'in', signal: 'ground' },
+            { id: 'sensor-dht22-data', label: 'DATA → GPIO16', direction: 'bidirectional', signal: 'digital' },
+          ],
+        },
+      ],
+      connections: [
+        { id: 'c1', from: 'mcu-main', to: 'sensor-dht22', fromPort: 'mcu-gpio-data', toPort: 'sensor-dht22-data', label: 'GPIO16', kind: 'data' },
+      ],
+    }).graph;
+
+    const { plan } = resolveBuildPlan(BRIEF, PROJECT, graph);
+    assert.equal(plan.modules[0]?.pins.data, 'GPIO16', JSON.stringify(plan.modules[0]?.pins));
+
+    const config = synthesizeFirmware(plan).files.find((f) => f.path === 'firmware/config.h')?.content ?? '';
+    assert.ok(config.includes('#define DHT22_PIN 16'), 'config.h must match the graph pin');
+  });
+
+  it('warns when the graph carries two of the same part, and stays silent for the normal brief+graph overlap', () => {
+    const dht22Node = {
+      id: 'sensor-dht22',
+      type: 'sensor',
+      name: 'DHT22 (AM2302) Temperature & Humidity Sensor',
+      partNumber: 'AM2302',
+      ports: [{ id: 'sensor-dht22-data', label: 'DATA', direction: 'bidirectional', signal: 'digital' }],
+    };
+    const twoNodeGraph = normaliseGraph({
+      project: PROJECT,
+      nodes: [dht22Node, { ...dht22Node, id: 'sensor-dht22-2' }],
+      connections: [],
+    }).graph;
+
+    const { warnings } = resolveBuildPlan('a dht22 sensor on an esp32', PROJECT, twoNodeGraph);
+    assert.ok(
+      warnings.some((w) => /only one per build/i.test(w)),
+      JSON.stringify(warnings),
+    );
+
+    // The normal flow: brief AND approved graph both name the DHT22 once.
+    const singleNodeGraph = normaliseGraph({
+      project: PROJECT,
+      nodes: [dht22Node],
+      connections: [],
+    }).graph;
+    const { warnings: normalWarnings, plan } = resolveBuildPlan(
+      'a dht22 sensor i have and esp32',
+      PROJECT,
+      singleNodeGraph,
+    );
+    assert.ok(!normalWarnings.some((w) => /only one per build/i.test(w)), JSON.stringify(normalWarnings));
+    assert.equal(plan.modules.length, 1);
+  });
+
+  it('does not pull a DHT22 into a DHT11 brief via generic aliases', () => {
+    const { plan } = resolveBuildPlan(
+      'a DHT11 Temperature & Humidity Sensor on an esp32 with a website',
+      PROJECT,
+      normaliseGraph({}).graph,
+    );
+    assert.deepEqual(
+      plan.modules.map((m) => m.deviceId),
+      ['dht11'],
+    );
+  });
+});
+
+describe('every knowledge-base part generates compiling firmware', () => {
+  for (const device of DEVICE_KNOWLEDGE) {
+    it(`${device.id} compiles and emits its contract fields`, async () => {
+      // Displays are exercised below with a sensor alongside (they render
+      // other modules' metrics); sensors/actuators stand alone.
+      const brief =
+        device.kind === 'display'
+          ? `an oled display and a dht22 on an esp32 with a website`
+          : `a ${device.name} on an esp32 with a website`;
+      const { plan } = resolveBuildPlan(brief, 'Matrix', normaliseGraph({}).graph);
+      assert.ok(plan.modules.length >= 1, `"${brief}" must match the knowledge base`);
+
+      const firmware = synthesizeFirmware(plan);
+      const sketch = firmware.files.map((f) => f.content).join('\n');
+      const expectedFields = [...new Set(plan.modules.flatMap((m) => m.metrics.map((x) => x.jsonField))), 'state'];
+
+      const report = await validateFirmware(firmware.files, {
+        workDir: mkdtempSync(path.join(tmpdir(), 'wireup-matrix-')),
+        boardDefine: plan.board.archDefine,
+        expectedJsonFields: expectedFields,
+      });
+      assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
+
+      // Every metric must actually be emitted by the sketch.
+      for (const module of plan.modules) {
+        for (const metric of module.metrics) {
+          assert.ok(
+            sketch.includes(`"${metric.jsonField}"`) || sketch.includes(`\\"${metric.jsonField}\\"`),
+            `${device.id}: sketch must emit metric field ${metric.jsonField}`,
+          );
+        }
+      }
+      if (device.id === 'ssd1306') {
+        assert.ok(sketch.includes('wireupDisplay'), 'OLED codegen must exist (KB lists it as supported)');
+        assert.ok(sketch.includes('Adafruit_SSD1306'));
+      }
+    });
+  }
 });

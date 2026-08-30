@@ -55,12 +55,15 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
 
   run: async (options?: { provider?: string; model?: string }) => {
     const { graph } = useGraphStore.getState();
-    const { brief: rawBrief, llmOptions } = useDesignSession.getState();
+    const { brief: rawBrief, llmOptions, answers } = useDesignSession.getState();
     const brief = rawBrief.trim();
     if (!brief) {
       set({ error: 'Write the prompt on page 01 first.' });
       return;
     }
+    // Page-01's "how often should the device sample?" answer must reach the
+    // build — without it the firmware silently falls back to the KB default.
+    const intervalAnswer = Number(answers['sample-interval']);
 
     const abort = new AbortController();
     set({
@@ -148,6 +151,8 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
           graph,
           provider: options?.provider ?? llmOptions.provider,
           model: options?.model ?? llmOptions.model,
+          sampleIntervalMs:
+            Number.isFinite(intervalAnswer) && intervalAnswer > 0 ? intervalAnswer : undefined,
         },
         handle,
         abort.signal,

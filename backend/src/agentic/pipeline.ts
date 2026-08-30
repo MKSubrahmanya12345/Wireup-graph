@@ -62,7 +62,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     say('retrieve', `pipeline ${PIPELINE_VERSION} · workdir ${work.root}`);
     say('retrieve', `brief: "${brief.slice(0, 140)}${brief.length > 140 ? '…' : ''}"`);
 
-    const resolved = resolveBuildPlan(brief, projectName, graphParsed);
+    const resolved = resolveBuildPlan(brief, projectName, graphParsed, input.sampleIntervalMs);
     const { plan } = resolved;
 
     if (plan.modules.length === 0) {
