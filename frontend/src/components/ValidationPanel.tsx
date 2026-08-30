@@ -8,17 +8,39 @@ import { useState } from 'react';
 import { api } from '../services/api';
 import { useGraphStore } from '../store/useGraphStore';
 
+interface DoubtView {
+  id: string;
+  prompt: string;
+  why?: string;
+  impact?: string;
+  resolved?: boolean;
+  resolution?: string;
+  kind: string;
+  options: Array<{ value: string; label: string }>;
+  defaultValue: string;
+}
+
+interface LoopView {
+  loopId: string;
+  status: string;
+  doubtsAsked: number;
+  doubtsResolved: number;
+  completedAt?: string;
+}
+
+interface ValidationView {
+  loopId?: string;
+  isPerfect?: boolean;
+  score?: number;
+  summary?: string;
+  doubts?: DoubtView[];
+  validationLoops?: LoopView[];
+}
+
 export default function ValidationPanel() {
   const graphStore = useGraphStore();
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'perfect'>('idle');
-  const [result, setResult] = useState<{
-    loopId?: string;
-    isPerfect?: boolean;
-    score?: number;
-    summary?: string;
-    doubts?: Array<{ id: string; prompt: string; resolved?: boolean; resolution?: string; kind: string; options: Array<{ value: string; label: string }>; defaultValue: string }>;
-    validationLoops?: Array<{ loopId: string; status: string; doubtsAsked: number; doubtsResolved: number; completedAt?: string }>;
-  } | null>(null);
+  const [result, setResult] = useState<ValidationView | null>(null);
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
 
   const handleRunLoop = async () => {
@@ -37,8 +59,8 @@ export default function ValidationPanel() {
         isPerfect: response.isPerfect,
         score: response.score,
         summary: response.summary,
-        doubts: response.doubts as typeof result['doubts'],
-        validationLoops: response.validationLoops as typeof result['validationLoops'],
+        doubts: response.doubts as unknown as DoubtView[],
+        validationLoops: response.validationLoops as unknown as LoopView[],
       });
       setStatus(response.isPerfect ? 'perfect' : 'ready');
       if (response.isPerfect) {

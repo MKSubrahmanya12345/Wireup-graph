@@ -12,6 +12,7 @@ import {
   CodeIcon,
   DownloadIcon,
   GridIcon,
+  RocketIcon,
   SlidersIcon,
   WaveformIcon,
 } from './Icons';
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/signal-map', label: 'Signal map', Icon: WaveformIcon },
   { to: '/firmware', label: 'Firmware surface', Icon: ChipIcon },
   { to: '/artifacts', label: 'Artifacts', Icon: CodeIcon },
+  { to: '/build', label: 'Agentic build', Icon: RocketIcon },
 ];
 
 export default function AppShell() {

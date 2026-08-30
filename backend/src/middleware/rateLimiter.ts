@@ -29,3 +29,17 @@ export const renderRateLimiter = rateLimit({
     error: 'Too many render requests. Wait a moment and try again.',
   },
 });
+
+/**
+ * Guards the paid Agentic Build endpoints (firmware / website generation).
+ * These are token-heavy, so they share the plan budget.
+ */
+export const buildRateLimiter = rateLimit({
+  windowMs: env.PLAN_RATE_LIMIT_WINDOW_MS,
+  limit: env.PLAN_RATE_LIMIT_MAX,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: 'Too many agentic build requests. Wait a moment and try again.',
+  },
+});

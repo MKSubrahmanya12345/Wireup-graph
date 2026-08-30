@@ -23,6 +23,10 @@ export class ApiError extends Error {
     return new ApiError(404, message);
   }
 
+  static serviceUnavailable(message = 'Service unavailable') {
+    return new ApiError(503, message);
+  }
+
   static upstream(message: string) {
     return new ApiError(502, message);
   }

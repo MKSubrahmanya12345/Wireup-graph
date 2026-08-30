@@ -5,6 +5,7 @@ import ArchitecturePlanPage from './pages/ArchitecturePlanPage';
 import SignalMapPage from './pages/SignalMapPage';
 import FirmwareSurfacePage from './pages/FirmwareSurfacePage';
 import ArtifactsPage from './pages/ArtifactsPage';
+import AgenticBuildPage from './pages/AgenticBuildPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 /**
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="signal-map" element={<SignalMapPage />} />
         <Route path="firmware" element={<FirmwareSurfacePage />} />
         <Route path="artifacts" element={<ArtifactsPage />} />
+        <Route path="build" element={<AgenticBuildPage />} />
         <Route path="projects/:projectId" element={<ArchitecturePlanPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

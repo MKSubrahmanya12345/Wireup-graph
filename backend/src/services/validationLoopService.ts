@@ -7,7 +7,7 @@
  *   -> loop validation until "project data perfect"
  *   -> store verified data in Graph DSA format
  */
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { GraphDSA, type DSADoubtRecord, type DSAValidationLoopRecord } from '../models/GraphDSA.js';
 import { buildRAGValidation, retrieveEvidenceForGraph } from './ragValidationService.js';
 import { searchWebForComponents } from './ragWebSearchService.js';
@@ -48,7 +48,7 @@ export interface ValidationLoopResult {
 export async function runValidationLoop(
   input: ValidationLoopInput,
 ): Promise<ValidationLoopResult> {
-  const loopId = uuidv4().slice(0, 8);
+  const loopId = randomUUID().slice(0, 8);
   const projectName = input.projectName ?? input.graph.project ?? 'Untitled project';
   const notes = input.notes ?? [];
 
@@ -93,11 +93,11 @@ export async function runValidationLoop(
 
   // Apply auto-resolutions to doubts
   for (const auto of autoResolutions) {
-    const doubtIndex = doubts.findIndex((d) => d.id === auto.questionId);
-    if (doubtIndex >= 0 && auto.resolved) {
-      doubts[doubtIndex].resolved = true;
-      doubts[doubtIndex].resolution = auto.resolution;
-      doubts[doubtIndex].resolvedAt = new Date();
+    const doubt = doubts[doubts.findIndex((d) => d.id === auto.questionId)];
+    if (doubt && auto.resolved) {
+      doubt.resolved = true;
+      doubt.resolution = auto.resolution;
+      doubt.resolvedAt = new Date();
     }
   }
 
@@ -126,12 +126,13 @@ export async function runValidationLoop(
     notes,
   };
 
-  // Build agentic PRD
+  // Build agentic PRD (the validation report is a richer shape than the
+  // generic verification report the PRD consumes, so adapt it explicitly).
   const agenticPRD = generateAgenticPRD(
     projectName,
     input.graph.summary || '',
     input.graph,
-    ragReport,
+    ragReport as unknown as import('../schemas/architecture.js').VerificationReport,
     allEvidence,
     doubts,
     [loopRecord],
@@ -158,7 +159,7 @@ export async function runValidationLoop(
           summary: input.graph.summary || '',
           architectureGraph: input.graph,
           verification: ragReport,
-          engineeringIssues: ragReport.issues,
+          engineeringIssues: ragReport.issues as unknown as Record<string, unknown>[],
           ragEvidence: allEvidence,
           validationLoops: [loopRecord],
           doubts,
@@ -175,7 +176,7 @@ export async function runValidationLoop(
             $set: {
               architectureGraph: input.graph,
               verification: ragReport,
-              engineeringIssues: ragReport.issues,
+              engineeringIssues: ragReport.issues as unknown as Record<string, unknown>[],
               ragEvidence: allEvidence,
               doubts,
               isPerfect: finalPerfect,
