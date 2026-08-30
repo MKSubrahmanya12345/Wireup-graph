@@ -46,10 +46,11 @@ export function resolveDoubtsAutomatically(
     // If the doubt is about leg count and the graph already has servos,
     // compute from servo count / legCount from requirements.
     if (doubt.id.toLowerCase().includes('leg') || doubt.prompt.toLowerCase().includes('leg')) {
-      const servoNodes = (graph.nodes ?? []).filter(
-        (node: { type?: string }) => node?.type === 'actuator',
-      );
-      const legCount = requirements?.mechanical?.legCount ?? 4;
+      const servoNodes = (graph.nodes ?? []).filter((node) => node.type === 'actuator');
+      const mechanical = requirements?.mechanical as
+        | { legCount?: number }
+        | undefined;
+      const legCount = mechanical?.legCount ?? 4;
       if (servoNodes.length > 0) {
         const perLeg = servoNodes.length / (Number(legCount) || 4);
         if (perLeg >= 2) {
@@ -65,10 +66,10 @@ export function resolveDoubtsAutomatically(
     // resolve to battery.
     if (doubt.prompt.toLowerCase().includes('power') || doubt.prompt.toLowerCase().includes('source')) {
       const hasBattery = (graph.nodes ?? []).some(
-        (node: { type?: string; name?: string; partNumber?: string }) =>
-          node?.type === 'power' ||
-          String(node?.name ?? '').toLowerCase().includes('battery') ||
-          String(node?.partNumber ?? '').toLowerCase().includes('battery'),
+        (node) =>
+          node.type === 'power' ||
+          String(node.name ?? '').toLowerCase().includes('battery') ||
+          String(node.partNumber ?? '').toLowerCase().includes('battery'),
       );
       if (hasBattery) {
         resolution.resolved = true;

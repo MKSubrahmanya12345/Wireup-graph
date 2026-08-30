@@ -74,3 +74,13 @@ export const ShieldIcon = ({ className }: IconProps) => (
     <path d="m9 12 2 2 4-4" />
   </svg>
 );
+
+export const RocketIcon = ({ className }: IconProps) => (
+  <svg {...base} className={className} aria-hidden="true">
+    <path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2 0-2.8-.8-.7-2.2-.7-3 .8Z" />
+    <path d="m12 15 6-6" />
+    <path d="M14 3c2 0 4 0 7 0 0 3 0 5 0 7-2 3-6 5-9 5l-3-3c0-3 2-7 5-9Z" />
+    <path d="M9 12 7 10c-2 1-3 3-3 5 2 0 4-1 5-3Z" />
+    <circle cx="14" cy="8" r="1.2" />
+  </svg>
+);

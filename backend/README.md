@@ -1,13 +1,20 @@
 # backend
 
-Wireup API — Express 5 + Mongoose + Zod, TypeScript (ESM).
+Wireup API — Express 5 + Mongoose (optional) + Zod, TypeScript (ESM).
+
+Includes the **Wireup agentic engine** (`src/agentic/`): RAG knowledge base,
+deterministic architect, firmware/MERN synthesisers, and terminal validators
+(g++, npx tsc, vite build) with bounded repair loops. Auth lives in
+`src/auth/` (JWT + bcrypt; Mongo user store when configured, file store
+otherwise). Works fully without any external API key; set `GROQ_API_KEY` only
+if you want optional LLM drafting — still terminally validated either way.
 
 ## Run
 
 ```bash
-bun install        # or: npm install
-cp .env.example .env   # then add GROQ_API_KEY
-bun run dev        # or: npm run dev  → tsx watch src/server.ts
+npm install
+cp .env.example .env   # everything has a working default
+npm run dev            # → tsx watch src/server.ts
 ```
 
 | Script | What it does |

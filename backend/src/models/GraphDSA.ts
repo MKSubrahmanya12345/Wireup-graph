@@ -121,7 +121,11 @@ const graphDSASchema = new Schema<GraphDSADoc>(
     summary: { type: String, default: '', maxlength: 1000 },
     architectureGraph: { type: Schema.Types.Mixed, default: {} },
     verification: { type: Schema.Types.Mixed, default: null },
-    engineeringIssues: { type: [Schema.Types.Mixed], default: [] },
+    // Cast needed: mongoose's generic schema typing is strict about Mixed arrays.
+    engineeringIssues: {
+      type: [Schema.Types.Mixed] as unknown as typeof Schema.Types.Mixed,
+      default: [],
+    },
     ragEvidence: { type: [evidenceSchema], default: [] },
     validationLoops: { type: [loopSchema], default: [] },
     doubts: { type: [doubtSchema], default: [] },

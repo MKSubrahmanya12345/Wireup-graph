@@ -1,27 +1,80 @@
-import { Route, Routes } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
-import AppShell from './components/AppShell';
-import ArchitecturePlanPage from './pages/ArchitecturePlanPage';
-import SignalMapPage from './pages/SignalMapPage';
-import FirmwareSurfacePage from './pages/FirmwareSurfacePage';
-import ArtifactsPage from './pages/ArtifactsPage';
-import NotFoundPage from './pages/NotFoundPage';
+import TopNav from './components/TopNav';
+import Toast from './components/Toast';
+import AuthPage from './pages/AuthPage';
+import BuildPage from './pages/BuildPage';
+import GraphPage from './pages/GraphPage';
+import IntakePage from './pages/IntakePage';
+import { useAuth } from './store/useAuth';
+
+function Workspace({ children }: { children: ReactNode }) {
+  return (
+    <div className="workspace">
+      <TopNav />
+      <main className="workspace-main">{children}</main>
+      <Toast />
+    </div>
+  );
+}
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const user = useAuth((state) => state.user);
+  const bootstrapped = useAuth((state) => state.bootstrapped);
+  const location = useLocation();
+
+  if (!bootstrapped) {
+    return (
+      <div className="boot-splash">
+        <div className="boot-mark">⚡</div>
+        <span>Wireup is warming up…</span>
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  return <Workspace>{children}</Workspace>;
+}
 
 /**
- * Route table. BrowserRouter lives in main.tsx so that <App /> stays
- * testable — wrap it in MemoryRouter when you add tests.
+ * Wireup — three pages behind a login:
+ *   01 prompt & questions · 02 architecture graph · 03 agentic build.
  */
 export default function App() {
+  const bootstrap = useAuth((state) => state.bootstrap);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
   return (
     <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<ArchitecturePlanPage />} />
-        <Route path="signal-map" element={<SignalMapPage />} />
-        <Route path="firmware" element={<FirmwareSurfacePage />} />
-        <Route path="artifacts" element={<ArtifactsPage />} />
-        <Route path="projects/:projectId" element={<ArchitecturePlanPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
+      <Route path="/login" element={<AuthPage />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <IntakePage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/graph"
+        element={
+          <RequireAuth>
+            <GraphPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/build"
+        element={
+          <RequireAuth>
+            <BuildPage />
+          </RequireAuth>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

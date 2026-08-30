@@ -62,18 +62,19 @@ export const getGraphDSAEndpoint = asyncHandler(async (_req: Request, res: Respo
     throw ApiError.serviceUnavailable('Persistence is disabled. Set MONGO_URI to enable Graph DSA storage.');
   }
 
-  const { id } = _req.params;
+  const id = String(_req.params.id ?? '');
   if (!id) throw ApiError.badRequest('Graph DSA id is required.');
 
   const doc = await getGraphDSAById(id);
   if (!doc) throw ApiError.notFound('Graph DSA not found.');
 
+  const record = doc as unknown as Record<string, unknown>;
   res.status(200).json({
     id,
-    projectName: (doc as Record<string, unknown>).projectName,
-    isPerfect: (doc as Record<string, unknown>).isPerfect,
-    prdDocument: (doc as Record<string, unknown>).prdDocument,
-    updatedAt: (doc as Record<string, unknown>).updatedAt,
+    projectName: record.projectName,
+    isPerfect: record.isPerfect,
+    prdDocument: record.prdDocument,
+    updatedAt: record.updatedAt,
   });
 });
 
