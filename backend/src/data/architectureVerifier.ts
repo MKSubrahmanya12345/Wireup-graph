@@ -1,5 +1,6 @@
 import type { ArchitectureGraph } from '../schemas/architecture.js';
 import type { OfficialComponentRecord } from './componentCatalog.js';
+import { resolvePart } from './partLibrary.js';
 
 export type StructuralCheck = {
   id: string;
@@ -106,7 +107,9 @@ export function runStructuralChecks(
 
   for (const node of nodes) {
     const part = node.partNumber?.trim() ?? '';
-    const matched = Boolean(part) && catalogMatchesPart(catalog, part);
+    const matchedCatalog = Boolean(part) && catalogMatchesPart(catalog, part);
+    const matchedLibrary = Boolean(part) && resolvePart(part) !== undefined;
+    const matched = matchedCatalog || matchedLibrary;
     checks.push({
       id: `component-source-${node.id}`,
       title: 'Official component reference',

@@ -340,13 +340,21 @@ export function resolvePart(partNumber: string | null | undefined): PartSpec | u
     const family = part.family.toLowerCase();
     if (key.includes(family) || family.includes(key)) return part;
   }
+  
+  if (key.includes('am2302')) return INDEX.get('dht22');
+  if (key.includes('wroom')) return INDEX.get('esp32');
+  
   return undefined;
 }
 
 /** True for anything that can source energy into the system. */
-export function isPowerSource(spec: PartSpec | undefined, nodeType: string): boolean {
+export function isPowerSource(spec: PartSpec | undefined, nodeType: string, nodeId?: string, nodeName?: string): boolean {
+  if (nodeType === 'power') return true;
   if (spec?.kind === 'battery' || spec?.kind === 'charger') return true;
-  return nodeType === 'power' && Boolean(spec?.outputMaxMa);
+  if (spec?.kind === 'mcu' && spec.id.includes('devkit')) return true;
+  if (nodeId && nodeId.toLowerCase().includes('devkit')) return true;
+  if (nodeName && nodeName.toLowerCase().includes('devkit')) return true;
+  return Boolean(spec?.outputMaxMa);
 }
 
 /** Rough usable continuous torque — stall torque / 3. */

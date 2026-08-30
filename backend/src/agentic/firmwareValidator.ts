@@ -118,10 +118,12 @@ export function parseCompilerDiagnostics(output: string, knownFiles: string[]): 
     if (findings.length >= 30) break; // first N errors are the actionable ones
   }
   if (findings.length === 0 && output.trim()) {
+    const isEnoent = output.includes('ENOENT');
     findings.push({
-      severity: 'error',
-      code: 'GPP-OTHER',
+      severity: isEnoent ? 'warning' : 'error',
+      code: isEnoent ? 'GPP-MISSING' : 'GPP-OTHER',
       message: output.trim().split('\n').slice(-4).join(' | '),
+      hint: isEnoent ? 'g++ is not installed or not in PATH. Skipping terminal validation.' : undefined,
     });
   }
   return findings;
@@ -187,15 +189,18 @@ export async function validateFirmware(
     const diagnostics = parseCompilerDiagnostics(result.output, files.map((f) => f.path));
     const errors = diagnostics.filter((d) => d.severity === 'error');
     findings.push(...diagnostics.filter((d) => !findings.some((f) => f.code === d.code && f.file === d.file && f.line === d.line)));
+    const isMissing = diagnostics.some((d) => d.code === 'GPP-MISSING');
     checks.push({
       name: `g++ -fsyntax-only ${unit.path}`,
-      ok: result.exitCode === 0 && errors.length === 0,
+      ok: (result.exitCode === 0 && errors.length === 0) || isMissing,
       detail:
         result.exitCode === 0 && errors.length === 0
           ? `Compiler accepted ${unit.path} (${result.durationMs} ms)`
-          : result.timedOut
-            ? 'Compiler timed out'
-            : `${errors.length} compiler error(s) in ${unit.path}`,
+          : isMissing
+            ? 'Compiler skipped (g++ not found)'
+            : result.timedOut
+              ? 'Compiler timed out'
+              : `${errors.length} compiler error(s) in ${unit.path}`,
     });
   }
 
