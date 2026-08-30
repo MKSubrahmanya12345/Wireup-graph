@@ -6,7 +6,6 @@ import buildRoutes from './buildRoutes.js';
 import configRoutes from './configRoutes.js';
 import healthRoutes from './healthRoutes.js';
 import projectRoutes from './projectRoutes.js';
-import validationRoutes from './validationRoutes.js';
 import { requireAuth } from '../auth/authMiddleware.js';
 
 const router = Router();
@@ -23,6 +22,5 @@ router.use(requireAuth);
 router.use(architectureRoutes);
 router.use(buildRoutes);
 router.use(projectRoutes);
-router.use(validationRoutes);
 
 export default router;

@@ -76,6 +76,9 @@ const envSchema = z.object({
   AGENTIC_WORKDIR: z.string().min(1).default('/tmp/wireup-agentic'),
   // Set to '0' to skip terminal validation entirely (not recommended).
   AGENTIC_TERMINAL_VALIDATION: z.string().default('1'),
+  // Runtime smoke test: boots the generated backend against a stub device
+  // after the build. Set to '0' to skip (builds get faster, less proven).
+  AGENTIC_SMOKE_TEST: z.string().default('1'),
 });
 
 const parsed = envSchema.safeParse(process.env);

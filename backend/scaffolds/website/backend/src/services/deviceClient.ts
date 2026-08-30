@@ -27,12 +27,26 @@ async function fetchDevice(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), env.DEVICE_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
-      method: endpoint.method,
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    // Commands are form-encoded: the ESP32 WebServer parses server.arg() from
+    // query strings and form bodies — it does NOT parse JSON bodies. Sending
+    // JSON here made every control endpoint 400 with "missing state".
+    const init: RequestInit =
+      body === undefined
+        ? { method: endpoint.method }
+        : {
+            method: endpoint.method,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(
+              Object.fromEntries(
+                Object.entries(body as Record<string, unknown>).map(([key, value]) => [
+                  key,
+                  String(value),
+                ]),
+              ),
+            ).toString(),
+          };
+
+    const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
       throw new Error(`Device returned ${response.status}`);
     }
@@ -43,12 +57,20 @@ async function fetchDevice(
   }
 }
 
-/** All live readings, one field per read endpoint. */
+/**
+ * All live readings, one FULL payload per read endpoint.
+ *
+ * The live payload must stay nested (`live.temperature.temperature_c`): the
+ * dashboard's metric paths resolve through the endpoint id first. Extracting
+ * the number here would flatten `live.temperature` to a primitive and break
+ * every live card. History extraction happens at the telemetry layer via
+ * `endpoint.field` — see routes/telemetry.ts.
+ */
 export async function getLiveReadings(): Promise<Record<string, unknown>> {
   const entries = await Promise.all(
     readEndpoints().map(async (endpoint) => {
-      const value = await fetchDevice(endpoint);
-      return [endpoint.id, value] as const;
+      const payload = await fetchDevice(endpoint);
+      return [endpoint.id, payload] as const;
     }),
   );
   return Object.fromEntries(entries);
@@ -77,6 +99,7 @@ export async function getDeviceInfo(): Promise<Record<string, unknown>> {
     method: 'GET',
     kind: 'json',
   });
-  const uptime = getPath(status, 'uptime');
+  // The firmware's /api/status publishes `uptime_s` (seconds).
+  const uptime = getPath(status, 'uptime_s') ?? getPath(status, 'uptime');
   return { ...info, uptime: uptime ?? null };
 }

@@ -43,13 +43,29 @@ Hard requirements:
 - Do NOT invent component libraries that don't exist. Only standard Arduino libs plus well-known ones (WiFi.h, WebServer.h, Wire.h, Adafruit sensors if listed).
 - The code must be realistic and buildable, with no pseudo-code placeholders.
 
-The user message is JSON with: brief, projectName, and graph (full ArchitectureGraph with nodes/connections/dependencies/software).`;
+JSON CONTRACT (non-negotiable — the dashboard is generated against exactly these keys):
+The user message carries "jsonContract" with an endpoint path and a fields array.
+Every telemetry field the contract lists MUST appear, verbatim, as a top-level
+key in the JSON that the endpoint returns (e.g. json += "\\"temperature_c\\":" + ...).
+Do not rename, nest, prefix, abbreviate or "improve" the field names — a
+dashboard that reads "temperature_c" shows nothing if the device sends
+"temperature". Also publish a "state" field on /api/status (values like
+"online") so the dashboard status badge works.
+
+The user message is JSON with: brief, projectName, graph (full ArchitectureGraph with nodes/connections/dependencies/software), and jsonContract { endpoint, fields } when a dashboard is part of the build.`;
 
 const FIRMWARE_MAX_TOKENS = 8_000;
+
+export interface JsonContractSpec {
+  endpoint: string;
+  fields: string[];
+}
 
 export interface GenerateFirmwareOptions {
   provider?: LlmProvider;
   model?: string;
+  /** The exact JSON keys the generated dashboard will read. */
+  jsonContract?: JsonContractSpec;
 }
 
 export async function generateFirmware(
@@ -67,6 +83,7 @@ export async function generateFirmware(
           brief: brief.slice(0, 6_000),
           projectName,
           graph,
+          jsonContract: options?.jsonContract ?? null,
         }),
       },
     ],

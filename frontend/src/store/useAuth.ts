@@ -17,6 +17,7 @@ interface AuthState {
   bootstrap: () => Promise<void>;
   login: (email: string, password: string) => Promise<boolean>;
   signup: (name: string, email: string, password: string) => Promise<boolean>;
+  guest: () => Promise<boolean>;
   logout: () => void;
   clearError: () => void;
 }
@@ -69,6 +70,22 @@ export const useAuth = create<AuthState>()((set) => ({
       set({
         busy: false,
         error: error instanceof Error ? error.message : 'Signup failed.',
+      });
+      return false;
+    }
+  },
+
+  guest: async () => {
+    set({ busy: true, error: null });
+    try {
+      const session = await api.guest();
+      setAuthToken(session.token);
+      set({ user: session.user, busy: false });
+      return true;
+    } catch (error) {
+      set({
+        busy: false,
+        error: error instanceof Error ? error.message : 'Could not start a guest session.',
       });
       return false;
     }

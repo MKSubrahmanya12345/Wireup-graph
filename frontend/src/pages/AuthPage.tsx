@@ -32,6 +32,7 @@ export default function AuthPage() {
   const error = useAuth((state) => state.error);
   const login = useAuth((state) => state.login);
   const signup = useAuth((state) => state.signup);
+  const guest = useAuth((state) => state.guest);
   const clearError = useAuth((state) => state.clearError);
   const navigate = useNavigate();
 
@@ -47,6 +48,11 @@ export default function AuthPage() {
       mode === 'login'
         ? await login(email.trim(), password)
         : await signup(name.trim(), email.trim(), password);
+    if (ok) navigate('/', { replace: true });
+  };
+
+  const enterAsGuest = async () => {
+    const ok = await guest();
     if (ok) navigate('/', { replace: true });
   };
 
@@ -143,6 +149,10 @@ export default function AuthPage() {
 
           <button className="primary-button auth-submit" disabled={busy} type="submit">
             {busy ? 'One moment…' : mode === 'login' ? 'Log in →' : 'Create my account →'}
+          </button>
+
+          <button className="ghost-button auth-submit" disabled={busy} type="button" onClick={() => void enterAsGuest()}>
+            {busy ? 'One moment…' : 'Skip — try as guest →'}
           </button>
 
           <p className="muted tiny center">

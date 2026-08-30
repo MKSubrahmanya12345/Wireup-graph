@@ -5,7 +5,13 @@ import ts from 'typescript';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import type { BuildFile } from '../schemas/build.js';
-import { materialise, runCommand, type CommandResult } from './terminal.js';
+import {
+  freePort,
+  materialise,
+  runCommand,
+  startServer,
+  type CommandResult,
+} from './terminal.js';
 import type { ValidationFinding, ValidationReport } from './types.js';
 
 /**
@@ -289,9 +295,184 @@ export async function validateSoftware(
     findings.push({ severity: 'error', code: 'VITE-BUILD', message: feBuild.output.split('\n').slice(-4).join(' | ') });
   }
 
+  // ── Tier 2b: runtime smoke — boot the generated app against a stub device ─
+  // Compiling is not running. This gate starts a stub device server, boots
+  // the generated backend against it, and asserts /api/health answers, the
+  // live payload keeps its nested shape, and history stores extracted numbers.
+  // A software zip only ships when the app it contains actually RUNS.
+  const smokeEnabled = env.AGENTIC_SMOKE_TEST !== '0';
+  if (smokeEnabled) {
+    const smoke = await runtimeSmokeTest(treeDir);
+    commands.push(...smoke.commands);
+    checks.push(smoke.check);
+    findings.push(...smoke.findings);
+  } else {
+    checks.push({ name: 'runtime smoke (boot + live)', ok: true, detail: 'Skipped: AGENTIC_SMOKE_TEST=0' });
+  }
+
   const report = finish(checks, findings, commands, startedAt);
   logger.info({ ok: report.ok, durationMs: report.durationMs }, 'software validation complete');
   return report;
+}
+
+/** Stub device the generated backend talks to during the smoke test. */
+const STUB_DEVICE_SOURCE = `
+import http from 'node:http';
+const port = Number(process.env.STUB_PORT ?? 18080);
+http
+  .createServer((req, res) => {
+    const url = req.url ?? '';
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (url.startsWith('/api/sensors')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ temperature_c: 21.4, humidity_pct: 55.2, uptime_s: 1, sample_ts_ms: 0 }));
+      return;
+    }
+    if (url.startsWith('/api/status')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ state: 'online', device: 'stub', ip: '127.0.0.1', ssid: 'stub-net', rssi_dbm: -50, uptime_s: 1 }));
+      return;
+    }
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'not found' }));
+  })
+  .listen(port, '127.0.0.1', () => console.log('[stub-device] listening on ' + port));
+`;
+
+async function httpJson(url: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    return { status: response.status, body: (await response.json().catch(() => null)) as unknown };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Poll until the URL answers or the deadline passes. */
+async function waitForHttp(url: string, deadline: number): Promise<boolean> {
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 800);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (response.ok) return true;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+interface SmokeResult {
+  commands: CommandResult[];
+  check: ValidationReport['checks'][number];
+  findings: ValidationFinding[];
+}
+
+async function runtimeSmokeTest(treeDir: string): Promise<SmokeResult> {
+  const commands: CommandResult[] = [];
+  const findings: ValidationFinding[] = [];
+  const ok = (detail: string) => ({ name: 'runtime smoke (boot + live)', ok: true, detail });
+  const bad = (detail: string) => ({ name: 'runtime smoke (boot + live)', ok: false, detail });
+  const fail = (message: string): SmokeResult => ({
+    commands,
+    check: bad('generated app could not be booted'),
+    findings: [{ severity: 'error', code: 'RUNTIME-SMOKE', message }],
+  });
+
+  const stubPort = await freePort().catch(() => 18080);
+  const apiPort = await freePort().catch(() => 18081);
+  const backendDir = path.join(treeDir, 'backend');
+
+  // 1. Stub device.
+  const stubPath = path.join(treeDir, '.wireup-stub-device.mjs');
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(stubPath, STUB_DEVICE_SOURCE, 'utf8');
+  const stub = startServer(['node', stubPath], {
+    cwd: treeDir,
+    env: { STUB_PORT: String(stubPort) },
+    timeoutMs: 120_000,
+  });
+  if (!(await stub.waitForStart(/\[stub-device\] listening/, 10_000))) {
+    await stub.stop();
+    return fail(`stub device did not start: ${stub.output.slice(-300)}`);
+  }
+
+  // 2. Compile the generated backend (tsc → dist) — tsx would work on Linux
+  //    but node dist/server.js works everywhere the Wireup API itself runs.
+  const build = await runCommand(['npm', 'run', 'build'], {
+    cwd: backendDir,
+    timeoutMs: 180_000,
+  });
+  commands.push(build);
+  if (build.exitCode !== 0) {
+    await stub.stop();
+    return fail(`generated backend failed to compile at runtime: ${build.output.slice(-300)}`);
+  }
+
+  // 3. Boot it against the stub.
+  const api = startServer(['node', 'dist/server.js'], {
+    cwd: backendDir,
+    env: {
+      PORT: String(apiPort),
+      DEVICE_IP: '127.0.0.1',
+      DEVICE_PORT: String(stubPort),
+      DEVICE_HOST: '',
+      MONGO_URI: '',
+    },
+    timeoutMs: 120_000,
+  });
+  const deadline = Date.now() + 25_000;
+  if (!(await waitForHttp(`http://127.0.0.1:${apiPort}/api/health`, deadline))) {
+    await api.stop();
+    await stub.stop();
+    return fail(`generated backend never answered /api/health: ${api.output.slice(-400)}`);
+  }
+
+  // 4. Live payload: nested shape intact (metric path = endpointId.field).
+  const live = (await httpJson(`http://127.0.0.1:${apiPort}/api/telemetry/live`, 5_000)) as {
+    status?: number;
+    body?: Record<string, unknown>;
+  };
+  if (live.status !== 200 || !live.body) {
+    await api.stop();
+    await stub.stop();
+    return fail(`/api/telemetry/live returned ${live.status}: ${JSON.stringify(live.body)}`);
+  }
+  const nestedOk =
+    (live.body.temperature as Record<string, unknown> | undefined)?.temperature_c === 21.4 &&
+    (live.body.humidity as Record<string, unknown> | undefined)?.humidity_pct === 55.2;
+  if (!nestedOk) {
+    await api.stop();
+    await stub.stop();
+    return fail(`live payload lost its nested shape: ${JSON.stringify(live.body).slice(0, 300)}`);
+  }
+
+  // 5. History stores extracted NUMBERS, not payload objects.
+  const history = (await httpJson(
+    `http://127.0.0.1:${apiPort}/api/telemetry/history?limit=10`,
+    5_000,
+  )) as { status?: number; body?: { readings?: { metric: string; value: unknown }[] } };
+  const tempReading = history.body?.readings?.find((r) => r.metric === 'temperature');
+  const historyOk = history.status === 200 && typeof tempReading?.value === 'number' && tempReading.value === 21.4;
+  if (!historyOk) {
+    await api.stop();
+    await stub.stop();
+    return fail(`history did not store extracted numbers: ${JSON.stringify(history.body).slice(0, 300)}`);
+  }
+
+  await api.stop();
+  await stub.stop();
+  return {
+    commands,
+    check: ok(`backend booted, live payload nested (21.4 °C / 55.2 %), history stores extracted numbers`),
+    findings,
+  };
 }
 
 function finish(

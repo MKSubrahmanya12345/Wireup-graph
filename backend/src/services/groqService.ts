@@ -96,7 +96,7 @@ Return JSON only, with this shape:
   ]
 }
 Be conservative: use "verified" only when the component identity, endpoint references, ports, voltage/power assumptions, and interface compatibility are sufficiently supported. Use "review" for unknown part variants, missing pin mappings, or assumptions that need a data-sheet check. Use "blocked" for contradictory voltages, impossible endpoint references, unsafe power paths, or other build-stopping issues.
-Do not invent source URLs. Only cite URLs present in the official component bank.`;
+Do not invent source URLs. Only cite official component bank URLs, and only for parts that are ACTUALLY present in the proposed graph — citing an unrelated part (e.g. a BME280 datasheet for a DHT22 design) is worse than citing nothing.`;
 
 /** @deprecated Use extractJson from llmService */
 export function extractJson(content: string): unknown {

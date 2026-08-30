@@ -3,10 +3,113 @@ import { Link } from 'react-router-dom';
 
 import CodeBlock from '../components/CodeBlock';
 import { downloadZip } from '../lib/zip';
+import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
 import { useGraphStore } from '../store/useGraphStore';
 import { toast } from '../store/useToastStore';
 import type { AgenticBuildResult, ValidationReport } from '../types/build';
+
+interface ToolchainStatus {
+  node: string | null;
+  npm: string | null;
+  gpp: string | null;
+}
+
+/**
+ * Already flashed? Type the IP the firmware printed on Serial and read the
+ * sensor straight from the device — the firmware sends permissive CORS, so
+ * the browser can talk to it directly. Closes the loop between "download"
+ * and "it works on my bench".
+ */
+function LiveDeviceCheck() {
+  const [ip, setIp] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [reading, setReading] = useState<Record<string, unknown> | null>(null);
+  const [fail, setFail] = useState<string | null>(null);
+
+  const test = async () => {
+    const host = ip.trim();
+    if (!host) return;
+    setTesting(true);
+    setReading(null);
+    setFail(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch(`http://${host}/api/sensors`, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Device returned HTTP ${response.status}`);
+      setReading((await response.json()) as Record<string, unknown>);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === 'AbortError'
+          ? 'Timed out.'
+          : error instanceof Error
+            ? error.message
+            : 'Could not reach the device.';
+      setFail(
+        `${message} Is the device on the same Wi-Fi as this computer? The firmware prints its IP on Serial (115200 baud) — or join the device's own hotspot.`,
+      );
+    } finally {
+      clearTimeout(timer);
+      setTesting(false);
+    }
+  };
+
+  return (
+    <section className="live-card">
+      <div className="eyebrow">flashed already? test the live device</div>
+      <div className="live-row">
+        <input
+          className="revise-input"
+          placeholder="Device IP from Serial (e.g. 192.168.1.50)"
+          value={ip}
+          onChange={(event) => setIp(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void test();
+          }}
+        />
+        <button type="button" className="ghost-button" disabled={testing || !ip.trim()} onClick={() => void test()}>
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+      </div>
+      {reading && (
+        <pre className="live-json">
+          {Object.entries(reading)
+            .filter(([key]) => key !== 'sample_ts_ms')
+            .map(([key, value]) => `${key}: ${String(value)}`)
+            .join('\n')}
+        </pre>
+      )}
+      {fail && <p className="live-fail">{fail}</p>}
+    </section>
+  );
+}
+
+/** Show which terminal tools the server can run — g++ missing means the
+ *  firmware compile gate is skipped (structural + contract checks remain). */
+function ToolchainBadge() {
+  const [toolchain, setToolchain] = useState<ToolchainStatus | null>(null);
+  useEffect(() => {
+    void api.healthToolchain().then(setToolchain).catch(() => undefined);
+  }, []);
+  if (!toolchain) return null;
+  const rows = [
+    ['node', toolchain.node],
+    ['npm', toolchain.npm],
+    ['g++', toolchain.gpp],
+  ] as const;
+  return (
+    <div className="toolchain-badge">
+      toolchain:{' '}
+      {rows.map(([name, version]) => (
+        <span key={name} className={version ? 'ok' : 'missing'}>
+          {name} {version ? '✓' : '✗'}
+        </span>
+      ))}
+      {!toolchain.gpp && <span className="muted tiny">firmware gate runs structural + contract checks only</span>}
+    </div>
+  );
+}
 
 const TONE_GLYPH: Record<TerminalLine['tone'], string> = {
   info: ' ',
@@ -181,6 +284,8 @@ export default function BuildPage() {
         </div>
       </section>
 
+      <ToolchainBadge />
+
       <section className="terminal-card">
         <div className="terminal-chrome">
           <span className="dot red" />
@@ -297,6 +402,8 @@ export default function BuildPage() {
               {' · '}iterations: firmware {result.iterations.firmware}, software {result.iterations.software}
             </div>
           </section>
+
+          <LiveDeviceCheck />
 
           <FileBrowser result={result} />
         </>

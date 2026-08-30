@@ -130,6 +130,46 @@ function allocatePins(
   return pins;
 }
 
+const PIN_NAME = /(GPIO\d+|ADC\d+|VP|VN)\b/i;
+
+/**
+ * The graph the human approved on page 02 is the pin-level ground truth.
+ * Its port labels ("DATA → GPIO16") and connection labels carry the pin
+ * assignments — overlay them onto the KB defaults so firmware/config.h
+ * matches what the graph draws. Anything that does not look like a pin is
+ * ignored.
+ */
+function overlayGraphPins(
+  node: ArchitectureGraph['nodes'][number] | undefined,
+  graph: ArchitectureGraph,
+  allocated: Record<string, string>,
+): Record<string, string> {
+  if (!node) return allocated;
+  const pins = { ...allocated };
+  const apply = (role: string | null, pin: string) => {
+    if (!role || !pins[role]) return;
+    pins[role] = pin;
+  };
+
+  for (const port of node.ports ?? []) {
+    const match = port.label?.match(/→\s*([A-Za-z0-9]+)/);
+    if (!match || !PIN_NAME.test(match[1] ?? '')) continue;
+    // Port ids are "<nodeId>-<role>" (e.g. "sensor-dht22-data") — the last
+    // segment names the signal role the pin belongs to.
+    const role = (port.id ?? '').split('-').pop()?.toLowerCase() ?? '';
+    apply(role, match[1]!.toUpperCase());
+  }
+  for (const connection of graph.connections) {
+    if (connection.from !== node.id && connection.to !== node.id) continue;
+    const label = connection.label?.trim() ?? '';
+    if (!PIN_NAME.test(label)) continue;
+    const portRef = connection.from === node.id ? connection.fromPort : connection.toPort;
+    const role = (portRef ?? '').split('-').pop()?.toLowerCase() ?? '';
+    apply(role, label.toUpperCase());
+  }
+  return pins;
+}
+
 /**
  * Build the resolved plan. Modules come from the graph when it has nodes
  * (ground truth the human approved), otherwise straight from the brief.
@@ -145,7 +185,26 @@ export function resolveBuildPlan(
   const { board, matchedOn } = detectBoard(brief, graph);
   const warnings: string[] = [];
 
+  // A graph that genuinely carries TWO of the same part cannot be built
+  // (shared globals/routes would collide) — say so instead of silently
+  // keeping the first.
+  const graphNodeCounts = new Map<string, number>();
+  for (const node of graph.nodes) {
+    if (node.type !== 'sensor' && node.type !== 'actuator' && node.type !== 'interface') continue;
+    const device = deviceForNode(node, graphHits);
+    if (device) graphNodeCounts.set(device.id, (graphNodeCounts.get(device.id) ?? 0) + 1);
+  }
+  for (const [deviceId, count] of graphNodeCounts) {
+    if (count < 2) continue;
+    const device = DEVICE_KNOWLEDGE.find((d) => d.id === deviceId);
+    warnings.push(
+      `The graph contains ${count} ${device?.name ?? deviceId} nodes — only one per build is supported, the first is used.`,
+    );
+  }
+
   // Union: graph hits first (approved design), then anything the brief adds.
+  // Brief + graph both naming the same part is the NORMAL flow — deduped
+  // silently.
   const hitOrder = [...graphHits, ...briefHits];
   const seen = new Set<string>();
   const chosen: RetrievalHit[] = hitOrder.filter((hit) => {
@@ -161,7 +220,10 @@ export function resolveBuildPlan(
   for (const hit of chosen) {
     // Match a graph node so naming stays stable; brief-only modules get one.
     const node = graph.nodes.find((n) => deviceForNode(n, [hit])?.id === hit.device.id);
-    const pins = allocatePins(hit.device, board, usedPins);
+    const pins = overlayGraphPins(node, graph, allocatePins(hit.device, board, usedPins));
+    // Everything the graph pinned counts as taken — later modules must not
+    // silently collide with a pin the human chose.
+    for (const pin of Object.values(pins)) usedPins.add(pin);
 
     const metrics: DeviceMetricSpec[] = hit.device.metrics.map((metric) => ({ ...metric }));
     const controls: DeviceControlSpec[] = hit.device.controls.map((control) => ({ ...control }));

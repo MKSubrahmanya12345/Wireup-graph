@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { execFile } from 'node:child_process';
 
 import { env } from '../config/env.js';
 import { isPersistenceEnabled } from '../config/db.js';
@@ -12,4 +13,28 @@ export function healthCheck(_req: Request, res: Response): void {
     model: env.GROQ_MODEL,
     groqConfigured: Boolean(env.GROQ_API_KEY),
   });
+}
+
+function versionOf(binary: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(binary, ['--version'], { timeout: 5000 }, (error, stdout) => {
+      if (error) return resolve(null);
+      resolve(stdout.split('\n')[0]?.trim() ?? null);
+    });
+  });
+}
+
+/**
+ * GET /api/healthz/toolchain — what the terminal validation gate can run.
+ * The firmware compile gate needs g++; npm/tsc/vite need node + npm. The UI
+ * shows this so a missing compiler is visible BEFORE a build, not as a
+ * "compiler skipped" line afterwards.
+ */
+export async function toolchainCheck(_req: Request, res: Response): Promise<void> {
+  const [node, npm, gpp] = await Promise.all([
+    versionOf('node'),
+    versionOf('npm'),
+    versionOf('g++'),
+  ]);
+  res.status(200).json({ node, npm, gpp });
 }

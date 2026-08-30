@@ -9,15 +9,7 @@ import type {
   Question,
   RequirementsSpec,
 } from '../types/session';
-import type {
-  AgenticEvent,
-  AuthSession,
-  BuildFile,
-  FirmwareResult,
-  FullBuildResult,
-  WebsiteBuildResult,
-  WebsiteRequirements,
-} from '../types/build';
+import type { AgenticEvent, AuthSession, BuildFile } from '../types/build';
 
 /** Vite dev-server proxies /api to the backend, so this stays relative. */
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
@@ -53,8 +45,6 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  console.log('[api] Request:', path, init?.method ?? 'GET');
-  console.log('[api] Request body:', init?.body);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -67,20 +57,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   // Never assume JSON — a proxy 502 returns HTML.
   const raw = await response.text();
-    console.log('[api] Response status:', response.status);
-    console.log('[api] Response raw:', raw.slice(0, 500));
-    let payload: unknown = null;
-    if (raw) {
-      try {
-        payload = JSON.parse(raw);
-        console.log('[api] Response parsed:', payload);
-      } catch {
-        payload = null;
-        console.log('[api] Failed to parse response as JSON');
-      }
+  let payload: unknown = null;
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
     }
+  }
 
-    if (!response.ok) {
+  if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/auth/')) {
       setAuthToken(null);
       onUnauthorized?.();
@@ -108,6 +94,17 @@ export const api = {
     model?: string;
   }) =>
     request<PlanResponse>('/architecture/plan', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Deterministic repair loop for page 02 — normalises the graph and
+   *  re-runs the engineering rules. No LLM, no credits. */
+  repairArchitecture: (body: {
+    graph: ArchitectureGraph;
+    requirements?: RequirementsSpec | null;
+  }) =>
+    request<PlanResponse>('/architecture/repair', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -155,117 +152,24 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // Validation loop endpoints
-  runValidationLoop: (body: {
-    graph: ArchitectureGraph;
-    projectName?: string;
-    doubts?: unknown[];
-    resolvedDoubts?: Record<string, string>;
-    requirements?: RequirementsSpec | null;
-    notes?: string[];
-  }) =>
-    request<{
-      loopId: string;
-      status: 'in_progress' | 'perfect' | 'blocked';
-      doubtsAsked: number;
-      doubtsResolved: number;
-      isPerfect: boolean;
-      score: number;
-      summary: string;
-      doubts: unknown[];
-      validationLoops: unknown[];
-      persistenceEnabled: boolean;
-    }>('/validation/loop', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  checkPerfectStatus: (body: {
-    graph: ArchitectureGraph;
-    doubts?: unknown[];
-    resolvedDoubts?: Record<string, string>;
-    requirements?: RequirementsSpec | null;
-  }) =>
-    request<{
-      isPerfect: boolean;
-      score: number;
-      blocking: boolean;
-      doubtsResolved: number;
-      totalDoubts: number;
-      summary: string;
-    }>('/validation/check-perfect', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  listPerfectGraphDSAs: () =>
-    request<{ count: number; perfectDSAs: unknown[]; persistenceEnabled: boolean }>(
-      '/validation/dsa/perfect',
-    ),
-
-  getGraphDSA: (id: string) =>
-    request<{ id: string; projectName: string; isPerfect: boolean; prdDocument: unknown; updatedAt: string }>(
-      `/validation/dsa/${id}`,
-    ),
-
   // ── Agentic build ───────────────────────────────────────────────────────
   /** The hardcoded MERN scaffold (no LLM call). */
   getScaffold: () =>
     request<{ root: string; files: BuildFile[] }>('/build/scaffold'),
 
-  /** Step 1 — hardware: real firmware source for the device. */
-  buildFirmware: (body: {
-    brief: string;
-    projectName: string;
-    graph: ArchitectureGraph;
-  }) =>
-    request<FirmwareResult>('/build/firmware', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+  healthToolchain: () =>
+    request<{ node: string | null; npm: string | null; gpp: string | null }>('/healthz/toolchain'),
 
-  /** Step 2 — the Website Requirements section. */
-  buildWebsiteRequirements: (body: {
-    brief: string;
-    projectName: string;
-    graph: ArchitectureGraph;
-    firmware?: FirmwareResult;
-  }) =>
-    request<WebsiteRequirements>('/build/website-requirements', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  /** Step 3 — assemble the MERN codebase (scaffold + AI wiring). */
-  buildWebsite: (body: {
-    projectName: string;
-    graph: ArchitectureGraph;
-    websiteRequirements?: WebsiteRequirements | null;
-    firmware?: FirmwareResult;
-  }) =>
-    request<WebsiteBuildResult>('/build/website', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  /** Run the whole pipeline in order: firmware → requirements → website. */
   signup: (body: { name: string; email: string; password: string }) =>
     request<AuthSession>('/auth/signup', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** One-click session — no account needed. */
+  guest: () => request<AuthSession>('/auth/guest', { method: 'POST', body: JSON.stringify({}) }),
 
   login: (body: { email: string; password: string }) =>
     request<AuthSession>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
 
   me: () => request<{ user: AuthSession['user'] }>('/auth/me'),
-
-  buildAll: (body: {
-    brief: string;
-    projectName: string;
-    graph: ArchitectureGraph;
-  }) =>
-    request<FullBuildResult>('/build/all', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
 };
 /**
  * Stream the agentic build: POST + NDJSON reader, one callback per event.
@@ -278,6 +182,8 @@ export async function streamAgenticBuild(
     graph: unknown;
     provider?: string;
     model?: string;
+    /** Page-01's sample-interval answer — honored in firmware/config.h. */
+    sampleIntervalMs?: number;
   },
   onEvent: (event: AgenticEvent) => void,
   signal?: AbortSignal,

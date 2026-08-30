@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { streamAgenticBuild } from '../services/api';
+import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useDesignSession } from './useDesignSession';
 import { useGraphStore } from './useGraphStore';
 import type { AgenticBuildResult, AgenticEvent, ValidationReport } from '../types/build';
@@ -36,22 +37,33 @@ function makeLine(partial: Omit<TerminalLine, 'id'>): TerminalLine {
 
 const MAX_LINES = 600;
 
+// Survive page refreshes: the built zips (firmware + software trees) stay
+// downloadable after a reload instead of vanishing with the page state.
+const BUILD_PERSIST_KEY = 'wireup.build.v1';
+const persistedBuild = loadPersisted<{
+  result: AgenticBuildResult | null;
+  reports: BuildState['reports'];
+}>(BUILD_PERSIST_KEY);
+
 export const useBuildStore = create<BuildState>()((set, get) => ({
   running: false,
   lines: [],
-  reports: {},
-  result: null,
+  reports: persistedBuild?.reports ?? {},
+  result: persistedBuild?.result ?? null,
   error: null,
   abort: null,
 
   run: async (options?: { provider?: string; model?: string }) => {
     const { graph } = useGraphStore.getState();
-    const { brief: rawBrief, llmOptions } = useDesignSession.getState();
+    const { brief: rawBrief, llmOptions, answers } = useDesignSession.getState();
     const brief = rawBrief.trim();
     if (!brief) {
       set({ error: 'Write the prompt on page 01 first.' });
       return;
     }
+    // Page-01's "how often should the device sample?" answer must reach the
+    // build — without it the firmware silently falls back to the KB default.
+    const intervalAnswer = Number(answers['sample-interval']);
 
     const abort = new AbortController();
     set({
@@ -139,6 +151,8 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
           graph,
           provider: options?.provider ?? llmOptions.provider,
           model: options?.model ?? llmOptions.model,
+          sampleIntervalMs:
+            Number.isFinite(intervalAnswer) && intervalAnswer > 0 ? intervalAnswer : undefined,
         },
         handle,
         abort.signal,
@@ -159,5 +173,15 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
     set({ running: false, abort: null });
   },
 
-  clear: () => set({ lines: [], reports: {}, result: null, error: null }),
+  clear: () => {
+    clearPersisted(BUILD_PERSIST_KEY);
+    set({ lines: [], reports: {}, result: null, error: null });
+  },
 }));
+
+// Persist the shipped artifacts on every change — refresh-proof.
+useBuildStore.subscribe((state) => {
+  if (state.result || Object.keys(state.reports).length > 0) {
+    persistTo(BUILD_PERSIST_KEY, { result: state.result, reports: state.reports });
+  }
+});

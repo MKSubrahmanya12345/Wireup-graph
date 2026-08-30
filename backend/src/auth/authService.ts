@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -86,6 +88,22 @@ export interface TokenPayload {
   sub: string;
   email: string;
   name: string;
+  guest?: boolean;
+}
+
+/** One-click session for people who just want to try the tool. */
+export function issueGuestSession(): AuthSession {
+  const now = new Date().toISOString();
+  const token = jwt.sign(
+    { sub: `guest-${crypto.randomUUID()}`, email: 'guest@wireup.local', name: 'Guest', guest: true },
+    env.JWT_SECRET,
+    { expiresIn: env.AUTH_TOKEN_TTL_SECONDS },
+  );
+  return {
+    token,
+    expiresIn: env.AUTH_TOKEN_TTL_SECONDS,
+    user: { id: 'guest', name: 'Guest', email: 'guest@wireup.local', createdAt: now },
+  };
 }
 
 export function verifyToken(token: string): TokenPayload {

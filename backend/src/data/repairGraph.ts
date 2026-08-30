@@ -27,6 +27,7 @@ export type RepairCode =
   | 'NODE_MISSING_ID'
   | 'PORT_MISSING_ID'
   | 'PORT_ID_DUPLICATE'
+  | 'PORT_RAIL_NORMALISED'
   | 'PORT_REF_RESOLVED'
   | 'PORT_REF_DROPPED'
   | 'CONNECTION_DANGLING'
@@ -111,6 +112,22 @@ const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[
 /** Case/punctuation-insensitive key, so "GPIO 4", "gpio4" and "GPIO4" match. */
 function portKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Canonical spelling for a power-rail label, or null when the label is not a
+ * rail. Handles the shorthand models actually emit: "3V3" → "3.3 V",
+ * "VIN 5V" → "5 V", "3.3 V" → "3.3 V". Non-rail labels ("GPIO4", "SDA")
+ * return null and are left untouched.
+ */
+function canonicalRailLabel(label: string): string | null {
+  if (!label) return null;
+  const match = label.trim().match(/^(?:vcc|vin|vdd|vddq|vbat|vref|avcc|avdd)?\s*(\d+(?:\.\d+)?)\s*[vV](\d+)?\s*$/);
+  if (!match) return null;
+  const volts = match[2] ? `${match[1]}.${match[2]}` : match[1];
+  const num = Number(volts);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return `${volts} V`;
 }
 
 /**
@@ -303,7 +320,22 @@ export function repairGraph(raw: unknown): RepairResult {
     const ports = rawPorts.map((port, portPosition) => {
       const copy: RawPort = { ...port };
       let portId = text(copy.id);
-      const label = text(copy.label);
+      const rawLabel = text(copy.label);
+
+      // Normalise rail shorthand ("3V3", "5v", "VIN 5V") to canonical
+      // "<n> V" BEFORE the id is derived, so the engineering voltage rules
+      // read 3.3 V instead of misreading "3V3" as a 3 V rail.
+      const canonical = canonicalRailLabel(rawLabel);
+      const label = canonical ?? rawLabel;
+      if (canonical && canonical !== rawLabel) {
+        copy.label = canonical;
+        repairs.push({
+          code: 'PORT_RAIL_NORMALISED',
+          severity: 'info',
+          message: `${text(node.name) || id}: rail label "${rawLabel}" normalised to "${canonical}" so the voltage checks read the real rail.`,
+          targetId: id,
+        });
+      }
 
       if (!portId) {
         portId = slugify(label, `port-${portPosition + 1}`);

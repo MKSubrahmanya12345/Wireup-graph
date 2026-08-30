@@ -93,13 +93,6 @@ export const firmwareResultSchema = z.object({
 });
 export type FirmwareResult = z.infer<typeof firmwareResultSchema>;
 
-export const firmwareBodySchema = z.object({
-  brief: z.string().trim().default(''),
-  projectName: z.string().trim().default('Untitled hardware system'),
-  graph: z.unknown().optional(),
-  requirements: z.unknown().nullish(),
-});
-
 // ── Website requirements ──────────────────────────────────────────────────
 const optionalNumber = z
   .any()

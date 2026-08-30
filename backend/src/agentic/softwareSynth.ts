@@ -26,9 +26,10 @@ function tsString(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
-function renderDeviceSpec(plan: DeviceBuildPlan): string {
+function renderDeviceSpec(plan: DeviceBuildPlan, fieldOverrides: Record<string, string> = {}): string {
   const metricEntries = plan.modules.flatMap((module) =>
     module.metrics.map((metric) => {
+      const field = fieldOverrides[metric.id] ?? metric.jsonField;
       const minMax =
         metric.min !== undefined && metric.max !== undefined
           ? `\n    min: ${metric.min},\n    max: ${metric.max},`
@@ -37,7 +38,7 @@ function renderDeviceSpec(plan: DeviceBuildPlan): string {
     id: ${tsString(metric.id)},
     label: ${tsString(metric.label)},
     unit: ${tsString(metric.unit)},
-    path: ${tsString(`${metric.id}.${metric.jsonField}`)},
+    path: ${tsString(`${metric.id}.${field}`)},
     numeric: true,${minMax}
   },`;
     }),
@@ -129,6 +130,9 @@ function renderDeviceEndpoints(plan: DeviceBuildPlan): string {
     method: 'GET',
     kind: 'json',
     unit: ${tsString(metric.unit)},
+    // The exact JSON key this metric reads off the device payload — used to
+    // extract a number for history instead of storing the whole payload.
+    field: ${tsString(metric.jsonField)},
   },`);
     }
   }
@@ -171,10 +175,13 @@ export interface DeviceEndpoint {
   kind: 'text' | 'json';
   unit?: string;
   payload?: boolean;
+  /** JSON key inside the payload this metric reads (for history extraction). */
+  field?: string;
 }
 
 export function deviceBaseUrl(): string {
-  return \`\${env.DEVICE_PROTOCOL}://\${env.DEVICE_IP}:\${env.DEVICE_PORT}\`;
+  const host = env.DEVICE_IP || env.DEVICE_HOST || '192.168.1.100';
+  return \`\${env.DEVICE_PROTOCOL}://\${host}:\${env.DEVICE_PORT}\`;
 }
 
 export function readEndpoints(): DeviceEndpoint[] {
@@ -264,7 +271,7 @@ function renderWebsiteRequirements(plan: DeviceBuildPlan): WebsiteRequirements {
   };
 }
 
-const SCAFFOLD_REPLACEMENTS = new Map<string, (plan: DeviceBuildPlan) => string>([
+const SCAFFOLD_REPLACEMENTS = new Map<string, (plan: DeviceBuildPlan, fieldOverrides: Record<string, string>) => string>([
   ['frontend/src/lib/deviceSpec.ts', renderDeviceSpec],
   ['backend/src/config/deviceEndpoints.ts', renderDeviceEndpoints],
 ]);
@@ -325,16 +332,32 @@ the board's own \`${plan.slug}\` hotspot)._
 `;
 }
 
-/** Merge scaffold + generated wiring into the final software tree. */
-export async function synthesizeSoftware(plan: DeviceBuildPlan): Promise<SoftwareSynthResult> {
+/**
+ * Merge scaffold + generated wiring into the final software tree.
+ *
+ * `fieldOverrides` re-points a metric id at a JSON field the firmware actually
+ * publishes (e.g. the LLM draft emits `temperature` while the KB calls it
+ * `temperature_c`). Omit to use the knowledge-base fields — the deterministic
+ * firmware publishes exactly those.
+ */
+export async function synthesizeSoftware(
+  plan: DeviceBuildPlan,
+  fieldOverrides: Record<string, string> = {},
+): Promise<SoftwareSynthResult> {
   const scaffold = await loadScaffold();
   const envExampleLines = [
     'PORT=8080',
-    'CORS_ORIGIN=http://localhost:5173',
+    // Wide-open origins: the dashboard is for every computer/phone on your
+    // LAN, not just the machine that runs it. The API holds no secrets.
+    'CORS_ORIGIN=*',
     '',
     '# The device the firmware zip produces. Flash it, watch Serial, fill this in.',
     'DEVICE_PROTOCOL=http',
-    `DEVICE_IP=192.168.1.50`,
+    '# Option A (recommended): mDNS hostname — macOS/Linux work out of the box,',
+    '# Windows needs Bonjour installed. Printed by the firmware as <slug>.local',
+    `DEVICE_HOST=${plan.slug}.local`,
+    '# Option B: the IP the firmware printed on Serial. Wins over DEVICE_HOST.',
+    '# DEVICE_IP=192.168.1.50',
     'DEVICE_PORT=80',
     'DEVICE_TIMEOUT_MS=4000',
     '',
@@ -346,7 +369,7 @@ export async function synthesizeSoftware(plan: DeviceBuildPlan): Promise<Softwar
   for (const file of scaffold) {
     const replacement = SCAFFOLD_REPLACEMENTS.get(file.path);
     if (replacement) {
-      files.push({ path: file.path, content: replacement(plan) });
+      files.push({ path: file.path, content: replacement(plan, fieldOverrides) });
       continue;
     }
     if (file.path === 'backend/.env.example') {

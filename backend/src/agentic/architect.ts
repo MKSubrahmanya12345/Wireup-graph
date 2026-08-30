@@ -467,6 +467,23 @@ export function deterministicPlan(
   const blocking = hasBlockingIssue(issues);
   const structuralChecks = runStructuralChecks(graph, officialComponentCatalog);
   const matchedSources = catalogMatches(graph as unknown as Record<string, unknown>);
+  void matchedSources;
+
+  // Evidence is the datasheet of each part actually in the design — never an
+  // unrelated "reference" part. The DHT22 design cites the Aosong DHT22
+  // datasheet, not the BME280.
+  const sources: VerificationReport['sources'] = [
+    ...moduleDevices.map(({ device }) => ({
+      title: `${device.manufacturer} — ${device.name} datasheet`,
+      url: device.datasheet,
+      usedFor: `${device.name} pinout, supply range and interface requirements.`,
+    })),
+    {
+      title: 'Espressif — ESP32-DevKitC hardware reference',
+      url: 'https://docs.espressif.com/projects/esp-idf/en/latest/esp32/hw-reference/esp32/get-started-devkitc.html',
+      usedFor: `${board.name} pin map and 3.3 V rail specifications.`,
+    },
+  ].filter((source) => /^https?:\/\//i.test(source.url));
 
   const passCount = structuralChecks.filter((c) => c.status === 'pass').length;
   const verification: VerificationReport = {
@@ -475,7 +492,7 @@ export function deterministicPlan(
     summary:
       'Plan produced by the Wireup deterministic architect: every module comes from the device knowledge base with engineering-rule validation. Pin map is guaranteed to match the generated firmware.',
     checks: structuralChecks,
-    sources: catalogSources(matchedSources),
+    sources,
   };
 
   return { graph, verification, issues, blocking, repairs: [] };

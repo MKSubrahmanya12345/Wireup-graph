@@ -6,6 +6,7 @@ import {
   sendControl,
 } from '../services/deviceClient.js';
 import { getHistory, recordReadings } from '../services/historyStore.js';
+import { getPath } from '../lib/safeJson.js';
 
 /**
  * Telemetry + control API for the device dashboard.
@@ -40,15 +41,23 @@ router.get('/telemetry/live', async (_req, res) => {
   try {
     const readings = await getLiveReadings();
     const now = new Date();
-    // Opportunistically persist for history; never fail the response on it.
+    // History stores the NUMBER each metric reads (endpoint.field), not the
+    // whole payload — the live response keeps the full nested payload for the
+    // dashboard's dotted metric paths. Persistence is opportunistic: a
+    // history failure never fails the live response.
     await recordReadings(
-      Object.entries(readings).map(([metric, value]) => ({
-        device: 'wireup-device',
-        metric,
-        value,
-        unit: readEndpoints().find((entry) => entry.id === metric)?.unit ?? '',
-        createdAt: now,
-      })),
+      Object.entries(readings).map(([metric, payload]) => {
+        const endpoint = readEndpoints().find((entry) => entry.id === metric);
+        const value =
+          endpoint?.field !== undefined ? (getPath(payload, endpoint.field) ?? payload) : payload;
+        return {
+          device: 'wireup-device',
+          metric,
+          value,
+          unit: endpoint?.unit ?? '',
+          createdAt: now,
+        };
+      }),
     );
     res.json({ ts: now.toISOString(), ...readings });
   } catch (error) {

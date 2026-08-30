@@ -137,16 +137,8 @@ export default function IntakePage() {
             className="primary-button"
             disabled={!brief.trim() || busy}
             onClick={() => {
-                          console.log('[IntakePage] Generate button clicked');
-                          console.log('[IntakePage] Brief:', brief.trim());
-                          console.log('[IntakePage] Provider:', provider);
-                          console.log('[IntakePage] Model:', model);
-                          console.log('[IntakePage] Current stage:', stage);
-                          console.log('[IntakePage] Setting LLM options...');
                           setLlmOptions({ provider, model });
-                          console.log('[IntakePage] Calling startInterpretation...');
                           void startInterpretation({ provider, model });
-                          console.log('[IntakePage] startInterpretation called');
                         }}
           >
             {stage === 'interpreting'

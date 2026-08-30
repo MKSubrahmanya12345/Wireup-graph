@@ -25,14 +25,17 @@ export interface DeviceEndpoint {
   unit?: string;
   /** Whether this endpoint requires a command body (POST). */
   payload?: boolean;
+  /** JSON key inside the payload this metric reads (for history extraction). */
+  field?: string;
 }
 
 /**
  * The base URL of the device as seen by the backend.
- * Overridable wholesale via DEVICE_ENDPOINTS_JSON.
+ * Prefers DEVICE_IP, then the mDNS hostname, then a sane default.
  */
 export function deviceBaseUrl(): string {
-  return `${env.DEVICE_PROTOCOL}://${env.DEVICE_IP}:${env.DEVICE_PORT}`;
+  const host = env.DEVICE_IP || env.DEVICE_HOST || '192.168.1.100';
+  return `${env.DEVICE_PROTOCOL}://${host}:${env.DEVICE_PORT}`;
 }
 
 /** All endpoints the dashboard reads live / charts. */

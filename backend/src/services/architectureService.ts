@@ -129,11 +129,16 @@ export async function planAndVerify(
       label: 'Architecture verification response',
       provider: options.provider,
     });
+    // The reviewer may cite any catalog URL — including parts that are not in
+    // this design (a DHT22 plan citing the BME280 "for interface patterns").
+    // Only evidence matching a part actually in the graph is kept; if nothing
+    // survives, fall back to the parts that ARE here.
+    const relevantSources = filterSourcesToGraph(candidate.sources, nextGraph, matchedSources);
     verification = {
       ...candidate,
       // Structural checks are the floor — the model may add, never subtract.
       checks: mergeChecks(structuralChecks, candidate.checks),
-      sources: candidate.sources.length ? candidate.sources : catalogSources(matchedSources),
+      sources: relevantSources,
     };
   } catch (error) {
     logger.error({ err: error }, 'Independent architecture verification failed');
@@ -150,11 +155,42 @@ export async function planAndVerify(
   return { graph: nextGraph, verification, issues, blocking, repairs };
 }
 
-/** Keeps every structural check, appending model checks that target something new. */
+/**
+ * Keeps only evidence that is relevant to this graph: a source URL must match
+ * a part record that actually appears among the nodes. This kills the
+ * "BME280 cited for a DHT22 design" class of noise — the model is told to
+ * cite catalog URLs only, but it also cited *irrelevant* catalog parts.
+ */
+function filterSourcesToGraph(
+  sources: VerificationReport['sources'],
+  graph: ArchitectureGraph,
+  matched: ReturnType<typeof catalogMatches>,
+): VerificationReport['sources'] {
+  const relevantUrls = new Set(matched.map((record) => record.officialUrl.toLowerCase()));
+  const kept = sources.filter((source) => relevantUrls.has(source.url.toLowerCase()));
+  return kept.length > 0 ? kept : catalogSources(matched);
+}
+
+/**
+ * Keeps every structural check, appending model checks that target something
+ * new. Dedupes on id AND on (title, scope, targetId) — the reviewer model
+ * often re-states a structural check verbatim under its own id, which used to
+ * surface as the same "Connection endpoints resolve" entry three times.
+ */
 function mergeChecks(
   structural: VerificationReport['checks'],
   modelChecks: VerificationReport['checks'],
 ): VerificationReport['checks'] {
-  const seen = new Set(structural.map((check) => check.id));
-  return [...structural, ...modelChecks.filter((check) => !seen.has(check.id))];
+  const seenIds = new Set(structural.map((check) => check.id));
+  const seenSubstance = new Set(
+    structural.map((check) => `${check.title}|${check.scope}|${check.targetId ?? ''}`),
+  );
+  return [
+    ...structural,
+    ...modelChecks.filter(
+      (check) =>
+        !seenIds.has(check.id) &&
+        !seenSubstance.has(`${check.title}|${check.scope}|${check.targetId ?? ''}`),
+    ),
+  ];
 }
