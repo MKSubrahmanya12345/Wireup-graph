@@ -666,3 +666,74 @@ h1 { margin: 6px 0 0; font-size: clamp(24px, 3vw, 32px); letter-spacing: -0.055e
   cursor: pointer; white-space: nowrap;
 }
 .secondary-button:hover { border-color: var(--teal); color: var(--teal-dark); }
+
+/* ── Agentic Build ──────────────────────────────────────────────────────── */
+.build-panel {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 18px;
+  margin-top: 6px;
+  background: var(--panel);
+}
+.build-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+.step-num {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 700 11px "DM Mono", monospace;
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+.step.done .step-num { background: var(--teal); color: #0f1414; }
+.step strong { display: block; font-size: 12px; letter-spacing: -0.01em; }
+.step p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.build-actions { display: flex; gap: 10px; align-items: center; }
+.build-error { color: var(--danger, #d0634f); font-size: 12px; margin-top: 10px; }
+.build-section {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.build-section-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+}
+.build-section-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+.code-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.code-list-title { font-size: 12px; margin: 12px 0 2px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.code-file {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.code-file-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; background: var(--panel-2); gap: 10px;
+}
+.code-file-path { font: 11px "DM Mono", monospace; color: var(--ink); word-break: break-all; }
+.code-file-actions { display: flex; align-items: center; gap: 10px; }
+.code-lang {
+  font: 9px "DM Mono", monospace; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 2px 6px;
+}
+.code-pre {
+  margin: 0; padding: 14px 16px;
+  max-height: 380px; overflow: auto;
+  background: #0b0e12; color: #d8e0e6;
+  font: 11px/1.55 "DM Mono", monospace;
+  white-space: pre;
+}

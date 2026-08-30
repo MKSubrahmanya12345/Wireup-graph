@@ -9,6 +9,13 @@ import type {
   Question,
   RequirementsSpec,
 } from '../types/session';
+import type {
+  BuildFile,
+  FirmwareResult,
+  FullBuildResult,
+  WebsiteBuildResult,
+  WebsiteRequirements,
+} from '../types/build';
 
 /** Vite dev-server proxies /api to the backend, so this stays relative. */
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
@@ -165,4 +172,55 @@ export const api = {
     request<{ id: string; projectName: string; isPerfect: boolean; prdDocument: unknown; updatedAt: string }>(
       `/validation/dsa/${id}`,
     ),
+
+  // ── Agentic build ───────────────────────────────────────────────────────
+  /** The hardcoded MERN scaffold (no LLM call). */
+  getScaffold: () =>
+    request<{ root: string; files: BuildFile[] }>('/build/scaffold'),
+
+  /** Step 1 — hardware: real firmware source for the device. */
+  buildFirmware: (body: {
+    brief: string;
+    projectName: string;
+    graph: ArchitectureGraph;
+  }) =>
+    request<FirmwareResult>('/build/firmware', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Step 2 — the Website Requirements section. */
+  buildWebsiteRequirements: (body: {
+    brief: string;
+    projectName: string;
+    graph: ArchitectureGraph;
+    firmware?: FirmwareResult;
+  }) =>
+    request<WebsiteRequirements>('/build/website-requirements', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Step 3 — assemble the MERN codebase (scaffold + AI wiring). */
+  buildWebsite: (body: {
+    projectName: string;
+    graph: ArchitectureGraph;
+    websiteRequirements?: WebsiteRequirements | null;
+    firmware?: FirmwareResult;
+  }) =>
+    request<WebsiteBuildResult>('/build/website', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Run the whole pipeline in order: firmware → requirements → website. */
+  buildAll: (body: {
+    brief: string;
+    projectName: string;
+    graph: ArchitectureGraph;
+  }) =>
+    request<FullBuildResult>('/build/all', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
