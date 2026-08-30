@@ -1,7 +1,11 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
+
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 
-export type ChatMessage = { role: 'system' | 'user'; content: string };
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 export type LlmProvider = 'groq' | 'bedrock';
 
@@ -40,11 +44,8 @@ export async function callLlm(
 ): Promise<string> {
   const provider = options.provider ?? env.LLM_PROVIDER;
   const model = options.model ?? DEFAULT_MODELS[provider];
-  
-  console.log('[llmService] callLlm called');
-  console.log('[llmService] Provider:', provider);
-  console.log('[llmService] Model:', model);
-  console.log('[llmService] Max tokens:', options.maxTokens);
+
+  logger.debug({ provider, model, maxTokens: options.maxTokens }, 'LLM call');
 
   switch (provider) {
     case 'groq':
@@ -109,22 +110,13 @@ async function callBedrock(
   model: string,
   options: LlmCallOptions,
 ): Promise<string> {
-  console.log('[callBedrock] Called with model:', model);
-  
-  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY || !env.AWS_REGION) {
-    console.log('[callBedrock] Missing AWS credentials');
-    throw new LlmError('AWS credentials not configured (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION)', 503, 'bedrock');
-  }
-  
-  console.log('[callBedrock] AWS Region:', env.AWS_REGION);
-
-  // Import AWS SDK dynamically to avoid requiring it when not using Bedrock
+  // Import the AWS SDK dynamically so it is only loaded when Bedrock is used.
   let BedrockRuntimeClient: any;
-  let InvokeModelCommand: any;
+  let ConverseCommand: any;
   try {
     const awsModule = await import('@aws-sdk/client-bedrock-runtime');
     BedrockRuntimeClient = awsModule.BedrockRuntimeClient;
-    InvokeModelCommand = awsModule.InvokeModelCommand;
+    ConverseCommand = awsModule.ConverseCommand;
   } catch {
     throw new LlmError(
       'AWS Bedrock SDK not installed. Run: npm install @aws-sdk/client-bedrock-runtime',
@@ -134,56 +126,50 @@ async function callBedrock(
   }
 
   try {
-      console.log('[callBedrock] Creating Bedrock client...');
-      const client = new BedrockRuntimeClient({
-        region: env.AWS_REGION,
-        credentials: {
-          accessKeyId: env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-        },
-      });
-      console.log('[callBedrock] Bedrock client created');
+    // Let the AWS SDK resolve credentials via its usual chain (env vars,
+    // AWS_PROFILE, ~/.aws/credentials, IAM role, ECS/EC2 metadata, etc.).
+    // Passing no credentials object also picks up AWS_SESSION_TOKEN.
+    const clientConfig: Record<string, unknown> = { region: env.AWS_REGION };
+    if (env.BEDROCK_ENDPOINT) clientConfig.endpoint = env.BEDROCK_ENDPOINT;
+    const client = new BedrockRuntimeClient(clientConfig);
 
-      // Format messages for Bedrock
-      const systemMessage = messages.find(m => m.role === 'system')?.content ?? '';
-      const userMessages = messages.filter(m => m.role === 'user');
-      console.log('[callBedrock] System message length:', systemMessage.length);
-      console.log('[callBedrock] User messages count:', userMessages.length);
+    // Converse is the model-neutral Bedrock API: it accepts the same
+    // messages/system/inference shape for Claude, Nova, MiniMax, Kimi, etc.
+    const system = messages
+      .filter((m) => m.role === 'system')
+      .map((m) => ({ text: m.content }));
+    const conversation = messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: [{ text: m.content }],
+      }));
 
-      // Bedrock format - minimax uses a specific format
-      const bodyPayload = {
-        messages: userMessages.map(m => ({
-          role: m.role === 'user' ? 'user' : 'assistant',
-          content: m.content,
-        })),
-        system: systemMessage,
-        max_tokens: options.maxTokens,
-        temperature: 0.1,
-      };
-      console.log('[callBedrock] Request body:', JSON.stringify(bodyPayload).slice(0, 200));
-      const body = JSON.stringify(bodyPayload);
-
-    const command = new InvokeModelCommand({
+    const commandInput: Record<string, unknown> = {
       modelId: model,
-      body,
-      contentType: 'application/json',
-      accept: 'application/json',
-    });
-        console.log('[callBedrock] Sending command to Bedrock...');
+      messages: conversation,
+      inferenceConfig: {
+        maxTokens: options.maxTokens,
+        temperature: 0.1,
+      },
+    };
 
-        const response = await client.send(command);
-        console.log('[callBedrock] Response received');
-        const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-        console.log('[callBedrock] Response body parsed:', JSON.stringify(responseBody).slice(0, 200));
+    if (system.length > 0) {
+      commandInput.system = system;
+    }
 
-    // Extract content based on model response structure
-    const content = responseBody.content?.[0]?.text ??
-      responseBody.output?.message?.content?.[0]?.text ??
-      responseBody.completion ??
-      responseBody.choices?.[0]?.message?.content;
+    const command = new ConverseCommand(commandInput);
+    const response = await client.send(command);
 
+    // Reasoning models return a reasoningContent block before the final text.
+    const blocks = response?.output?.message?.content ?? [];
+    const content = collectConverseText(blocks);
     if (!content) {
-      throw new LlmError(`Bedrock response did not contain expected content structure. Response: ${JSON.stringify(responseBody).slice(0, 200)}`, undefined, 'bedrock');
+      throw new LlmError(
+        `Bedrock response did not contain text content. Response: ${JSON.stringify(response).slice(0, 300)}`,
+        undefined,
+        'bedrock',
+      );
     }
 
     logger.debug({ provider: 'bedrock', model, tokens: options.maxTokens }, 'LLM call completed');
@@ -196,6 +182,17 @@ async function callBedrock(
       'bedrock',
     );
   }
+}
+
+/** Join every `text` block in a Converse response, skipping reasoning blocks. */
+function collectConverseText(blocks: Array<{ text?: string }>): string | undefined {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (typeof block?.text === 'string' && block.text.length > 0) {
+      parts.push(block.text);
+    }
+  }
+  return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
 /** Handles bare JSON, fenced JSON, and JSON wrapped in prose. */
@@ -212,17 +209,43 @@ export function extractJson(content: string): unknown {
   }
 }
 
+/** True when explicit IAM keys, a profile, a role source, or local AWS files are configured. */
+function hasBedrockCredentialSource(): boolean {
+  const sharedCredentialsFile =
+    process.env.AWS_SHARED_CREDENTIALS_FILE ?? path.join(homedir(), '.aws', 'credentials');
+  const sharedConfigFile =
+    process.env.AWS_CONFIG_FILE ?? path.join(homedir(), '.aws', 'config');
+
+  const hasExplicitKeys = Boolean(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY);
+  const hasNonExplicitSource = Boolean(
+    process.env.AWS_PROFILE ||
+    process.env.AWS_DEFAULT_PROFILE ||
+    process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+    process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+    process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
+    process.env.AWS_ROLE_ARN ||
+    existsSync(sharedCredentialsFile) ||
+    existsSync(sharedConfigFile),
+  );
+
+  return hasExplicitKeys || hasNonExplicitSource;
+}
+
+function isBedrockConfigured(): boolean {
+  return Boolean(env.AWS_REGION) && hasBedrockCredentialSource();
+}
+
 /** Check if LLM is available (any provider configured). */
 export function isLlmAvailable(provider?: LlmProvider): boolean {
   if (provider === 'groq') return Boolean(env.GROQ_API_KEY);
-  if (provider === 'bedrock') return Boolean(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY && env.AWS_REGION);
-  return Boolean(env.GROQ_API_KEY) || Boolean(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY && env.AWS_REGION);
+  if (provider === 'bedrock') return isBedrockConfigured();
+  return Boolean(env.GROQ_API_KEY) || isBedrockConfigured();
 }
 
 /** Get available providers. */
 export function getAvailableProviders(): LlmProvider[] {
   const providers: LlmProvider[] = [];
   if (env.GROQ_API_KEY) providers.push('groq');
-  if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY && env.AWS_REGION) providers.push('bedrock');
+  if (isBedrockConfigured()) providers.push('bedrock');
   return providers;
 }

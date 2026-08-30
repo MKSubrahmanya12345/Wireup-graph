@@ -6,8 +6,9 @@ Includes the **Wireup agentic engine** (`src/agentic/`): RAG knowledge base,
 deterministic architect, firmware/MERN synthesisers, and terminal validators
 (g++, npx tsc, vite build) with bounded repair loops. Auth lives in
 `src/auth/` (JWT + bcrypt; Mongo user store when configured, file store
-otherwise). Works fully without any external API key; set `GROQ_API_KEY` only
-if you want optional LLM drafting — still terminally validated either way.
+otherwise). Works fully without any external API key; set `GROQ_API_KEY` or AWS
+Bedrock credentials only if you want optional LLM drafting — still terminally
+validated either way.
 
 ## Run
 
@@ -32,11 +33,17 @@ message rather than failing on the first request.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `GROQ_API_KEY` | for `/plan` and `/interpret` | Without it those routes return 500. |
+| `GROQ_API_KEY` | for `/plan` and `/interpret` with Groq | Without it those routes fall back to the deterministic engine. |
+| `GROQ_MODEL` | no | Default `openai/gpt-oss-120b`. |
+| `LLM_PROVIDER` | no | `groq` (default) or `bedrock`. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | for Bedrock with static keys | Alternatively leave blank and use the AWS SDK default chain (`AWS_PROFILE`, `~/.aws/credentials`, IAM role, ECS/EC2 metadata). |
+| `AWS_SESSION_TOKEN` | no | Included automatically when the SDK resolves temporary creds. |
+| `AWS_REGION` | no | Default `us-east-1`. |
+| `BEDROCK_MODEL` | no | Default `moonshotai.kimi-k2.5`. |
+| `BEDROCK_ENDPOINT` | no | Optional local-mock / VPC endpoint override. |
 | `MONGO_URI` | no | Persistence is optional; the API serves fine without it and simply does not save. |
 | `PORT` | no | Default `5000`. |
 | `CORS_ORIGIN` | no | Comma-separated allow-list. Never `*` in production. |
-| `GROQ_MODEL` | no | Default `openai/gpt-oss-120b`. |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | for `/render` | Image generation only. |
 
 ## The two-and-a-half pass pipeline

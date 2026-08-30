@@ -16,8 +16,7 @@ import {
 } from '../services/websiteRequirementsGenerator.js';
 import { buildWebsite } from '../services/websiteBuilder.js';
 import { loadScaffold } from '../services/scaffoldService.js';
-import { GroqError } from '../services/groqService.js';
-import { isLlmAvailable, type LlmProvider } from '../services/llmService.js';
+import { isLlmAvailable, LlmError, type LlmProvider } from '../services/llmService.js';
 
 /** Throws if no LLM provider is available. */
 function requireLlm(provider?: LlmProvider): void {
@@ -30,7 +29,7 @@ function requireLlm(provider?: LlmProvider): void {
 }
 
 function toApiError(error: unknown): Error {
-  if (error instanceof GroqError) {
+  if (error instanceof LlmError) {
     return ApiError.upstream(`Agentic build failed: ${error.message}`);
   }
   if (error instanceof Error && error.message.includes('non-JSON')) {

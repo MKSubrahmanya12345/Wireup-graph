@@ -15,7 +15,7 @@ const SUGGESTIONS = [
 
 const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[] }[] = [
   { value: 'groq', label: 'Groq', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
-  { value: 'bedrock', label: 'AWS Bedrock', models: ['minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
+  { value: 'bedrock', label: 'AWS Bedrock', models: ['moonshotai.kimi-k2.5', 'minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
 ];
 
 /**

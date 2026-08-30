@@ -28,10 +28,14 @@ const envSchema = z.object({
   GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-120b'),
   GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
   
-  // AWS Bedrock settings
+  // AWS Bedrock settings. Leave the keys blank to use the normal AWS credential
+  // chain (AWS_PROFILE, ~/.aws/credentials, IAM role, ECS/EC2 metadata, etc.).
   AWS_ACCESS_KEY_ID: emptyToUndefined,
   AWS_SECRET_ACCESS_KEY: emptyToUndefined,
-  AWS_REGION: z.string().default('us-east-1'),
+  AWS_SESSION_TOKEN: emptyToUndefined,
+  AWS_REGION: z.string().min(1).default('us-east-1'),
+  // Optional override for development/proxies/VPC endpoints.
+  BEDROCK_ENDPOINT: emptyToUndefined,
   BEDROCK_MODEL: z.string().min(1).default('moonshotai.kimi-k2.5'),
 
   // Comma separated allow-list. Never '*' in production.

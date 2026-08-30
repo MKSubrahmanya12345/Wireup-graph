@@ -4,8 +4,7 @@ import { isPersistenceEnabled } from '../config/db.js';
 import { Project } from '../models/Project.js';
 import { planAndVerify } from '../services/architectureService.js';
 import { interpretBrief as runInterpretation } from '../services/interpretService.js';
-import { GroqError, extractJson } from '../services/groqService.js';
-import { isLlmAvailable, type LlmProvider } from '../services/llmService.js';
+import { extractJson, isLlmAvailable, LlmError, type LlmProvider } from '../services/llmService.js';
 import { env } from '../config/env.js';
 import {
   normaliseGraph,
@@ -56,7 +55,7 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   } else try {
     result = await planAndVerify(request, baseGraph, { requirements, feedback, provider, model });
   } catch (error) {
-    if (error instanceof GroqError) throw ApiError.upstream(`Architecture planning failed: ${error.message}`);
+    if (error instanceof LlmError) throw ApiError.upstream(`Architecture planning failed: ${error.message}`);
     // A zod/parse failure from extractJson surfaces as a plain Error.
     if (error instanceof Error && error.message.includes('non-JSON')) {
       throw ApiError.upstream(`Architecture planning failed: ${error.message}`);
@@ -162,7 +161,7 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
     });
     res.status(200).json(result);
   } catch (error) {
-    if (error instanceof GroqError) {
+    if (error instanceof LlmError) {
       throw ApiError.upstream(`Could not interpret the brief: ${error.message}`);
     }
     throw error;
