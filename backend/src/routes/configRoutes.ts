@@ -30,7 +30,8 @@ router.get(
           defaultModel: env.BEDROCK_MODEL,
           region: env.AWS_REGION,
           models: [
-                      'minimax.minimax-m2.5',
+            'moonshotai.kimi-k2.5',
+            'minimax.minimax-m2.5',
             'amazon.nova-pro-v1:0',
             'anthropic.claude-3-sonnet-20240229-v1:0',
             'anthropic.claude-3-haiku-20240307-v1:0',
