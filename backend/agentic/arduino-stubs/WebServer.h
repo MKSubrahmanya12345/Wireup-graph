@@ -21,6 +21,8 @@ public:
   }
   void onNotFound(THandlerFunction handler) { (void)handler; }
 
+  HTTPMethod method() const { return HTTP_GET; }
+
   void send(int code, const char* contentType = nullptr, const String& content = String()) {
     (void)code; (void)contentType; (void)content;
   }

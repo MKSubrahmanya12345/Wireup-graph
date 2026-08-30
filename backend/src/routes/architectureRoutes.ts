@@ -11,11 +11,7 @@ import { planRateLimiter, renderRateLimiter } from '../middleware/rateLimiter.js
 const router = Router();
 
 // Rate limited: every call here spends real Groq credits.
-router.post('/architecture/interpret', (req, res, next) => {
-  console.log('[architectureRoutes] /interpret route hit');
-  console.log('[architectureRoutes] Body:', JSON.stringify(req.body).slice(0, 200));
-  next();
-}, planRateLimiter, interpretBrief);
+router.post('/architecture/interpret', planRateLimiter, interpretBrief);
 router.post('/architecture/plan', planRateLimiter, planArchitecture);
 
 // Deterministic graph repair — no LLM spend, so no credit rate limit.

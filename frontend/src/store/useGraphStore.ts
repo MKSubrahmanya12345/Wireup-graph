@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { api } from '../services/api';
+import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import {
   emptyGraph,
   type ArchitectureGraph,
@@ -58,19 +59,32 @@ interface GraphState {
 const STARTER_REQUEST =
   'Design a battery-powered environmental sensor node. Sample temperature, humidity, and pressure every five minutes, buffer readings locally, and sync over Bluetooth when a phone is nearby. Keep it serviceable over USB-C and prioritize a long sleep life.';
 
+// Survive page refreshes: the graph is the user's work — losing it on F5 is
+// not acceptable for a local tool.
+const GRAPH_PERSIST_KEY = 'wireup.graph.v1';
+const persistedGraph = loadPersisted<{
+  graph: ArchitectureGraph;
+  verification: VerificationReport | null;
+  issues: Issue[];
+  blocking: boolean;
+  repairs: RepairRecord[];
+  projectId: string | null;
+  lastUpdated: string | null;
+}>(GRAPH_PERSIST_KEY);
+
 export const useGraphStore = create<GraphState>()((set, get) => ({
-  graph: emptyGraph(),
-  verification: null,
-  projectId: null,
+  graph: persistedGraph?.graph ?? emptyGraph(),
+  verification: persistedGraph?.verification ?? null,
+  projectId: persistedGraph?.projectId ?? null,
 
   request: STARTER_REQUEST,
   status: 'idle',
   error: null,
-  lastUpdated: null,
+  lastUpdated: persistedGraph?.lastUpdated ?? null,
 
-  issues: [],
-  blocking: false,
-  repairs: [],
+  issues: persistedGraph?.issues ?? [],
+  blocking: persistedGraph?.blocking ?? false,
+  repairs: persistedGraph?.repairs ?? [],
 
   selectedNodeId: null,
 
@@ -235,7 +249,8 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
     }
   },
 
-  reset: () =>
+  reset: () => {
+    clearPersisted(GRAPH_PERSIST_KEY);
     set({
       graph: emptyGraph(),
       verification: null,
@@ -247,10 +262,24 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
       issues: [],
       blocking: false,
       repairs: [],
-    }),
+    });
+  },
 
   dismissError: () => set({ error: null, status: 'idle' }),
 }));
+
+// Persist the user's work on every change — refresh-proof.
+useGraphStore.subscribe((state) => {
+  persistTo(GRAPH_PERSIST_KEY, {
+    graph: state.graph,
+    verification: state.verification,
+    issues: state.issues,
+    blocking: state.blocking,
+    repairs: state.repairs,
+    projectId: state.projectId,
+    lastUpdated: state.lastUpdated,
+  });
+});
 
 /** Stable selectors — keeps re-renders tight. */
 export const selectNodes = (state: GraphState): ArchitectureNode[] => state.graph.nodes;

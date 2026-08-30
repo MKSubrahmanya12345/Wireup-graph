@@ -52,6 +52,11 @@ public:
     assign(buf);
   }
   const char* c_str() const { return data(); }
+  int toInt() const { return std::atoi(c_str()); }
+  int indexOf(const char* needle) const {
+    const auto pos = find(needle ? needle : "");
+    return pos == std::string::npos ? -1 : static_cast<int>(pos);
+  }
   String& operator+=(const String& rhs) {
     append(rhs);
     return *this;
@@ -94,6 +99,16 @@ public:
   String toString() const { return String("192.168.1.50"); }
   uint32_t value_;
 };
+
+/** ESP system calls (restart, etc.). */
+class EspClass {
+public:
+  void restart() {}
+  uint32_t getFreeHeap() { return 0; }
+};
+extern EspClass ESP;
+
+#define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 
 class HardwareSerial {
 public:

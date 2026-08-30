@@ -49,12 +49,16 @@ export default function ControlPanel({ controls, onSent }: Props) {
             );
           }
           if (control.kind === 'select' && control.options) {
+            // `command` carries the firmware's arg name (e.g. { angle: true }).
+            // Send { angle: "45" }, not { angle: true, value: "45" } — the
+            // firmware reads the named arg, and extra keys mean nothing there.
+            const argName = Object.keys(control.command)[0] ?? 'value';
             return (
               <div key={control.id} className="control-select">
                 <label>{control.label}</label>
                 <select
                   disabled={busy === control.id}
-                  onChange={(event) => void send(control, { ...control.command, value: event.target.value })}
+                  onChange={(event) => void send(control, { [argName]: event.target.value })}
                 >
                   {control.options.map((option) => (
                     <option key={option.value} value={option.value}>

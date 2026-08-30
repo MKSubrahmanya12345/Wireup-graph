@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { api } from '../services/api';
+import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useGraphStore } from './useGraphStore';
 import type {
   InterpretResponse,
@@ -53,15 +54,27 @@ interface SessionState {
 
 const STARTER_BRIEF = '';
 
+// Survive page refreshes: brief, questions and requirements persist locally
+// so a reload never sends the user back to a blank page 01.
+const SESSION_PERSIST_KEY = 'wireup.session.v1';
+const persistedSession = loadPersisted<{
+  brief: string;
+  questions: Question[];
+  answers: Record<string, string>;
+  requirements: RequirementsSpec | null;
+  assumptions: string[];
+  revision: number;
+}>(SESSION_PERSIST_KEY);
+
 export const useDesignSession = create<SessionState>()((set, get) => ({
   stage: 'idle',
-  brief: STARTER_BRIEF,
-  questions: [],
-  answers: {},
-  requirements: null,
-  assumptions: [],
+  brief: persistedSession?.brief ?? STARTER_BRIEF,
+  questions: persistedSession?.questions ?? [],
+  answers: persistedSession?.answers ?? {},
+  requirements: persistedSession?.requirements ?? null,
+  assumptions: persistedSession?.assumptions ?? [],
   feedback: [],
-  revision: 0,
+  revision: persistedSession?.revision ?? 0,
   acceptedRisks: [],
   error: null,
   llmOptions: {},
@@ -80,20 +93,14 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
     ),
 
   startInterpretation: async (options?: LlmOptions) => {
-      console.log('[useDesignSession] startInterpretation called');
       const { brief } = get();
-      console.log('[useDesignSession] Brief:', brief.trim());
-      console.log('[useDesignSession] Options:', options);
       if (!brief.trim()) {
-        console.log('[useDesignSession] Brief is empty, returning error');
         set({ error: 'Describe what you want to build first.' });
         return;
       }
 
-      console.log('[useDesignSession] Setting stage to interpreting');
       set({ stage: 'interpreting', error: null });
       try {
-        console.log('[useDesignSession] Calling api.interpretBrief...');
         const payload = {
           brief: brief.trim(),
           answers: {},
@@ -102,9 +109,7 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
           provider: options?.provider,
           model: options?.model,
         };
-        console.log('[useDesignSession] API payload:', payload);
         const result = (await api.interpretBrief(payload)) as InterpretResponse;
-        console.log('[useDesignSession] API result:', result);
 
         set({
         requirements: result.requirements,
@@ -237,6 +242,7 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   },
 
   reset: () => {
+    clearPersisted(SESSION_PERSIST_KEY);
     useGraphStore.getState().reset();
     set({
       stage: 'idle',
@@ -251,3 +257,15 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
     });
   },
 }));
+
+// Persist on every change — refresh-proof.
+useDesignSession.subscribe((state) => {
+  persistTo(SESSION_PERSIST_KEY, {
+    brief: state.brief,
+    questions: state.questions,
+    answers: state.answers,
+    requirements: state.requirements,
+    assumptions: state.assumptions,
+    revision: state.revision,
+  });
+});

@@ -27,7 +27,8 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173, create an account, and you land on the pipeline.
+Open http://localhost:5173 — create an account or hit **"Skip — try as guest"**
+(one-click session, nothing stored) — and you land on the pipeline.
 
 ## The final test (try this exact prompt)
 
@@ -37,7 +38,16 @@ Open http://localhost:5173, create an account, and you land on the pipeline.
 2. **Page 02** — the graph: ESP32 DevKit, DHT22 on GPIO4 (10 kΩ pull-up noted), USB 5 V rail, engineering checks ✔ verified.
 3. **Page 03** — run the agentic build. Watch the terminal: RAG retrieval → firmware synthesis → `g++ -fsyntax-only` ✔ → MERN scaffold merge → `npm install` → `tsc --noEmit` ✔ → `vite build` ✔ → contract checks ✔.
 4. Download **dht22-monitor-firmware.zip** and **dht22-monitor-software.zip**.
-5. On your bench: edit `firmware/config.h` with your Wi-Fi, flash, read the IP from Serial (115200), put it in `backend/.env` of the software zip, `npm install && npm run dev` — live temperature/humidity on `localhost:5173`. No cloud anywhere. (Can't join your Wi-Fi? The board starts its own hotspot, `http://192.168.4.1`.)
+5. On your bench: edit `firmware/config.h` with your Wi-Fi, flash, open **`http://<device-ip>/`** — the device serves its own dashboard (live tiles + temperature chart + Wi-Fi settings), no laptop app required. The software zip adds long-term history: `npm install && npm run dev` on any computer/phone on the same Wi-Fi (`CORS_ORIGIN=*`, mDNS `dht22-monitor.local` supported). No cloud anywhere. (Can't join your Wi-Fi? The board starts its own hotspot, `http://192.168.4.1`.)
+
+### The firmware is a full product, not just JSON
+
+- **Embedded dashboard** at `/` — live readings, a temperature sparkline from the on-device history, and Wi-Fi setup. Zero install.
+- **`/api/history`** — ring buffer in RAM (1 sample/min, ~12 h) so readings survive laptop sleep.
+- **`/api/wifi`** — change network from the browser; stored in NVS, no re-flash.
+- **OTA** — update firmware over Wi-Fi (Arduino IDE / PlatformIO), no USB after the first flash.
+- **`mDNS`** — reach the device at `dht22-monitor.local` when your OS resolves it.
+- Control endpoints accept form *and* JSON bodies; the dashboard sends form-encoded (what `server.arg()` actually parses).
 
 ## What's inside
 
@@ -56,6 +66,14 @@ Open http://localhost:5173, create an account, and you land on the pipeline.
     │   └── pipeline.ts    orchestrator: generate → validate → repair (≤3) → ship
     ├── agentic/arduino-stubs/  compile harness (Arduino/ESP32 core headers)
     └── scaffolds/website/      committed MERN scaffold the dashboard is built on
+
+## App niceties
+
+- **Guest mode** — `POST /api/auth/guest` issues a one-click signed session; no signup wall.
+- **Refresh-proof** — graph, plan and build result persist to `localStorage`; reloading page 02/03 loses nothing (Mongo still optional for cross-machine persistence).
+- **Parts list (BOM)** — page 02 shows the bill of materials with datasheet links, one click copies it as a spreadsheet.
+- **Live device test** — page 03 polls `http://<device-ip>/api/sensors` straight from the browser once the device is flashed, closing the loop between download and "it works".
+- **Toolchain badge** — `GET /api/healthz/toolchain` reports node/npm/g++; page 03 shows whether the real compile gate can run before you start a build.
 ```
 
 ### Supported parts (knowledge base)

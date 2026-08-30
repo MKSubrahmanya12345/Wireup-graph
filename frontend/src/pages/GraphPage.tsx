@@ -4,6 +4,27 @@ import { useState } from 'react';
 const ThreeViewport = lazy(() => import('../three/ThreeViewport'));
 import { Link, useNavigate } from 'react-router-dom';
 
+import type { ArchitectureGraph } from '../types/architecture';
+
+/** Copy the parts list to the clipboard as TSV (spreadsheet-friendly). */
+async function copyBom(graph: ArchitectureGraph): Promise<void> {
+  const rows = [
+    ['Component', 'Part number', 'Supply'],
+    ...graph.nodes.map((node) => [
+      node.name,
+      node.partNumber ?? '',
+      node.properties?.find((p) => p.label === 'Supply')?.value ?? '',
+    ]),
+  ];
+  const tsv = rows.map((row) => row.join('\t')).join('\n');
+  try {
+    await navigator.clipboard.writeText(tsv);
+    toast('Parts list copied — paste it into any spreadsheet.');
+  } catch {
+    toast('Could not copy — clipboard unavailable in this browser.');
+  }
+}
+
 import { Suspense, lazy } from 'react';
 import GraphCanvas from '../components/GraphCanvas';
 import NodeInspector from '../components/NodeInspector';
@@ -156,6 +177,53 @@ export default function GraphPage() {
         <span>{graph.dependencies.length} dependencies</span>
         <span>{graph.software.length} software parts</span>
       </div>
+
+      {graph.nodes.length > 0 && (
+        <section className="bom-card">
+          <div className="bom-head">
+            <div className="eyebrow">parts list (BOM)</div>
+            <button
+              type="button"
+              className="ghost-button tiny"
+              onClick={() => void copyBom(graph)}
+            >
+              Copy BOM
+            </button>
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Part number</th>
+                <th>Supply</th>
+                <th>Datasheet</th>
+              </tr>
+            </thead>
+            <tbody>
+              {graph.nodes.map((node) => {
+                const supply = node.properties?.find((p) => p.label === 'Supply')?.value ?? '—';
+                const datasheet = node.properties?.find((p) => p.label === 'Datasheet')?.value ?? '';
+                return (
+                  <tr key={node.id}>
+                    <td>{node.name}</td>
+                    <td><code>{node.partNumber || '—'}</code></td>
+                    <td>{supply}</td>
+                    <td>
+                      {/^https?:\/\//i.test(datasheet) ? (
+                        <a href={datasheet} target="_blank" rel="noreferrer" className="link">
+                          open ↗
+                        </a>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {showJson && (
         <section className="json-card">

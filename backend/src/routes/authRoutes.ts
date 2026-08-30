@@ -1,6 +1,13 @@
 import { Router } from 'express';
 
-import { getUserById, login, loginBodySchema, signup, signupBodySchema } from '../auth/authService.js';
+import {
+  getUserById,
+  issueGuestSession,
+  login,
+  loginBodySchema,
+  signup,
+  signupBodySchema,
+} from '../auth/authService.js';
 import { requireAuth } from '../auth/authMiddleware.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
 
@@ -38,11 +45,30 @@ router.post(
   }),
 );
 
+/** POST /api/auth/guest — one-click session, no signup wall. */
+router.post(
+  '/auth/guest',
+  asyncHandler(async (_req, res) => {
+    res.status(200).json(issueGuestSession());
+  }),
+);
+
 /** GET /api/auth/me — who is this token? */
 router.get(
   '/auth/me',
   requireAuth,
   asyncHandler(async (req, res) => {
+    if (req.user?.guest) {
+      res.status(200).json({
+        user: {
+          id: 'guest',
+          name: req.user.name ?? 'Guest',
+          email: 'guest@wireup.local',
+          createdAt: '',
+        },
+      });
+      return;
+    }
     const user = await getUserById(req.user!.sub);
     if (!user) throw new ApiError(401, 'This account no longer exists.');
     res.status(200).json({ user });

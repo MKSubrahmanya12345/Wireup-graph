@@ -234,8 +234,9 @@ function codeFor(module: ResolvedModule): ModuleCode {
       code.routes.push(
         '  server.on("/api/control/servo_angle", HTTP_POST, [] {',
         '    sendCorsHeaders();',
-        '    if (!server.hasArg("angle")) { server.send(400, "application/json", F("{\\"error\\":\\"missing angle\\"}")); return; }',
-        '    servoDeg = constrain(server.arg("angle").toInt(), 0, 180);',
+        '    const String angleStr = bodyOrArg("angle");',
+        '    if (angleStr.length() == 0) { server.send(400, "application/json", F("{\\"error\\":\\"missing angle\\"}")); return; }',
+        '    servoDeg = constrain(angleStr.toInt(), 0, 180);',
         '    wireupServo.write(servoDeg);',
         '    server.send(200, "application/json", String(F("{\\"servo_deg\\":")) + String(servoDeg) + F("}"));',
         '  });',
@@ -257,8 +258,10 @@ function toggleRoute(id: string, pinMacroName: string, stateVar: string, activeL
   return [
     `  server.on("/api/control/${id}", HTTP_POST, [] {`,
     '    sendCorsHeaders();',
-    '    if (!server.hasArg("state")) { server.send(400, "application/json", F("{\\"error\\":\\"missing state\\"}")); return; }',
-    '    const String requested = server.arg("state");',
+    // bodyOrArg reads query/form args first, then a JSON body — so both
+    // the dashboard (form-encoded) and curl users (either) work.
+    '    const String requested = bodyOrArg("state");',
+    '    if (requested.length() == 0) { server.send(400, "application/json", F("{\\"error\\":\\"missing state\\"}")); return; }',
     `    ${stateVar} = requested == "on" || requested == "1" || requested == "true";`,
     `    digitalWrite(${pinMacroName}, ${stateVar} ? ${onWrite} : ${offWrite});`,
     `    server.send(200, "application/json", String(F("{\\"${id}\\":\\"")) + (${stateVar} ? "on" : "off") + "\\"}");`,
@@ -316,6 +319,21 @@ function sketchSource(plan: DeviceBuildPlan, codes: ModuleCode[]): string {
       ]
     : ['  // no sensors configured'];
 
+  // History ring buffer: copy each metric the plan declares into the sample
+  // struct, with a validity bit so the JSON only emits real values.
+  const HISTORY_FIELD_BITS = [
+    { field: 'temperature_c', structField: 'temperatureC', stateVar: 'lastTemperatureC', mask: '0x01' },
+    { field: 'humidity_pct', structField: 'humidityPct', stateVar: 'lastHumidityPct', mask: '0x02' },
+    { field: 'pressure_hpa', structField: 'pressureHpa', stateVar: 'lastPressureHpa', mask: '0x04' },
+    { field: 'distance_cm', structField: 'distanceCm', stateVar: 'lastDistanceCm', mask: '0x08' },
+    { field: 'moisture_pct', structField: 'moisturePct', stateVar: 'lastMoisturePct', mask: '0x10' },
+    { field: 'gas_ppm', structField: 'gasPpm', stateVar: 'lastGasPpm', mask: '0x20' },
+    { field: 'motion', structField: 'motion', stateVar: 'motionNow', mask: '0x40' },
+  ] as const;
+  const historySampleLines = HISTORY_FIELD_BITS.filter((entry) =>
+    hasJsonField(plan, entry.field),
+  ).map((entry) => `    sample.${entry.structField} = ${entry.stateVar}; mask |= ${entry.mask};`);
+
   const jsonBody = jsonLines.length
     ? jsonLines.map((line, index) => (index === 0 ? line : `${line}`))
     : ['  json += "\\"status\\":\\"ok\\"";'];
@@ -331,6 +349,8 @@ ${pinsBlock || '//   (none)'}
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Preferences.h>
+#include <ArduinoOTA.h>
 ${[...includes].join('\n')}
 
 #include "config.h"
@@ -347,10 +367,133 @@ unsigned long bootMs = 0;
 
 ${globals.join('\n')}
 
+// ── Wi-Fi credentials at runtime ────────────────────────────────────────────
+// Defaults come from config.h; the dashboard's Wi-Fi settings can overwrite
+// them at runtime (stored in NVS, surviving re-flash — no USB needed to move
+// the device to a new network).
+String wifiSsid = WIFI_SSID;
+String wifiPassword = WIFI_PASSWORD;
+Preferences wireupPrefs;
+
+// ── On-device history ring buffer (served at /api/history) ─────────────────
+struct HistorySample {
+  unsigned long ts;
+  float temperatureC, humidityPct, pressureHpa, distanceCm, moisturePct, gasPpm;
+  bool motion;
+  uint8_t validMask;
+};
+HistorySample history[HISTORY_DEPTH];
+int historyCount = 0;
+int historyHead = 0;
+unsigned long lastHistoryMs = 0;
+
 void sendCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+/** Reads a command argument: query/form first, then a JSON body key. */
+String bodyOrArg(const char* key) {
+  if (server.hasArg(key)) return server.arg(key);
+  const String body = server.arg("plain");
+  if (body.length() == 0) return String();
+  const String needle = String("\\\"") + key + "\\\":";
+  int start = body.indexOf(needle.c_str());
+  if (start < 0) return String();
+  start += needle.length();
+  while (start < (int)body.length() && body[start] == ' ') start++;
+  String value;
+  if (start < (int)body.length() && body[start] == '"') {
+    start++;
+    while (start < (int)body.length() && body[start] != '"') value += body[start++];
+  } else {
+    while (start < (int)body.length() &&
+           ((body[start] >= '0' && body[start] <= '9') || body[start] == '.' ||
+            body[start] == '-' || body[start] == '+' || body[start] == 'e' ||
+            body[start] == 'E')) {
+      value += body[start++];
+    }
+  }
+  return value;
+}
+
+/** NVS-stored Wi-Fi overrides config.h — written by POST /api/wifi. */
+void loadWifiConfig() {
+  wireupPrefs.begin("wireup", false);
+  const String savedSsid = wireupPrefs.getString("ssid", "");
+  if (savedSsid.length() > 0) {
+    wifiSsid = savedSsid;
+    wifiPassword = wireupPrefs.getString("pass", "");
+    Serial.println(F("[wireup] Using Wi-Fi credentials saved on the device (NVS)."));
+  }
+  wireupPrefs.end();
+}
+
+/** One history entry per HISTORY_INTERVAL_MS, ring-buffered in RAM. */
+void recordHistory() {
+  if (millis() - lastHistoryMs < HISTORY_INTERVAL_MS) return;
+  lastHistoryMs = millis();
+  HistorySample sample;
+  memset(&sample, 0, sizeof(sample));
+  sample.ts = millis();
+  uint8_t mask = 0;
+  if (sensorOk) {
+${historySampleLines.join('\n')}
+  }
+  sample.validMask = mask;
+  history[historyHead] = sample;
+  historyHead = (historyHead + 1) % HISTORY_DEPTH;
+  if (historyCount < HISTORY_DEPTH) historyCount++;
+}
+
+String historyJson() {
+  String json = "[";
+  for (int i = 0; i < historyCount; i++) {
+    const HistorySample& s = history[(historyHead - historyCount + i + HISTORY_DEPTH) % HISTORY_DEPTH];
+    if (i > 0) json += ",";
+    json += "{\\"ts\\":" + String(s.ts);
+    if (s.validMask & 0x01) json += ",\\"temperature_c\\":" + String(s.temperatureC, 1);
+    if (s.validMask & 0x02) json += ",\\"humidity_pct\\":" + String(s.humidityPct, 1);
+    if (s.validMask & 0x04) json += ",\\"pressure_hpa\\":" + String(s.pressureHpa, 1);
+    if (s.validMask & 0x08) json += ",\\"distance_cm\\":" + String(s.distanceCm, 1);
+    if (s.validMask & 0x10) json += ",\\"moisture_pct\\":" + String(s.moisturePct, 1);
+    if (s.validMask & 0x20) json += ",\\"gas_ppm\\":" + String(s.gasPpm, 1);
+    if (s.validMask & 0x40) json += ",\\"motion\\":" + String(s.motion ? 1 : 0);
+    json += "}";
+  }
+  json += "]";
+  return json;
+}
+
+void handleHistory() {
+  sendCorsHeaders();
+  server.send(200, "application/json", historyJson());
+}
+
+/** GET: current SSID/IP. POST ssid+password: save to NVS and reconnect. */
+void handleWifi() {
+  sendCorsHeaders();
+  if (server.method() == HTTP_GET) {
+    String json = "{\\"ssid\\":\\"" + wifiSsid + "\\"";
+    json += ",\\"ip\\":\\"" + WiFi.localIP().toString() + "\\"";
+    json += "}";
+    server.send(200, "application/json", json);
+    return;
+  }
+  const String ssid = bodyOrArg("ssid");
+  const String pass = bodyOrArg("password");
+  if (ssid.length() == 0) {
+    server.send(400, "application/json", F("{\\"error\\":\\"missing ssid\\"}"));
+    return;
+  }
+  wireupPrefs.begin("wireup", false);
+  wireupPrefs.putString("ssid", ssid);
+  wireupPrefs.putString("pass", pass);
+  wireupPrefs.end();
+  server.send(200, "application/json", F("{\\"saved\\":true,\\"restarting\\":true}"));
+  delay(250);
+  ESP.restart();
 }
 
 /** Read every sensor once, guarded by the per-sensor minimum interval. */
@@ -385,8 +528,146 @@ void handleStatus() {
   server.send(200, "application/json", json);
 }
 
+// ── Embedded dashboard ──────────────────────────────────────────────────────
+// The device IS the website: open http://<device-ip>/ and this page renders
+// live readings + a temperature chart straight from the firmware. The MERN
+// dashboard (software zip) adds long-term history on top — it is optional
+// for day-to-day use. Served from flash; nothing else to install.
+static const char DASHBOARD_HTML[] PROGMEM = R"WIREUP_HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${plan.projectName}</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#0b1220;color:#e8edf5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
+.card{background:#131c2e;border:1px solid #24314d;border-radius:14px;padding:18px 20px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:720px;width:100%}
+h1{font-size:1.05rem;margin:0 0 2px;color:#9fb3d9;font-weight:600}
+.meta{font-size:.75rem;color:#5f7195;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.tile{background:#0e1726;border:1px solid #24314d;border-radius:10px;padding:12px 14px}
+.tile .label{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#7d90b8}
+.tile .value{font-size:1.9rem;font-weight:700;margin-top:4px;color:#eaf1ff}
+.tile .unit{font-size:.85rem;color:#7d90b8;font-weight:400}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;background:#0e3a2a;color:#5fe3a1;border:1px solid #175c42}
+canvas{width:100%;height:110px;margin-top:14px;background:#0e1726;border:1px solid #24314d;border-radius:10px}
+details{margin-top:12px;font-size:.8rem;color:#8fa2c8}
+summary{cursor:pointer;color:#9fb3d9}
+input{width:100%;background:#0e1726;border:1px solid #24314d;color:#e8edf5;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:.85rem}
+button{margin-top:10px;width:100%;background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px;font-size:.85rem;cursor:pointer}
+.err{color:#ff8d8d;font-size:.75rem;margin-top:8px}
+a{color:#7fb0ff}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>${plan.projectName}</h1>
+  <div class="meta"><span id="status" class="badge">connecting…</span> <span id="ip" style="color:#5f7195"></span> · up <span id="uptime">–</span> s</div>
+  <div class="grid" id="grid"></div>
+  <canvas id="chart" height="110"></canvas>
+  <details>
+    <summary>Wi-Fi settings — change network without re-flashing</summary>
+    <input id="ssid" placeholder="Wi-Fi name (SSID)" autocomplete="off">
+    <input id="pass" type="password" placeholder="Wi-Fi password">
+    <button id="save">Save on device &amp; reconnect</button>
+    <div id="err" class="err"></div>
+  </details>
+  <div class="meta" style="margin-top:10px">Generated by Wireup · live JSON at <a href="/api/sensors">/api/sensors</a> · history at <a href="/api/history">/api/history</a></div>
+</div>
+<script>
+var grid = document.getElementById('grid');
+var chart = document.getElementById('chart');
+var ctx = chart.getContext('2d');
+var history = [];
+function el(tag, cls, text) {
+  var node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function renderSensors(payload) {
+  grid.innerHTML = '';
+  var fields = [['temperature_c', 'Temperature', '°C'], ['humidity_pct', 'Humidity', '%'], ['pressure_hpa', 'Pressure', 'hPa'], ['distance_cm', 'Distance', 'cm'], ['moisture_pct', 'Moisture', '%'], ['gas_ppm', 'Gas', 'ppm'], ['motion', 'Motion', '']];
+  var any = false;
+  for (var i = 0; i < fields.length; i++) {
+    var key = fields[i][0];
+    if (payload[key] === undefined || payload[key] === null) continue;
+    any = true;
+    var tile = el('div', 'tile');
+    tile.appendChild(el('div', 'label', fields[i][1]));
+    var raw = payload[key];
+    var shown = key === 'motion' ? (Number(raw) === 1 ? 'Motion' : 'Still') : Number(raw).toFixed(1);
+    var value = el('div', 'value', shown);
+    if (key !== 'motion') value.appendChild(el('span', 'unit', ' ' + fields[i][2]));
+    tile.appendChild(value);
+    grid.appendChild(tile);
+  }
+  if (!any) grid.appendChild(el('div', 'tile', 'No readings yet — check the sensor wiring.'));
+}
+function drawChart() {
+  var w = chart.clientWidth, h = 110;
+  ctx.clearRect(0, 0, w, h);
+  if (history.length < 2) return;
+  var min = Infinity, max = -Infinity;
+  for (var i = 0; i < history.length; i++) {
+    if (history[i].temperature_c === undefined) continue;
+    if (history[i].temperature_c < min) min = history[i].temperature_c;
+    if (history[i].temperature_c > max) max = history[i].temperature_c;
+  }
+  if (min === Infinity) return;
+  if (max - min < 0.5) { max += 0.25; min -= 0.25; }
+  ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 1.6; ctx.beginPath();
+  var started = false;
+  for (var i = 0; i < history.length; i++) {
+    var t = history[i].temperature_c;
+    if (t === undefined) continue;
+    var x = (i / (history.length - 1)) * w;
+    var y = h - 8 - ((t - min) / (max - min)) * (h - 16);
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+function refresh() {
+  fetch('/api/sensors').then(function (r) { return r.json(); }).then(function (p) {
+    renderSensors(p);
+    document.getElementById('uptime').textContent = p.uptime_s;
+    document.getElementById('status').textContent = 'online';
+  }).catch(function () {
+    document.getElementById('status').textContent = 'offline';
+  });
+  fetch('/api/status').then(function (r) { return r.json(); }).then(function (p) {
+    document.getElementById('ip').textContent = p.ip;
+  }).catch(function () {});
+  fetch('/api/history').then(function (r) { return r.json(); }).then(function (p) {
+    history = p; drawChart();
+  }).catch(function () {});
+}
+document.getElementById('save').addEventListener('click', function () {
+  var ssid = document.getElementById('ssid').value;
+  var pass = document.getElementById('pass').value;
+  if (!ssid) { document.getElementById('err').textContent = 'SSID required.'; return; }
+  var body = 'ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(pass);
+  fetch('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body }).then(function (r) {
+    return r.json();
+  }).then(function () {
+    document.getElementById('err').textContent = 'Saved — the device is reconnecting…';
+  }).catch(function () {
+    document.getElementById('err').textContent = 'Could not reach the device.';
+  });
+});
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>)WIREUP_HTML";
+
 void handleRoot() {
   sendCorsHeaders();
+#if ENABLE_EMBEDDED_DASHBOARD
+  server.send_P(200, "text/html", DASHBOARD_HTML);
+#else
   String html = F("<!doctype html><html><head><meta charset=\\"utf-8\\"><title>${plan.projectName}</title></head><body>");
   html += F("<h1>${plan.projectName}</h1>");
   html += F("<p>Generated by Wireup. JSON endpoints:</p><ul>");
@@ -394,6 +675,7 @@ void handleRoot() {
   html += F("<li><a href=\\"/api/status\\">/api/status</a> — device status</li>");
   html += F("</ul></body></html>");
   server.send(200, "text/html", html);
+#endif
 }
 
 void handleNotFound() {
@@ -404,9 +686,9 @@ void handleNotFound() {
 /** Join the configured network; fall back to our own AP so the dashboard is always reachable. */
 void connectWifi() {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   Serial.print(F("[wireup] Joining Wi-Fi "));
-  Serial.println(WIFI_SSID);
+  Serial.println(wifiSsid);
 
   const unsigned long deadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
   while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
@@ -440,18 +722,31 @@ void setup() {
   Serial.println(F("── ${plan.projectName} · Wireup firmware v1.0.0 ──"));
   bootMs = millis();
 
+  loadWifiConfig();
+
 ${setupLines.map((line) => `  ${line}`).join('\n')}
 
 ${needsWire ? '  Serial.println(F("[wireup] I2C (Wire) up on SDA/SCL"));' : ''}
+#if ENABLE_OTA
+  ArduinoOTA.setHostname(DEVICE_NAME);
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    (void)progress; (void)total;
+  });
+  ArduinoOTA.begin();
+  Serial.println(F("[wireup] OTA enabled — upload new firmware over Wi-Fi"));
+#endif
   connectWifi();
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api/sensors", HTTP_GET, handleSensors);
   server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/history", HTTP_GET, handleHistory);
+  server.on("/api/wifi", HTTP_GET, handleWifi);
+  server.on("/api/wifi", HTTP_POST, handleWifi);
 ${routeLines.join('\n')}
   server.onNotFound(handleNotFound);
   server.begin();
-  Serial.print(F("[wireup] HTTP API listening on port "));
+  Serial.print(F("[wireup] HTTP API + dashboard listening on port "));
   Serial.println(WEB_SERVER_PORT);
 
   sampleSensors();
@@ -460,6 +755,10 @@ ${routeLines.join('\n')}
 void loop() {
   server.handleClient();
   sampleSensors();
+  recordHistory();
+#if ENABLE_OTA
+  ArduinoOTA.handle();
+#endif
 }
 `;
 }
@@ -473,6 +772,8 @@ function configSource(plan: DeviceBuildPlan, codes: ModuleCode[]): string {
 #define VERSION "1.0.0"
 
 // Wi-Fi credentials — station mode first, fallback AP if join fails.
+// You can also change the network WITHOUT re-flashing: open the device page
+// in a browser, expand "Wi-Fi settings", and save. (Stored in NVS.)
 #define WIFI_SSID "${plan.wifi.ssid || 'YOUR_WIFI_SSID'}"
 #define WIFI_PASSWORD "${plan.wifi.password || 'YOUR_WIFI_PASSWORD'}"
 #define WIFI_CONNECT_TIMEOUT_MS 15000
@@ -487,6 +788,16 @@ function configSource(plan: DeviceBuildPlan, codes: ModuleCode[]): string {
 
 // Sampling cadence — the DHT family needs >= 2000 ms between reads.
 #define SAMPLE_INTERVAL_MS ${plan.sampleIntervalMs}
+
+// ── On-device extras ────────────────────────────────────────────────────────
+// The device itself serves a full dashboard (live tiles, temperature chart,
+// Wi-Fi setup) at http://<device-ip>/ — the MERN app is optional on top.
+#define ENABLE_EMBEDDED_DASHBOARD 1
+// Over-the-air firmware updates over Wi-Fi (Arduino IDE / PlatformIO).
+#define ENABLE_OTA 1
+// History ring buffer kept in RAM and served at /api/history.
+#define HISTORY_DEPTH 720        // entries
+#define HISTORY_INTERVAL_MS 60000 // one entry per minute (~12 h at 720)
 
 // ── Pin map ─────────────────────────────────────────────────────────────────
 ${defines.join('\n')}
@@ -536,17 +847,23 @@ Generated by **Wireup**. Target: **${plan.board.name}** (${plan.board.mcu}, ${pl
 
 - Samples the connected sensors every \`${plan.sampleIntervalMs} ms\` (interval-safe per sensor).
 - Joins your Wi-Fi — or starts its own hotspot (\`${plan.slug}\`, password \`wireup123\`) if it cannot.
-- Serves a JSON API on port 80 that the Wireup dashboard (the software zip) talks to.
+- **Serves a complete dashboard at \`http://<device-ip>/\`** — live tiles, a temperature chart, and Wi-Fi settings. No Node, no laptop app needed.
+- Serves a JSON API on port 80 that the Wireup dashboard (the software zip) talks to — optional on top.
+- Keeps a history ring buffer in RAM (one sample/minute, ~12 h) at \`/api/history\`.
+- Accepts OTA firmware updates over Wi-Fi (Arduino IDE / PlatformIO).
 
 ## Endpoints
 
 | Route | Method | Returns |
 | --- | --- | --- |
+| \`/\` | GET | Full embedded dashboard (HTML + charts) |
 | \`/api/sensors\` | GET | All live readings as JSON |
 | \`/api/status\` | GET | Device health: IP, SSID, RSSI, uptime |
+| \`/api/history\` | GET | Ring-buffered samples (one per minute) |
+| \`/api/wifi\` | GET/POST | Current SSID / save new credentials (NVS) |
 ${plan.modules
   .filter((m) => m.controls.length > 0)
-  .flatMap((m) => m.controls.map((c) => `| \`/api/control/${c.id}\` | POST | Actuate ${c.label.toLowerCase()} (arg \`state\`) |`))
+  .flatMap((m) => m.controls.map((c) => `| \`/api/control/${c.id}\` | POST | Actuate ${c.label.toLowerCase()} (form or JSON \`state\`/field arg) |`))
   .join('\n')}
 
 ## Wiring
@@ -564,9 +881,11 @@ ${notes.join('\n') || '- Nothing special — direct GPIO connections.'}
 1. Install the **esp32** board package (Espressif) in the Boards Manager.
 2. Open \`firmware/${plan.slug}.ino\`. Install these libraries via Library Manager:
 ${[...new Set(plan.modules.flatMap((m) => m.libraries.map((l) => `   - ${l.name}`)))].join('\n') || '   - (none)'}
+   - Preferences, ArduinoOTA, WiFi, WebServer, ESPmDNS (bundled with the esp32 core)
 3. Edit \`firmware/config.h\`: set \`WIFI_SSID\` / \`WIFI_PASSWORD\`.
 4. Select board **${plan.board.name}**, pick the port, upload.
 5. Open Serial Monitor at **115200 baud** — it prints the device IP.
+6. Open \`http://<device-ip>/\` in any browser on the same network — that is the dashboard.
 
 ## Flash it (PlatformIO)
 
@@ -574,11 +893,24 @@ ${[...new Set(plan.modules.flatMap((m) => m.libraries.map((l) => `   - ${l.name}
 pio run -t upload && pio device monitor
 \`\`\`
 
+## Change Wi-Fi without re-flashing
+
+Open \`http://<device-ip>/\`, expand **Wi-Fi settings**, save the new network.
+The credentials are stored in NVS and survive re-flashes.
+
+## OTA updates
+
+With \`ENABLE_OTA 1\` the device appears as a network port in Arduino IDE
+("ESP32 at <ip>") and accepts \`pio run -t upload --upload-port <ip>\`.
+No USB cable needed after the first flash.
+
 ## Test the API from your computer
 
 \`\`\`bash
 curl http://<device-ip>/api/status
 curl http://<device-ip>/api/sensors
+curl http://<device-ip>/api/history
+curl -X POST http://<device-ip>/api/wifi -d 'ssid=MyNet&password=secret'
 \`\`\`
 `;
 }

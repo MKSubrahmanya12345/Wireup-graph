@@ -130,6 +130,9 @@ function renderDeviceEndpoints(plan: DeviceBuildPlan): string {
     method: 'GET',
     kind: 'json',
     unit: ${tsString(metric.unit)},
+    // The exact JSON key this metric reads off the device payload — used to
+    // extract a number for history instead of storing the whole payload.
+    field: ${tsString(metric.jsonField)},
   },`);
     }
   }
@@ -172,10 +175,13 @@ export interface DeviceEndpoint {
   kind: 'text' | 'json';
   unit?: string;
   payload?: boolean;
+  /** JSON key inside the payload this metric reads (for history extraction). */
+  field?: string;
 }
 
 export function deviceBaseUrl(): string {
-  return \`\${env.DEVICE_PROTOCOL}://\${env.DEVICE_IP}:\${env.DEVICE_PORT}\`;
+  const host = env.DEVICE_IP || env.DEVICE_HOST || '192.168.1.100';
+  return \`\${env.DEVICE_PROTOCOL}://\${host}:\${env.DEVICE_PORT}\`;
 }
 
 export function readEndpoints(): DeviceEndpoint[] {
@@ -341,11 +347,17 @@ export async function synthesizeSoftware(
   const scaffold = await loadScaffold();
   const envExampleLines = [
     'PORT=8080',
-    'CORS_ORIGIN=http://localhost:5173',
+    // Wide-open origins: the dashboard is for every computer/phone on your
+    // LAN, not just the machine that runs it. The API holds no secrets.
+    'CORS_ORIGIN=*',
     '',
     '# The device the firmware zip produces. Flash it, watch Serial, fill this in.',
     'DEVICE_PROTOCOL=http',
-    `DEVICE_IP=192.168.1.50`,
+    '# Option A (recommended): mDNS hostname — macOS/Linux work out of the box,',
+    '# Windows needs Bonjour installed. Printed by the firmware as <slug>.local',
+    `DEVICE_HOST=${plan.slug}.local`,
+    '# Option B: the IP the firmware printed on Serial. Wins over DEVICE_HOST.',
+    '# DEVICE_IP=192.168.1.50',
     'DEVICE_PORT=80',
     'DEVICE_TIMEOUT_MS=4000',
     '',

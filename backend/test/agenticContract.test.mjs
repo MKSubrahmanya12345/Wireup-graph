@@ -223,5 +223,56 @@ describe('agentic pipeline end-to-end (the build the user runs)', () => {
     const spec = result.software.files.find((f) => f.path === 'frontend/src/lib/deviceSpec.ts');
     assert.ok(spec?.content.includes("path: 'temperature.temperature_c'"));
     assert.ok(spec?.content.includes("path: 'humidity.humidity_pct'"));
+
+    // ── The device IS the website now ─────────────────────────────────────
+    const ino = result.firmware.files.find((f) => f.path.endsWith('.ino'));
+    const sketch = ino?.content ?? '';
+    for (const required of [
+      'DASHBOARD_HTML',            // full embedded dashboard at /
+      '/api/history',              // on-device ring-buffered history
+      '/api/wifi',                 // change Wi-Fi without re-flashing
+      'bodyOrArg',                 // form + JSON command parsing
+      'ArduinoOTA',                // OTA updates
+      'ENABLE_EMBEDDED_DASHBOARD',
+      'ENABLE_OTA',
+    ]) {
+      assert.ok(sketch.includes(required), `firmware must include ${required}`);
+    }
+
+    // ── Controls transport: the scaffold sends form-encoded commands ──────
+    const deviceClient = result.software.files.find(
+      (f) => f.path === 'backend/src/services/deviceClient.ts',
+    );
+    assert.ok(
+      deviceClient?.content.includes('application/x-www-form-urlencoded'),
+      'control commands must be form-encoded (ESP32 server.arg parses form, not JSON)',
+    );
+    assert.ok(
+      deviceClient?.content.includes('endpoint.field'),
+      'live readings must extract the metric field for history (no [object Object])',
+    );
+
+    // ── LAN access: CORS is open, mDNS host wired ─────────────────────────
+    const envExample = result.software.files.find((f) => f.path === 'backend/.env.example');
+    assert.ok(envExample?.content.includes('CORS_ORIGIN=*'), 'dashboard must be openable from any LAN device');
+    assert.ok(envExample?.content.includes('DEVICE_HOST='), 'mDNS hostname must be configurable');
+
+    // ── Read endpoints carry the field they read ──────────────────────────
+    const endpoints = result.software.files.find(
+      (f) => f.path === 'backend/src/config/deviceEndpoints.ts',
+    );
+    assert.ok(endpoints?.content.includes("field: 'temperature_c'"));
+    assert.ok(endpoints?.content.includes('env.DEVICE_HOST'));
+  });
+
+  it('generates form-or-JSON control routes for actuator builds', () => {
+    const { plan } = resolveBuildPlan(
+      'a relay and a dht22 on an esp32 with a website',
+      PROJECT,
+      normaliseGraph({}).graph,
+    );
+    const firmware = synthesizeFirmware(plan);
+    const sketch = firmware.files.map((f) => f.content).join('\n');
+    assert.ok(sketch.includes('bodyOrArg("state")'), 'toggle routes must parse form or JSON bodies');
   });
 });
