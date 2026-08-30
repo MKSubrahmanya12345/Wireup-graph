@@ -12,6 +12,7 @@ import {
 } from '../schemas/architecture.js';
 import { interpretBodySchema } from '../schemas/requirements.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
+import { deterministicPlan, interpretDeterministically } from '../agentic/architect.js';
 import type { Request, Response } from 'express';
 
 /**
@@ -26,13 +27,6 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
     throw ApiError.badRequest(
       'Request must include a non-empty request and a graph object.',
       parsed.error.flatten(),
-    );
-  }
-
-  if (!env.GROQ_API_KEY) {
-    throw new ApiError(
-      500,
-      'Groq is not configured. Add GROQ_API_KEY to backend/.env.',
     );
   }
 
@@ -51,7 +45,10 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   );
 
   let result;
-  try {
+  if (!env.GROQ_API_KEY) {
+    // Knowledge-engine path — the planner never needed an API key to be right.
+    result = deterministicPlan(request, {}, requirements);
+  } else try {
     result = await planAndVerify(request, baseGraph, { requirements, feedback });
   } catch (error) {
     if (error instanceof GroqError) throw ApiError.upstream(`Architecture planning failed: ${error.message}`);
@@ -135,11 +132,13 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
     throw ApiError.badRequest('A non-empty brief is required.', parsed.error.flatten());
   }
 
-  if (!env.GROQ_API_KEY) {
-    throw new ApiError(500, 'Groq is not configured. Add GROQ_API_KEY to backend/.env.');
-  }
-
   const { brief, answers, priorRequirements, priorQuestions, feedback, graph } = parsed.data;
+
+  if (!env.GROQ_API_KEY) {
+    const result = interpretDeterministically({ brief, answers, priorQuestions });
+    res.status(200).json(result);
+    return;
+  }
 
   try {
     const result = await runInterpretation({

@@ -5,11 +5,13 @@ import { toast } from '../store/useToastStore';
 export default function CodeBlock({
   path,
   content,
+  defaultOpen = false,
 }: {
   path: string;
   content: string;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const ext = path.split('.').pop() ?? '';
   const lang =
     ext === 'ts' || ext === 'tsx'

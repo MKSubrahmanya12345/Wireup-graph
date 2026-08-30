@@ -92,3 +92,68 @@ export interface FullBuildResult {
   website: WebsiteBuildResult | null;
   websiteRequested: boolean;
 }
+
+// ── Wireup agentic pipeline (streamed) ──────────────────────────────────────
+
+export interface ValidationFinding {
+  severity: 'error' | 'warning' | 'notice';
+  code: string;
+  message: string;
+  file?: string;
+  line?: number;
+  hint?: string;
+}
+
+export interface ValidationReport {
+  target: 'firmware' | 'software' | 'consistency' | 'graph';
+  ok: boolean;
+  checks: { name: string; ok: boolean; detail: string }[];
+  findings: ValidationFinding[];
+  commands: { cmd: string; exitCode: number | null; output: string; durationMs: number }[];
+  durationMs: number;
+}
+
+export type AgenticEvent =
+  | { type: 'stage'; stage: string; title: string; detail?: string }
+  | { type: 'log'; stage: string; line: string; tone?: 'info' | 'ok' | 'warn' | 'error' }
+  | { type: 'command'; stage: string; cmd: string; cwd?: string }
+  | { type: 'command_result'; stage: string; cmd: string; exitCode: number | null; output: string; durationMs: number }
+  | { type: 'validation'; stage: string; report: ValidationReport }
+  | { type: 'artifact'; stage: string; summary: string; files: string[] }
+  | { type: 'result'; result: AgenticBuildResult }
+  | { type: 'error'; message: string };
+
+export interface AgenticBuildResult {
+  projectName: string;
+  slug: string;
+  engine: 'deterministic' | 'llm-assisted';
+  iterations: { firmware: number; software: number };
+  firmware: FirmwareResult;
+  websiteRequirements: WebsiteRequirements;
+  software: {
+    projectName: string;
+    files: BuildFile[];
+    readme: string;
+    envExampleLines: string[];
+  };
+  validation: {
+    firmware: ValidationReport;
+    software: ValidationReport;
+    consistency: ValidationReport;
+  };
+}
+
+// ── Auth ────────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+export interface AuthSession {
+  token: string;
+  expiresIn: number;
+  user: AuthUser;
+}

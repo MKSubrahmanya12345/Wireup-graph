@@ -8,6 +8,7 @@ import {
   websiteRequirementsEndpoint,
 } from '../controllers/buildController.js';
 import { buildRateLimiter } from '../middleware/rateLimiter.js';
+import { agenticBufferedEndpoint, agenticStreamEndpoint } from '../controllers/agenticController.js';
 
 const router = Router();
 
@@ -19,5 +20,9 @@ router.post('/build/firmware', buildRateLimiter, buildFirmwareEndpoint);
 router.post('/build/website-requirements', buildRateLimiter, websiteRequirementsEndpoint);
 router.post('/build/website', buildRateLimiter, buildWebsiteEndpoint);
 router.post('/build/all', buildRateLimiter, buildAllEndpoint);
+
+// ── Wireup agentic pipeline (deterministic core, optional LLM assist) ──────
+router.post('/build/agentic', buildRateLimiter, agenticBufferedEndpoint);
+router.post('/build/agentic/stream', buildRateLimiter, agenticStreamEndpoint);
 
 export default router;
