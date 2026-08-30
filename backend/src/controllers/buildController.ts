@@ -119,6 +119,12 @@ export const buildWebsiteEndpoint = asyncHandler(async (req: Request, res: Respo
  * firmware → website requirements → website build.
  */
 export const buildAllEndpoint = asyncHandler(async (req: Request, res: Response) => {
+  if (!env.GROQ_API_KEY) {
+    // Agentic engine path — same response shape, no LLM required.
+    const { agenticBufferedEndpoint } = await import('./agenticController.js');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return agenticBufferedEndpoint(req as any, res as any, (() => undefined) as any);
+  }
   requireGroq();
   const parsed = websiteRequirementsBodySchema.safeParse(req.body);
   if (!parsed.success) {

@@ -46,8 +46,7 @@ interface SessionState {
   reset: () => void;
 }
 
-const STARTER_BRIEF =
-  'Design a battery-powered environmental sensor node. Sample temperature, humidity, and pressure every five minutes, buffer readings locally, and sync over Bluetooth when a phone is nearby.';
+const STARTER_BRIEF = '';
 
 export const useDesignSession = create<SessionState>()((set, get) => ({
   stage: 'idle',

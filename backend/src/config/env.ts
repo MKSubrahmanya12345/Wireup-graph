@@ -43,6 +43,25 @@ const envSchema = z.object({
   IMAGE_PROVIDER: z.enum(['cloudflare']).default('cloudflare'),
   CLOUDFLARE_ACCOUNT_ID: emptyToUndefined,
   CLOUDFLARE_API_TOKEN: emptyToUndefined,
+
+  // ── Wireup Auth ──────────────────────────────────────────────────────────
+  // Secret used to sign session tokens. The default exists so the app boots
+  // out of the box in dev — override it anywhere that is not a laptop.
+  JWT_SECRET: z.string().min(1).default('wireup-dev-secret-change-me'),
+  // How long a signed session stays valid.
+  AUTH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 7),
+  // File-backed user store (used when MONGO_URI is not set).
+  AUTH_DB_PATH: z.string().min(1).default('.data/users.json'),
+
+  // ── Agentic pipeline ─────────────────────────────────────────────────────
+  // Max generate → validate → repair rounds per artifact.
+  AGENTIC_MAX_REPAIR_LOOPS: z.coerce.number().int().min(1).max(6).default(3),
+  // Timeout for a single terminal validation command (ms).
+  AGENTIC_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(240_000),
+  // Where validation sandboxes are materialised.
+  AGENTIC_WORKDIR: z.string().min(1).default('/tmp/wireup-agentic'),
+  // Set to '0' to skip terminal validation entirely (not recommended).
+  AGENTIC_TERMINAL_VALIDATION: z.string().default('1'),
 });
 
 const parsed = envSchema.safeParse(process.env);
