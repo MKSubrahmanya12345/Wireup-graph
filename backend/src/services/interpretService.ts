@@ -5,7 +5,7 @@ import {
   type Question,
   type RequirementsSpec,
 } from '../schemas/requirements.js';
-import { callGroq, extractJson } from './groqService.js';
+import { callLlm, extractJson, type LlmProvider } from './llmService.js';
 
 /**
  * Pass 0: turn a free-text brief into a structured intent contract, and ask
@@ -99,6 +99,8 @@ export interface InterpretInput {
   priorQuestions: Question[];
   feedback: string[];
   graph?: unknown;
+  provider?: LlmProvider;
+  model?: string;
 }
 
 /** Hard cap so a runaway model cannot bury the human in a form. */
@@ -114,12 +116,17 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
     graph: input.graph ?? null,
   };
 
-  const content = await callGroq(
+  const content = await callLlm(
     [
       { role: 'system', content: INTERPRET_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify(payload) },
     ],
-    INTERPRET_MAX_TOKENS,
+    {
+      provider: input.provider,
+      model: input.model,
+      maxTokens: INTERPRET_MAX_TOKENS,
+      jsonResponse: true,
+    },
   );
 
   const parsed = interpretResponseSchema.parse(extractJson(content));

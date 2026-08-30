@@ -5,6 +5,7 @@ import { Project } from '../models/Project.js';
 import { planAndVerify } from '../services/architectureService.js';
 import { interpretBrief as runInterpretation } from '../services/interpretService.js';
 import { GroqError, extractJson } from '../services/groqService.js';
+import { isLlmAvailable, type LlmProvider } from '../services/llmService.js';
 import { env } from '../config/env.js';
 import {
   normaliseGraph,
@@ -18,7 +19,7 @@ import type { Request, Response } from 'express';
 /**
  * POST /api/architecture/plan
  *
- * Body: { request, graph?, projectId?, requirements?, feedback? }
+ * Body: { request, graph?, projectId?, requirements?, feedback?, provider?, model? }
  * Returns: { ...graph, verification, issues, blocking, projectId, revisionId }
  */
 export const planArchitecture = asyncHandler(async (req: Request, res: Response) => {
@@ -31,6 +32,10 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   }
 
   const { request, projectId, requirements, feedback } = parsed.data;
+  
+  // Optional LLM provider/model selection
+  const provider = (req.body.provider as LlmProvider | undefined) ?? env.LLM_PROVIDER;
+  const model = req.body.model as string | undefined;
 
   let project = null;
   if (isPersistenceEnabled() && projectId) {
@@ -45,11 +50,11 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   );
 
   let result;
-  if (!env.GROQ_API_KEY) {
+  if (!isLlmAvailable(provider)) {
     // Knowledge-engine path — the planner never needed an API key to be right.
     result = deterministicPlan(request, {}, requirements);
   } else try {
-    result = await planAndVerify(request, baseGraph, { requirements, feedback });
+    result = await planAndVerify(request, baseGraph, { requirements, feedback, provider, model });
   } catch (error) {
     if (error instanceof GroqError) throw ApiError.upstream(`Architecture planning failed: ${error.message}`);
     // A zod/parse failure from extractJson surfaces as a plain Error.
@@ -120,7 +125,7 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
 /**
  * POST /api/architecture/interpret
  *
- * Body: { brief, answers?, priorRequirements?, priorQuestions?, feedback?, graph? }
+ * Body: { brief, answers?, priorRequirements?, priorQuestions?, feedback?, graph?, provider?, model? }
  * Returns: { requirements, questions, assumptions, ready }
  *
  * Pass 0 of the loop. The model decides everything it can and returns only the
@@ -133,8 +138,12 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
   }
 
   const { brief, answers, priorRequirements, priorQuestions, feedback, graph } = parsed.data;
+  
+  // Optional LLM provider/model selection
+  const provider = (req.body.provider as LlmProvider | undefined) ?? env.LLM_PROVIDER;
+  const model = req.body.model as string | undefined;
 
-  if (!env.GROQ_API_KEY) {
+  if (!isLlmAvailable(provider)) {
     const result = interpretDeterministically({ brief, answers, priorQuestions });
     res.status(200).json(result);
     return;
@@ -148,6 +157,8 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
       priorQuestions,
       feedback,
       graph,
+      provider,
+      model,
     });
     res.status(200).json(result);
   } catch (error) {

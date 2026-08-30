@@ -44,9 +44,10 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
   error: null,
   abort: null,
 
-  run: async () => {
+  run: async (options?: { provider?: string; model?: string }) => {
     const { graph } = useGraphStore.getState();
-    const brief = useDesignSession.getState().brief.trim();
+    const { brief: rawBrief, llmOptions } = useDesignSession.getState();
+    const brief = rawBrief.trim();
     if (!brief) {
       set({ error: 'Write the prompt on page 01 first.' });
       return;
@@ -132,7 +133,13 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
 
     try {
       await streamAgenticBuild(
-        { brief, projectName: graph.project, graph },
+        { 
+          brief, 
+          projectName: graph.project, 
+          graph,
+          provider: options?.provider ?? llmOptions.provider,
+          model: options?.model ?? llmOptions.model,
+        },
         handle,
         abort.signal,
       );

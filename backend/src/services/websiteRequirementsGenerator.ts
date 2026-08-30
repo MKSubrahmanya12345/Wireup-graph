@@ -4,7 +4,7 @@ import {
   websiteRequirementsSchema,
   type WebsiteRequirements,
 } from '../schemas/build.js';
-import { callGroq, extractJson } from './groqService.js';
+import { callLlm, extractJson, type LlmProvider } from './llmService.js';
 
 /**
  * Agentic website-requirements analyser.
@@ -68,12 +68,14 @@ export interface WebsiteRequirementsInput {
     files?: Array<{ path: string }>;
     notes?: string[];
   } | null;
+  provider?: LlmProvider;
+  model?: string;
 }
 
 export async function generateWebsiteRequirements(
   input: WebsiteRequirementsInput,
 ): Promise<WebsiteRequirements> {
-  const content = await callGroq(
+  const content = await callLlm(
     [
       { role: 'system', content: WEBSITE_REQUIREMENTS_SYSTEM_PROMPT },
       {
@@ -86,7 +88,12 @@ export async function generateWebsiteRequirements(
         }),
       },
     ],
-    REQ_MAX_TOKENS,
+    {
+      provider: input.provider,
+      model: input.model,
+      maxTokens: REQ_MAX_TOKENS,
+      jsonResponse: true,
+    },
   );
 
   return websiteRequirementsSchema.parse(extractJson(content));

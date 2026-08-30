@@ -127,7 +127,7 @@ export default function AuthPage() {
           </label>
 
           <label className="field">
-            <span>Password {mode === 'signup' && <em>(8+ chars, a letter and a number)</em>}</span>
+            <span>Password {mode === 'signup' && <em>(8+ characters)</em>}</span>
             <input
               type="password"
               value={password}

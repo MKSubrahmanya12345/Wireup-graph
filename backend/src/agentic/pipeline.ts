@@ -6,6 +6,7 @@ import { normaliseGraph } from '../schemas/architecture.js';
 import type { BuildFile, FirmwareResult } from '../schemas/build.js';
 import { generateFirmware as generateFirmwareLlm } from '../services/firmwareGenerator.js';
 import { firmwareResultSchema } from '../schemas/build.js';
+import { isLlmAvailable } from '../services/llmService.js';
 import { resolveBuildPlan, slugify } from './planResolver.js';
 import { retrievalSources } from './knowledge/retriever.js';
 import { synthesizeFirmware } from './firmwareSynth.js';
@@ -86,14 +87,17 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // ── Stage 2: firmware (generate → compile → repair) ─────────────────────
     emit({ type: 'stage', stage: 'firmware', title: 'Generating firmware' });
 
-    const llmAvailable = Boolean(env.GROQ_API_KEY);
+    const llmAvailable = isLlmAvailable(input.provider);
     let firmware: FirmwareResult = synthesizeFirmware(plan);
     let firmwareSource: 'deterministic' | 'llm-assisted' = 'deterministic';
 
     if (llmAvailable) {
       try {
-        say('firmware', 'GROQ_API_KEY present — asking the LLM for a first draft (it still has to survive the compiler).');
-        const draft = await generateFirmwareLlm(brief, projectName, graphParsed);
+        say('firmware', `${input.provider ?? env.LLM_PROVIDER} available — asking the LLM for a first draft (it still has to survive the compiler).`);
+        const draft = await generateFirmwareLlm(brief, projectName, graphParsed, {
+          provider: input.provider,
+          model: input.model,
+        });
         firmware = firmwareResultSchema.parse(draft);
         firmwareSource = 'llm-assisted';
         say('firmware', `LLM draft: ${firmware.files.length} file(s) for ${firmware.board}`);

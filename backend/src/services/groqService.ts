@@ -1,9 +1,13 @@
+/**
+ * @deprecated Use llmService.ts instead. This file is kept for backward compatibility.
+ * Import from './llmService' for new code.
+ */
 import { env } from '../config/env.js';
-import { logger } from '../config/logger.js';
+import { callLlm, extractJson as extractJsonFromLlm, LlmError } from './llmService.js';
 
 export type ChatMessage = { role: 'system' | 'user'; content: string };
 
-/** Thrown for any provider-level failure; the controller turns this into a 502. */
+/** @deprecated Use LlmError from llmService */
 export class GroqError extends Error {
   constructor(
     message: string,
@@ -94,53 +98,27 @@ Return JSON only, with this shape:
 Be conservative: use "verified" only when the component identity, endpoint references, ports, voltage/power assumptions, and interface compatibility are sufficiently supported. Use "review" for unknown part variants, missing pin mappings, or assumptions that need a data-sheet check. Use "blocked" for contradictory voltages, impossible endpoint references, unsafe power paths, or other build-stopping issues.
 Do not invent source URLs. Only cite URLs present in the official component bank.`;
 
-/** Handles bare JSON, fenced JSON, and JSON wrapped in prose. */
+/** @deprecated Use extractJson from llmService */
 export function extractJson(content: string): unknown {
-  const trimmed = content.trim();
-  const withoutFence = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  try {
-    return JSON.parse(withoutFence);
-  } catch {
-    const start = withoutFence.indexOf('{');
-    const end = withoutFence.lastIndexOf('}');
-    if (start === -1 || end <= start) throw new GroqError('Groq returned non-JSON output');
-    return JSON.parse(withoutFence.slice(start, end + 1));
-  }
+  return extractJsonFromLlm(content);
 }
 
+/** @deprecated Use callLlm from llmService with provider: 'groq' */
 export async function callGroq(
   messages: ChatMessage[],
   maxTokens: number,
 ): Promise<string> {
-  const response = await fetch(`${env.GROQ_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  try {
+    return await callLlm(messages, {
+      provider: 'groq',
       model: env.GROQ_MODEL,
-      temperature: 0.1,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-      messages,
-    }),
-  });
-
-  if (!response.ok) {
-    const providerError = await response.text();
-    throw new GroqError(
-      `Groq request failed (${response.status}): ${providerError.slice(0, 300)}`,
-      response.status,
-    );
+      maxTokens,
+      jsonResponse: true,
+    });
+  } catch (error) {
+    if (error instanceof LlmError) {
+      throw new GroqError(error.message, error.status);
+    }
+    throw error;
   }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) throw new GroqError('Groq response did not contain message content');
-
-  logger.debug({ tokens: maxTokens }, 'Groq call completed');
-  return content;
 }

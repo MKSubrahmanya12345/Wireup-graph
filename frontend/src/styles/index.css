@@ -324,6 +324,50 @@ button { font-family: inherit; }
 .brief-input::placeholder { color: #475569; }
 
 .composer-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+
+/* LLM Provider Selector */
+.llm-selector-row {
+  display: flex;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+.llm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.llm-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.llm-field select {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: 500 13px var(--sans);
+  padding: 8px 28px 8px 10px;
+  cursor: pointer;
+  min-width: 140px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239fb0c8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.llm-field select:hover:not(:disabled) {
+  border-color: var(--cyan-dim);
+}
+.llm-field select:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: var(--ring);
+}
+
 .suggestion-row { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
 .suggestion-chip {
   background: var(--panel-2);

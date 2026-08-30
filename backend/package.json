@@ -13,20 +13,18 @@
     "test": "tsx --test test/*.test.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1121.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
-    "jsonwebtoken": "^9.0.2",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.4",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
-<<<<<<< HEAD
-    "uuid": "^14.0.2",
-=======
     "typescript": "~5.9.3",
->>>>>>> 35cb4d32d815476a2fd5c999629868c4a56d9fdf
+    "uuid": "^14.0.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@ import {
   type WebsiteBuildPlan,
   type WebsiteRequirements,
 } from '../schemas/build.js';
-import { callGroq, extractJson } from './groqService.js';
+import { callLlm, extractJson, type LlmProvider } from './llmService.js';
 import { loadScaffold } from './scaffoldService.js';
 
 /**
@@ -153,12 +153,14 @@ export interface WebsiteBuildInput {
     files?: Array<{ path: string; content?: string }>;
     notes?: string[];
   } | null;
+  provider?: LlmProvider;
+  model?: string;
 }
 
 export async function buildWebsite(input: WebsiteBuildInput) {
   const scaffold = await loadScaffold();
 
-  const content = await callGroq(
+  const content = await callLlm(
     [
       { role: 'system', content: WEBSITE_BUILD_SYSTEM_PROMPT },
       {
@@ -171,7 +173,12 @@ export async function buildWebsite(input: WebsiteBuildInput) {
         }),
       },
     ],
-    BUILD_MAX_TOKENS,
+    {
+      provider: input.provider,
+      model: input.model,
+      maxTokens: BUILD_MAX_TOKENS,
+      jsonResponse: true,
+    },
   );
 
   const plan = websiteBuildSchema.parse(extractJson(content));

@@ -8,6 +8,7 @@ import type {
   RequirementsSpec,
   Stage,
 } from '../types/session';
+import type { LlmOptions } from '../types/llm';
 
 interface SessionState {
   stage: Stage;
@@ -25,13 +26,17 @@ interface SessionState {
   acceptedRisks: string[];
 
   error: string | null;
+  
+  /** Selected LLM options for this session */
+  llmOptions: LlmOptions;
+  setLlmOptions: (options: LlmOptions) => void;
 
   setBrief: (brief: string) => void;
   setAnswer: (id: string, value: string) => void;
   acceptRisk: (id: string) => void;
 
   /** Stage 1 — ask the AI to decide everything it can. */
-  startInterpretation: () => Promise<void>;
+  startInterpretation: (options?: LlmOptions) => Promise<void>;
   /** Stage 2 — send answers, re-interpret, then plan. */
   submitAnswers: () => Promise<void>;
   /** Skip the questions entirely and let the AI's defaults stand. */
@@ -59,6 +64,8 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   revision: 0,
   acceptedRisks: [],
   error: null,
+  llmOptions: {},
+  setLlmOptions: (options) => set({ llmOptions: options }),
 
   setBrief: (brief) => set({ brief }),
 
@@ -72,23 +79,34 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         : { acceptedRisks: [...state.acceptedRisks, id] },
     ),
 
-  startInterpretation: async () => {
-    const { brief } = get();
-    if (!brief.trim()) {
-      set({ error: 'Describe what you want to build first.' });
-      return;
-    }
+  startInterpretation: async (options?: LlmOptions) => {
+      console.log('[useDesignSession] startInterpretation called');
+      const { brief } = get();
+      console.log('[useDesignSession] Brief:', brief.trim());
+      console.log('[useDesignSession] Options:', options);
+      if (!brief.trim()) {
+        console.log('[useDesignSession] Brief is empty, returning error');
+        set({ error: 'Describe what you want to build first.' });
+        return;
+      }
 
-    set({ stage: 'interpreting', error: null });
-    try {
-      const result = (await api.interpretBrief({
-        brief: brief.trim(),
-        answers: {},
-        priorQuestions: [],
-        feedback: [],
-      })) as InterpretResponse;
+      console.log('[useDesignSession] Setting stage to interpreting');
+      set({ stage: 'interpreting', error: null });
+      try {
+        console.log('[useDesignSession] Calling api.interpretBrief...');
+        const payload = {
+          brief: brief.trim(),
+          answers: {},
+          priorQuestions: [],
+          feedback: [],
+          provider: options?.provider,
+          model: options?.model,
+        };
+        console.log('[useDesignSession] API payload:', payload);
+        const result = (await api.interpretBrief(payload)) as InterpretResponse;
+        console.log('[useDesignSession] API result:', result);
 
-      set({
+        set({
         requirements: result.requirements,
         questions: result.questions,
         assumptions: result.assumptions,
@@ -148,7 +166,7 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   },
 
   runPlan: async () => {
-    const { brief, requirements, feedback } = get();
+    const { brief, requirements, feedback, llmOptions } = get();
     const graphStore = useGraphStore.getState();
 
     set({ stage: 'planning', error: null });
@@ -162,6 +180,8 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         projectId: graphStore.projectId,
         requirements,
         feedback,
+        provider: llmOptions.provider,
+        model: llmOptions.model,
       });
 
       // Strip every envelope field so only the canonical graph is stored —

@@ -20,6 +20,8 @@ const bodySchema = z.object({
   brief: z.string().trim().min(1, 'A brief is required.').max(6000),
   projectName: z.string().trim().max(120).optional(),
   graph: z.unknown(),
+  provider: z.enum(['groq', 'bedrock']).optional(),
+  model: z.string().optional(),
 });
 
 export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Response) => {
@@ -27,7 +29,7 @@ export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Resp
   if (!parsed.success) {
     throw ApiError.badRequest('Invalid agentic build request.', parsed.error.flatten());
   }
-  const { brief, projectName } = parsed.data;
+  const { brief, projectName, provider, model } = parsed.data;
   const { graph } = normaliseGraph(parsed.data.graph ?? {});
 
   res.status(200);
@@ -47,7 +49,7 @@ export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Resp
   };
 
   try {
-    await runAgenticPipeline({ brief, projectName, graph }, emit);
+    await runAgenticPipeline({ brief, projectName, graph, provider, model }, emit);
   } catch (error) {
     emit({ type: 'error', message: error instanceof Error ? error.message : 'Agentic build failed.' });
   } finally {
@@ -60,14 +62,14 @@ export const agenticBufferedEndpoint = asyncHandler(async (req: Request, res: Re
   if (!parsed.success) {
     throw ApiError.badRequest('Invalid agentic build request.', parsed.error.flatten());
   }
-  const { brief, projectName } = parsed.data;
+  const { brief, projectName, provider, model } = parsed.data;
   const { graph } = normaliseGraph(parsed.data.graph ?? {});
 
   const events: BuildEvent[] = [];
   let result: AgenticBuildResult | null = null;
   let failure: string | null = null;
 
-  await runAgenticPipeline({ brief, projectName, graph }, (event) => {
+  await runAgenticPipeline({ brief, projectName, graph, provider, model }, (event) => {
     events.push(event);
     if (event.type === 'result') result = event.result;
     if (event.type === 'error') failure = event.message;

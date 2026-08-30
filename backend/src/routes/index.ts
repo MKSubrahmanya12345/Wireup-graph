@@ -3,6 +3,7 @@ import { Router } from 'express';
 import architectureRoutes from './architectureRoutes.js';
 import authRoutes from './authRoutes.js';
 import buildRoutes from './buildRoutes.js';
+import configRoutes from './configRoutes.js';
 import healthRoutes from './healthRoutes.js';
 import projectRoutes from './projectRoutes.js';
 import validationRoutes from './validationRoutes.js';
@@ -13,6 +14,9 @@ const router = Router();
 // Open: health + auth.
 router.use(healthRoutes);
 router.use(authRoutes);
+
+// Config endpoint (available without auth for UI setup).
+router.use(configRoutes);
 
 // Everything below needs a Wireup session — these routes do the paid/heavy work.
 router.use(requireAuth);

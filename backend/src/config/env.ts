@@ -20,9 +20,19 @@ const envSchema = z.object({
   // An empty value (e.g. a blank line copied from .env.example) counts as unset.
   MONGO_URI: emptyToUndefined,
 
+  // ── LLM Provider configuration ───────────────────────────────────────────
+  LLM_PROVIDER: z.enum(['groq', 'bedrock']).default('groq'),
+  
+  // Groq settings
   GROQ_API_KEY: emptyToUndefined,
   GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-120b'),
   GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
+  
+  // AWS Bedrock settings
+  AWS_ACCESS_KEY_ID: emptyToUndefined,
+  AWS_SECRET_ACCESS_KEY: emptyToUndefined,
+  AWS_REGION: z.string().default('us-east-1'),
+  BEDROCK_MODEL: z.string().min(1).default('moonshotai.kimi-k2.5'),
 
   // Comma separated allow-list. Never '*' in production.
   CORS_ORIGIN: z.string().default('http://localhost:5173'),

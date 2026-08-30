@@ -3,7 +3,7 @@ import {
   firmwareResultSchema,
   type FirmwareResult,
 } from '../schemas/build.js';
-import { callGroq, extractJson } from './groqService.js';
+import { callLlm, extractJson, type LlmProvider } from './llmService.js';
 
 /**
  * Agentic firmware generator.
@@ -47,12 +47,18 @@ The user message is JSON with: brief, projectName, and graph (full ArchitectureG
 
 const FIRMWARE_MAX_TOKENS = 8_000;
 
+export interface GenerateFirmwareOptions {
+  provider?: LlmProvider;
+  model?: string;
+}
+
 export async function generateFirmware(
   brief: string,
   projectName: string,
   graph: ArchitectureGraph,
+  options?: GenerateFirmwareOptions,
 ): Promise<FirmwareResult> {
-  const content = await callGroq(
+  const content = await callLlm(
     [
       { role: 'system', content: FIRMWARE_SYSTEM_PROMPT },
       {
@@ -64,7 +70,12 @@ export async function generateFirmware(
         }),
       },
     ],
-    FIRMWARE_MAX_TOKENS,
+    {
+      provider: options?.provider,
+      model: options?.model,
+      maxTokens: FIRMWARE_MAX_TOKENS,
+      jsonResponse: true,
+    },
   );
 
   return firmwareResultSchema.parse(extractJson(content));

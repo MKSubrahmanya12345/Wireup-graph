@@ -53,6 +53,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  console.log('[api] Request:', path, init?.method ?? 'GET');
+  console.log('[api] Request body:', init?.body);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -65,16 +67,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   // Never assume JSON — a proxy 502 returns HTML.
   const raw = await response.text();
-  let payload: unknown = null;
-  if (raw) {
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      payload = null;
+    console.log('[api] Response status:', response.status);
+    console.log('[api] Response raw:', raw.slice(0, 500));
+    let payload: unknown = null;
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+        console.log('[api] Response parsed:', payload);
+      } catch {
+        payload = null;
+        console.log('[api] Failed to parse response as JSON');
+      }
     }
-  }
 
-  if (!response.ok) {
+    if (!response.ok) {
     if (response.status === 401 && !path.startsWith('/auth/')) {
       setAuthToken(null);
       onUnauthorized?.();
@@ -98,6 +104,8 @@ export const api = {
     projectId?: string | null;
     requirements?: RequirementsSpec | null;
     feedback?: string[];
+    provider?: string;
+    model?: string;
   }) =>
     request<PlanResponse>('/architecture/plan', {
       method: 'POST',
@@ -112,6 +120,8 @@ export const api = {
     priorQuestions?: Question[];
     feedback?: string[];
     graph?: unknown;
+    provider?: string;
+    model?: string;
   }) =>
     request<InterpretResponse>('/architecture/interpret', {
       method: 'POST',
@@ -266,6 +276,8 @@ export async function streamAgenticBuild(
     brief: string;
     projectName?: string;
     graph: unknown;
+    provider?: string;
+    model?: string;
   },
   onEvent: (event: AgenticEvent) => void,
   signal?: AbortSignal,

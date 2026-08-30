@@ -129,6 +129,8 @@ export interface PipelineInput {
   brief: string;
   projectName?: string;
   graph: ArchitectureGraph;
+  provider?: 'groq' | 'bedrock';
+  model?: string;
 }
 
 export type EmitFn = (event: BuildEvent) => void;

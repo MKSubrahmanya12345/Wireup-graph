@@ -1,15 +1,21 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { Question } from '../types/session';
+import type { LlmProvider } from '../types/llm';
 
 const SUGGESTIONS = [
   'a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer',
   'esp32 with a soil moisture sensor and a relay to water my plant when dry — dashboard on my pc',
   'esp32 + bme280 weather station logging to a website i can open at home',
   'esp32 cam-free security: pir motion sensor + buzzer + led, web dashboard on my laptop',
+];
+
+const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[] }[] = [
+  { value: 'groq', label: 'Groq', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
+  { value: 'bedrock', label: 'AWS Bedrock', models: ['minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
 ];
 
 /**
@@ -32,14 +38,25 @@ export default function IntakePage() {
   const submitAnswers = useDesignSession((state) => state.submitAnswers);
   const skipQuestions = useDesignSession((state) => state.skipQuestions);
   const revision = useDesignSession((state) => state.revision);
+  const setLlmOptions = useDesignSession((state) => state.setLlmOptions);
   const nodeCount = useGraphStore((state) => state.graph.nodes.length);
 
   const busy = stage === 'interpreting' || stage === 'planning';
+
+  // LLM provider/model selection
+  const [provider, setProvider] = useState<LlmProvider>('groq');
+  const [model, setModel] = useState<string>(LLM_PROVIDER_OPTIONS[0].models[0]);
 
   // Planned → land on the graph page.
   useEffect(() => {
     if (stage === 'reviewing' && nodeCount > 0) navigate('/graph');
   }, [stage, nodeCount, navigate]);
+
+  const handleProviderChange = (newProvider: LlmProvider) => {
+    setProvider(newProvider);
+    const models = LLM_PROVIDER_OPTIONS.find((p) => p.value === newProvider)?.models ?? [];
+    setModel(models[0] ?? '');
+  };
 
   return (
     <div className="page intake-page">
@@ -64,6 +81,41 @@ export default function IntakePage() {
           placeholder="e.g. a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer"
           disabled={busy}
         />
+        
+        {/* LLM Provider Selector */}
+        <div className="llm-selector-row">
+          <div className="llm-field">
+            <label htmlFor="provider">AI Provider</label>
+            <select
+              id="provider"
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
+              disabled={busy}
+            >
+              {LLM_PROVIDER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="llm-field">
+            <label htmlFor="model">Model</label>
+            <select
+              id="model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={busy}
+            >
+              {LLM_PROVIDER_OPTIONS.find((p) => p.value === provider)?.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        
         <div className="composer-foot">
           <div className="suggestion-row">
             {SUGGESTIONS.map((suggestion, i) => (
@@ -84,7 +136,18 @@ export default function IntakePage() {
             type="button"
             className="primary-button"
             disabled={!brief.trim() || busy}
-            onClick={() => void startInterpretation()}
+            onClick={() => {
+                          console.log('[IntakePage] Generate button clicked');
+                          console.log('[IntakePage] Brief:', brief.trim());
+                          console.log('[IntakePage] Provider:', provider);
+                          console.log('[IntakePage] Model:', model);
+                          console.log('[IntakePage] Current stage:', stage);
+                          console.log('[IntakePage] Setting LLM options...');
+                          setLlmOptions({ provider, model });
+                          console.log('[IntakePage] Calling startInterpretation...');
+                          void startInterpretation({ provider, model });
+                          console.log('[IntakePage] startInterpretation called');
+                        }}
           >
             {stage === 'interpreting'
               ? 'Reading the brief…'

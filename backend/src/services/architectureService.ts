@@ -17,9 +17,8 @@ import type { RequirementsSpec } from '../schemas/requirements.js';
 import {
   PLANNER_SYSTEM_PROMPT,
   VERIFIER_SYSTEM_PROMPT,
-  callGroq,
-  extractJson,
 } from './groqService.js';
+import { callLlm, extractJson, type LlmProvider } from './llmService.js';
 
 export interface PlanResult {
   graph: ArchitectureGraph;
@@ -33,6 +32,8 @@ export interface PlanResult {
 export interface PlanOptions {
   requirements?: RequirementsSpec | null;
   feedback?: string[];
+  provider?: LlmProvider;
+  model?: string;
 }
 
 const MAX_REQUEST_CHARS = 12_000;
@@ -55,7 +56,7 @@ export async function planAndVerify(
   const trimmedRequest = request.slice(0, MAX_REQUEST_CHARS);
   const { requirements } = options;
 
-  const plannerContent = await callGroq(
+  const plannerContent = await callLlm(
     [
       {
         role: 'system',
@@ -66,7 +67,12 @@ export async function planAndVerify(
         content: JSON.stringify({ request: trimmedRequest, graph }),
       },
     ],
-    PLANNER_MAX_TOKENS,
+    {
+      provider: options.provider,
+      model: options.model,
+      maxTokens: PLANNER_MAX_TOKENS,
+      jsonResponse: true,
+    },
   );
 
   // Repair before validating. The model's JSON is almost right — port names
@@ -84,7 +90,7 @@ export async function planAndVerify(
 
   let verification: VerificationReport;
   try {
-    const verifierContent = await callGroq(
+    const verifierContent = await callLlm(
       [
         { role: 'system', content: VERIFIER_SYSTEM_PROMPT },
         {
@@ -97,7 +103,12 @@ export async function planAndVerify(
           }),
         },
       ],
-      VERIFIER_MAX_TOKENS,
+      {
+        provider: options.provider,
+        model: options.model,
+        maxTokens: VERIFIER_MAX_TOKENS,
+        jsonResponse: true,
+      },
     );
 
     const candidate = verificationReportSchema.parse(extractJson(verifierContent));

@@ -17,9 +17,7 @@ export const signupBodySchema = z.object({
   password: z
     .string()
     .min(8, 'Password needs at least 8 characters.')
-    .max(128)
-    .regex(/[a-zA-Z]/, 'Password needs at least one letter.')
-    .regex(/[0-9]/, 'Password needs at least one number.'),
+    .max(128),
 });
 
 export const loginBodySchema = z.object({
