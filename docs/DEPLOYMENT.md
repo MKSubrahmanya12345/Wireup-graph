@@ -61,6 +61,29 @@ backend; the runtime image includes `g++`. Set the service to at least ~1 GB.
 The deterministic core works with **no API keys at all** — guests get full
 builds; the LLM only raises the ceiling for parts outside the knowledge base.
 
+## Real ESP32 compile + simulation in the container (optional bake)
+
+The image supports an optional `INSTALL_EMBEDDED_TOOLCHAIN=1` build arg that
+bakes PlatformIO (`pio`) + `wokwi-cli` into the runtime image:
+
+```bash
+docker build --build-arg INSTALL_EMBEDDED_TOOLCHAIN=1 -t wireup:embedded .
+```
+
+When baked:
+- `AGENTIC_EMBEDDED_COMPILE=1` enables real ESP32 binary compilation (PlatformIO
+  or arduino-cli) in the agentic build gate.
+- `AGENTIC_WOKWI=1` + `WOKWI_CLI_TOKEN` enables virtual-circuit simulation.
+- `fly.toml` passes the build arg and sets both env vars; set the VM to
+  `cpus = 2`, `memory_mb = 2048` (embedded builds are heavier than g++ syntax checks).
+- `render.yaml` sets the env vars but does **not** pass Docker build args
+  (Render blueprints don't support them); for the baked image, use Fly, or
+  build locally and push to a registry, then point Render at that image.
+
+When the bake is absent (`INSTALL_EMBEDDED_TOOLCHAIN=0`, default), both gates
+auto-skip gracefully — same behavior as a missing `g++`: the structural +
+contract checks remain authoritative.
+
 ## Verify the deployment (each component)
 
 1. Open the public URL → the Wireup UI loads.
