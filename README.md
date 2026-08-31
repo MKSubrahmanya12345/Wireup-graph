@@ -101,7 +101,25 @@ Key env vars (all optional, see `backend/.env.example`): `JWT_SECRET`, `MONGO_UR
 
 1. **Retrieval first** — parts come from a curated corpus with datasheets, never free-form invention.
 2. **Deterministic rules** — power, voltage, structural integrity are arithmetic checks, not model opinions.
-3. **The terminal is the judge** — firmware must compile; the MERN app must install, typecheck, and build. The browser log shows every command and its exit code.
-4. **Repair loops bounded** — failures feed a repair pass (≤3 iterations); unfixable LLM output is replaced by the deterministic path, and *nothing unvalidated ships*.
+3. **The terminal is the judge** — firmware must compile; the MERN app must install, typecheck, build, and *boot*. The browser log shows every command and its exit code.
+4. **Diagnostics-fed repair** — compiler output and validator findings are fed back into a real fix step: mechanical edits first (include remap, missing prelude, DHT-class fixes), then — when an LLM key is set — the model reads the **exact diagnostics + failing sources** and returns surgical search/replace patches that are applied deterministically (every patch must match exactly once and change the bytes, or it is rejected). The loop is fingerprint-guarded so it cannot spin on a no-op patch.
+5. **Multi-turn revision** — a follow-up change request (e.g. *"make the relay active-low"*) is applied to the current firmware via the same gated edit path, then re-compiled. Iteration survives the terminal gauntlet too.
+6. **Pin-safety engine** — the planner never assigns strapping pins (GPIO0/2/5/12/15), input-only ADC pins (34–39) or flash pins (6–11) to modules; a human-drawn graph that tries is rejected with the reason. GPIO12 held high at boot bricks an ESP32 — the compiler can never catch that.
+
+### Multi-turn builds
+
+`POST /api/build/agentic/stream` accepts an optional `revisionInstruction`. On a
+second turn, pass it alongside the same brief/graph and Wireup edits the existing
+firmware to satisfy the request, then re-runs the full compile → build → boot
+gauntlet. With no LLM key the unmodified deterministic plan is built (a warning
+is logged); with `GROQ_API_KEY`/Bedrock set, the model applies the change.
+
+### Roadmap status
+
+See [`docs/AGENTIC_ROADMAP.md`](docs/AGENTIC_ROADMAP.md) for the phased plan.
+**Phase 1 (agentic core) is in:** diagnostics-fed repair, multi-turn revision,
+pin-safety enforcement, and a device-generalised runtime smoke test.
+Phase 2 (real arduino-cli/PlatformIO compile + Wokwi firmware simulation) and
+Phase 3 (KiCad netlist/ERC, datasheet ingestion) are scoped there.
 
 `docs/archive/` holds older dev-log notes from earlier iterations.

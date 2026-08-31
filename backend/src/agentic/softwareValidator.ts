@@ -12,7 +12,7 @@ import {
   startServer,
   type CommandResult,
 } from './terminal.js';
-import type { ValidationFinding, ValidationReport } from './types.js';
+import type { DeviceMetricSpec, ValidationFinding, ValidationReport } from './types.js';
 
 /**
  * Software (MERN) validator — the generated project must build for real.
@@ -133,6 +133,12 @@ export interface SoftwareValidationOptions {
   /** Expected device web port from the firmware (WEB_SERVER_PORT). */
   devicePort: number;
   firmwareJsonFields: string[];
+  /**
+   * Metrics the resolved plan promises — drives the runtime smoke test so it
+   * asserts the shape of THIS device (an OLED/relay build has no temperature),
+   * instead of hard-coding temperature/humidity.
+   */
+  metrics?: DeviceMetricSpec[];
   terminal?: boolean;
 }
 
@@ -302,7 +308,7 @@ export async function validateSoftware(
   // A software zip only ships when the app it contains actually RUNS.
   const smokeEnabled = env.AGENTIC_SMOKE_TEST !== '0';
   if (smokeEnabled) {
-    const smoke = await runtimeSmokeTest(treeDir);
+    const smoke = await runtimeSmokeTest(treeDir, options.metrics ?? []);
     commands.push(...smoke.commands);
     checks.push(smoke.check);
     findings.push(...smoke.findings);
@@ -315,17 +321,28 @@ export async function validateSoftware(
   return report;
 }
 
-/** Stub device the generated backend talks to during the smoke test. */
-const STUB_DEVICE_SOURCE = `
+/**
+ * Stub device the generated backend talks to during the smoke test. The
+ * telemetry payload is built from the resolved plan's metrics (each field
+ * gets a deterministic numeric value) so the smoke test validates THIS
+ * device's shape — an OLED/relay-only build publishes no temperature and must
+ * not be asserted to.
+ */
+function stubDeviceSource(metricFields: string[]): string {
+  const readings = metricFields
+    .map((field, index) => `${JSON.stringify(field)}: ${(20 + index * 1.5).toFixed(1)}`)
+    .join(', ');
+  return `
 import http from 'node:http';
 const port = Number(process.env.STUB_PORT ?? 18080);
+const readings = { ${readings}${readings ? ', ' : ''}uptime_s: 1, sample_ts_ms: 0 };
 http
   .createServer((req, res) => {
     const url = req.url ?? '';
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (url.startsWith('/api/sensors')) {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ temperature_c: 21.4, humidity_pct: 55.2, uptime_s: 1, sample_ts_ms: 0 }));
+      res.end(JSON.stringify(readings));
       return;
     }
     if (url.startsWith('/api/status')) {
@@ -339,6 +356,7 @@ http
   })
   .listen(port, '127.0.0.1', () => console.log('[stub-device] listening on ' + port));
 `;
+}
 
 async function httpJson(url: string, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
@@ -374,7 +392,7 @@ interface SmokeResult {
   findings: ValidationFinding[];
 }
 
-async function runtimeSmokeTest(treeDir: string): Promise<SmokeResult> {
+async function runtimeSmokeTest(treeDir: string, metrics: DeviceMetricSpec[]): Promise<SmokeResult> {
   const commands: CommandResult[] = [];
   const findings: ValidationFinding[] = [];
   const ok = (detail: string) => ({ name: 'runtime smoke (boot + live)', ok: true, detail });
@@ -389,10 +407,11 @@ async function runtimeSmokeTest(treeDir: string): Promise<SmokeResult> {
   const apiPort = await freePort().catch(() => 18081);
   const backendDir = path.join(treeDir, 'backend');
 
-  // 1. Stub device.
+  // 1. Stub device — telemetry shaped by THIS plan's metrics.
   const stubPath = path.join(treeDir, '.wireup-stub-device.mjs');
   const { writeFile } = await import('node:fs/promises');
-  await writeFile(stubPath, STUB_DEVICE_SOURCE, 'utf8');
+  const metricFields = [...new Set(metrics.map((m) => m.jsonField))];
+  await writeFile(stubPath, stubDeviceSource(metricFields), 'utf8');
   const stub = startServer(['node', stubPath], {
     cwd: treeDir,
     env: { STUB_PORT: String(stubPort) },
@@ -444,33 +463,53 @@ async function runtimeSmokeTest(treeDir: string): Promise<SmokeResult> {
     await stub.stop();
     return fail(`/api/telemetry/live returned ${live.status}: ${JSON.stringify(live.body)}`);
   }
-  const nestedOk =
-    (live.body.temperature as Record<string, unknown> | undefined)?.temperature_c === 21.4 &&
-    (live.body.humidity as Record<string, unknown> | undefined)?.humidity_pct === 55.2;
-  if (!nestedOk) {
+
+  // The live payload nests each metric as endpointId.field. Assert EVERY
+  // promised metric survived the proxy with its numeric value intact; a build
+  // with no telemetry metrics (actuator/display only) just has to boot.
+  const expectedValues = new Map(metricFields.map((field, i) => [field, Number((20 + i * 1.5).toFixed(1))]));
+  let firstBad: string | null = null;
+  for (const metric of metrics) {
+    const expected = expectedValues.get(metric.jsonField);
+    const got = (live.body[metric.id] as Record<string, unknown> | undefined)?.[metric.jsonField];
+    if (typeof got !== 'number' || expected === undefined || Math.abs(got - expected) > 0.01) {
+      firstBad = `${metric.id}.${metric.jsonField} expected ${expected}, got ${JSON.stringify(got)}`;
+      break;
+    }
+  }
+  if (firstBad) {
     await api.stop();
     await stub.stop();
-    return fail(`live payload lost its nested shape: ${JSON.stringify(live.body).slice(0, 300)}`);
+    return fail(`live payload lost a metric's nested value (${firstBad}): ${JSON.stringify(live.body).slice(0, 300)}`);
   }
 
-  // 5. History stores extracted NUMBERS, not payload objects.
-  const history = (await httpJson(
-    `http://127.0.0.1:${apiPort}/api/telemetry/history?limit=10`,
-    5_000,
-  )) as { status?: number; body?: { readings?: { metric: string; value: unknown }[] } };
-  const tempReading = history.body?.readings?.find((r) => r.metric === 'temperature');
-  const historyOk = history.status === 200 && typeof tempReading?.value === 'number' && tempReading.value === 21.4;
-  if (!historyOk) {
-    await api.stop();
-    await stub.stop();
-    return fail(`history did not store extracted numbers: ${JSON.stringify(history.body).slice(0, 300)}`);
+  // 5. History stores extracted NUMBERS, not payload objects — check the first
+  //    promised metric (history is only meaningful for telemetry).
+  let historyDetail = 'history stores extracted numbers';
+  if (metrics.length > 0) {
+    const history = (await httpJson(
+      `http://127.0.0.1:${apiPort}/api/telemetry/history?limit=10`,
+      5_000,
+    )) as { status?: number; body?: { readings?: { metric: string; value: unknown }[] } };
+    const probe = metrics[0]!;
+    const expected = expectedValues.get(probe.jsonField);
+    const reading = history.body?.readings?.find((r) => r.metric === probe.id);
+    const historyOk =
+      history.status === 200 && typeof reading?.value === 'number' && expected !== undefined &&
+      Math.abs((reading.value as number) - expected) < 0.01;
+    if (!historyOk) {
+      await api.stop();
+      await stub.stop();
+      return fail(`history did not store extracted numbers for ${probe.id}: ${JSON.stringify(history.body).slice(0, 300)}`);
+    }
+    historyDetail = `${metrics.length} metric(s) nested live; history stores extracted numbers`;
   }
 
   await api.stop();
   await stub.stop();
   return {
     commands,
-    check: ok(`backend booted, live payload nested (21.4 °C / 55.2 %), history stores extracted numbers`),
+    check: ok(`backend booted, ${historyDetail}`),
     findings,
   };
 }
