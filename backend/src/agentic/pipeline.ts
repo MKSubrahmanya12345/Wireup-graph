@@ -157,6 +157,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         workDir: path.join(work.root, 'firmware'),
         boardDefine: plan.board.archDefine,
         expectedJsonFields,
+        plan,
       });
       reportToEvents('firmware-validate', firmwareReport, emit);
 

@@ -38,22 +38,35 @@ Zero external runtime dependencies; fully verified in CI/sandbox.
 
 ---
 
-## ⏳ Phase 2 — the real firmware gauntlet
+## 🟡 Phase 2 — the real firmware gauntlet (code in; runs where the tools exist)
 
-Buildable now; partly depends on the local toolchain/cloud to run.
+The gates are implemented and tested; they auto-skip in environments without the
+embedded toolchain (this sandbox blocks `dl.registry.platformio.org`,
+`downloads.arduino.cc`, and `wokwi.com`), exactly like the `GPP-MISSING` badge.
+On a machine/CI with the tools installed they run for real.
 
-1. **Real compile gate.** Drive `arduino-cli` or PlatformIO with the actual
-   `arduino-esp32` core and declared library deps, producing a `.bin`. Detect
-   the toolchain like today's `GPP-MISSING` badge and fall back to the stub gate.
-   *(Sandbox blocks `dl.registry.platformio.org` and `downloads.arduino.cc`;
-   the gate skips gracefully here and runs on a normal machine/CI.)*
-2. **Wokwi firmware simulation.** Generate `wokwi.toml` + `diagram.json` from the
-   build plan (virtual DHT/servo/relay/OLED on the virtual ESP32), boot the
-   compiled binary headlessly with `wokwi-cli --expect-text`, and `curl` the
-   simulated device's `/api/sensors` over the Wi-Fi simulation. This is the
-   firmware equivalent of the software boot smoke test. Requires the free
-   `WOKWI_CLI_TOKEN` (https://wokwi.com/dashboard/ci); flag: `AGENTIC_WOKWI=1`.
-3. Feed **arduino-cli/Wokwi diagnostics** into the same `repairAgent` patch path.
+1. **Real compile gate** ✅ — `compileFirmware` (`embeddedBuild.ts`) builds the
+   firmware with PlatformIO (`pio pkg install` + `pio run`, preferred — reads the
+   generated `platformio.ini`) or `arduino-cli` (`core install esp32:esp32` +
+   `compile --fqbn`), producing a real ESP32 binary. Tool detection lives in
+   `toolchain.ts`; failures become `EMBED-COMPILE`/`EMBED-BUILD` findings that
+   feed the Phase-1 diagnostics repair loop.
+2. **Wokwi firmware simulation** ✅ — `wokwiConfig.ts` generates `wokwi.toml` +
+   `diagram.json` from the build plan: a virtual ESP32 with the exact parts
+   (DHT22/11, BME280, DS18B20, HC-SR04, PIR, relay, SG90, SSD1306, LED) wired to
+   the *exact GPIOs the firmware uses*; parts without a Wokwi model (MQ-2, soil)
+   are reported, not faked. The gate runs `wokwi-cli --expect-text "listening on
+   port"` (firmware reaching HTTP-server-up). The config is also shipped in the
+   firmware zip. Requires `wokwi-cli` + free `WOKWI_CLI_TOKEN`
+   (https://wokwi.com/dashboard/ci); flags `AGENTIC_WOKWI`, `AGENTIC_EMBEDDED_COMPILE`.
+3. **Diagnostics into repair** ✅ — embedded/sim findings carry file+line and
+   flow into the same `repairAgent` patch path as g++ errors.
+
+**To run Phase 2 locally:** `pip install platformio` (and `npm i -g wokwi-cli` +
+set `WOKWI_CLI_TOKEN`); the `/api/healthz/toolchain` badge reports what's present.
+
+Remaining Phase-2 nicety: HTTP-probe the simulated device's `/api/sensors` over
+Wokwi's port forwarding (today the sim asserts boot + HTTP-server-up via serial).
 
 ---
 
@@ -75,5 +88,8 @@ Buildable now; partly depends on the local toolchain/cloud to run.
 | --- | --- |
 | `AGENTIC_TERMINAL_VALIDATION=0` | skip all terminal gates (default `1`) |
 | `AGENTIC_SMOKE_TEST=0` | skip the generated-app boot smoke test (default `1`) |
+| `AGENTIC_EMBEDDED_COMPILE=0` | skip the PlatformIO/arduino-cli real-binary compile (default on; auto-skips if the tool is absent) |
+| `AGENTIC_WOKWI=0` | skip the Wokwi headless simulation gate (default on; auto-skips without `wokwi-cli`/token) |
+| `WOKWI_CLI_TOKEN` | free token from https://wokwi.com/dashboard/ci — enables the sim gate |
 | `AGENTIC_MAX_REPAIR_LOOPS=n` | repair rounds per artifact (default 3) |
 | `GROQ_API_KEY` / Bedrock creds | enables LLM first-draft, **diagnostics-fed repair**, and multi-turn revision |

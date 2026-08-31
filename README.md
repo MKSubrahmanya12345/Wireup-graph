@@ -117,9 +117,13 @@ is logged); with `GROQ_API_KEY`/Bedrock set, the model applies the change.
 ### Roadmap status
 
 See [`docs/AGENTIC_ROADMAP.md`](docs/AGENTIC_ROADMAP.md) for the phased plan.
-**Phase 1 (agentic core) is in:** diagnostics-fed repair, multi-turn revision,
-pin-safety enforcement, and a device-generalised runtime smoke test.
-Phase 2 (real arduino-cli/PlatformIO compile + Wokwi firmware simulation) and
-Phase 3 (KiCad netlist/ERC, datasheet ingestion) are scoped there.
+- **Phase 1 (agentic core) — in:** diagnostics-fed repair, multi-turn revision,
+  pin-safety enforcement, device-generalised runtime smoke test.
+- **Phase 2 (real firmware gauntlet) — code in, runs where the tools exist:**
+  PlatformIO/arduino-cli real-binary compile and a headless Wokwi simulation
+  gate (virtual circuit generated from the plan, wired pin-for-pin). Both
+  auto-skip when the toolchain/token is absent and run for real when installed.
+  `GET /api/healthz/toolchain` reports what's available.
+- **Phase 3 (KiCad netlist/ERC, datasheet ingestion, bench loop) — scoped.**
 
 `docs/archive/` holds older dev-log notes from earlier iterations.

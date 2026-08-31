@@ -10,6 +10,7 @@
 
 import type { BuildFile, FirmwareResult } from '../schemas/build.js';
 import type { DeviceBuildPlan, ResolvedModule } from './types.js';
+import { generateWokwiConfig } from './wokwiConfig.js';
 
 // ── Per-module code generation ──────────────────────────────────────────────
 
@@ -1001,10 +1002,17 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
   const libraries = new Set<string>();
   plan.modules.forEach((module) => module.libraries.forEach((lib) => libraries.add(lib.name)));
 
+  // Ship the Wokwi simulation config in the firmware zip so a user can boot
+  // the firmware in a virtual circuit (after `pio run` produces the ELF) with
+  // a free token — same files the validation gate uses.
+  const wokwi = generateWokwiConfig(plan);
+
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },
     { path: `firmware/${plan.slug}.ino`, content: sketchSource(plan, codes) },
     { path: 'firmware/config.h', content: configSource(plan, codes) },
+    { path: 'wokwi.toml', content: wokwi.wokwiToml },
+    { path: 'diagram.json', content: wokwi.diagramJson },
     { path: 'README.md', content: readme(plan) },
   ];
 

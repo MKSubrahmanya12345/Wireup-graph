@@ -26,15 +26,25 @@ function versionOf(binary: string): Promise<string | null> {
 
 /**
  * GET /api/healthz/toolchain — what the terminal validation gate can run.
- * The firmware compile gate needs g++; npm/tsc/vite need node + npm. The UI
- * shows this so a missing compiler is visible BEFORE a build, not as a
- * "compiler skipped" line afterwards.
+ * The firmware stub-compile needs g++; npm/tsc/vite need node + npm; the REAL
+ * embedded build needs PlatformIO (pio) or arduino-cli, and the Wokwi sim gate
+ * needs wokwi-cli + a token. The UI shows this so a missing tool is visible
+ * BEFORE a build, not as a "skipped" line afterwards.
  */
 export async function toolchainCheck(_req: Request, res: Response): Promise<void> {
-  const [node, npm, gpp] = await Promise.all([
+  const { detectToolchain } = await import('../agentic/toolchain.js');
+  const [node, npm, toolchain] = await Promise.all([
     versionOf('node'),
     versionOf('npm'),
-    versionOf('g++'),
+    detectToolchain(),
   ]);
-  res.status(200).json({ node, npm, gpp });
+  res.status(200).json({
+    node,
+    npm,
+    gpp: toolchain.gpp.version,
+    platformio: toolchain.platformio.version,
+    arduinoCli: toolchain.arduinoCli.version,
+    wokwiCli: toolchain.wokwiCli.version,
+    wokwiToken: toolchain.wokwiToken,
+  });
 }
