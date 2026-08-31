@@ -1,0 +1,33 @@
+# Render blueprint — one Docker web service serving frontend + API same-origin.
+# In the Render dashboard: New > Blueprint, point at this repo. Set the secret
+# env vars (JWT_SECRET, MONGO_URI, GROQ_API_KEY) in the service settings.
+#
+# NOTE: agentic builds stream for minutes and need no request timeout — use a
+# paid/always-on instance (the free tier sleeps and caps long requests).
+
+services:
+  - type: web
+    name: wireup
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    healthCheckPath: /api/healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AGENTIC_TERMINAL_VALIDATION
+        value: "1"
+      - key: AGENTIC_SMOKE_TEST
+        value: "1"
+      - key: AGENTIC_EMBEDDED_COMPILE
+        value: "0"
+      - key: AGENTIC_WOKWI
+        value: "0"
+      # Set these in the dashboard (do not commit secrets):
+      - key: MONGO_URI
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

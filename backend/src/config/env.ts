@@ -41,6 +41,11 @@ const envSchema = z.object({
   // Comma separated allow-list. Never '*' in production.
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 
+  // Directory holding the built frontend (vite `dist`). When set/available the
+  // API serves the SPA same-origin, so one container serves the whole app.
+  // Auto-detected (./public, then ../frontend/dist) when left unset.
+  FRONTEND_DIST: emptyToUndefined,
+
   LOG_LEVEL: z.string().default('info'),
 
   // Guards the paid LLM endpoint against casual abuse.

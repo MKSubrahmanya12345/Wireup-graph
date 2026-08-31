@@ -12,6 +12,18 @@ Wireup is an agentic hardware workspace. Three pages, one pipeline:
 
 Not an AI wrapper: the core engine is a curated knowledge base + engineering rules + terminal validation. An LLM (Groq) is an *optional assistant* whose drafts must survive the exact same terminal gauntlet — and are discarded if they don't.
 
+## Hosting it
+
+A single Docker image serves the frontend **and** API on one port (same-origin),
+with `g++` baked in so the build gates run server-side. It's a long-running
+service (builds stream for minutes), not serverless. One-command configs for
+**Fly.io** (`fly.toml`) and **Render** (`render.yaml`) are included.
+
+Users never need a terminal — they click **"Skip — try as guest"** and the build
+log streams from the server into any browser (mobile included). The firmware
+serves its own dashboard at `http://<device-ip>/` once flashed. Full steps, env
+vars, and per-component verification: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
+
 ## Quick start
 
 ```bash
