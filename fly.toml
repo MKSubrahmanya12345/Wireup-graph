@@ -11,6 +11,8 @@ primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
+  [build.args]
+    INSTALL_EMBEDDED_TOOLCHAIN = "1"
 
 [env]
   NODE_ENV = "production"
@@ -18,8 +20,8 @@ primary_region = "iad"
   AGENTIC_TERMINAL_VALIDATION = "1"
   AGENTIC_SMOKE_TEST = "1"
   # Real embedded compile/sim need PlatformIO/wokwi-cli — skip unless installed.
-  AGENTIC_EMBEDDED_COMPILE = "0"
-  AGENTIC_WOKWI = "0"
+  AGENTIC_EMBEDDED_COMPILE = "1"
+  AGENTIC_WOKWI = "1"
 
 [http_service]
   internal_port = 5000
@@ -40,5 +42,5 @@ primary_region = "iad"
 [[vm]]
   # Builds run g++/npm/tsc/vite — give the machine headroom.
   cpu_kind = "shared"
-  cpus = 1
-  memory_mb = 1024
+  cpus = 2
+  memory_mb = 2048

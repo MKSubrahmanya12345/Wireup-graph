@@ -23,9 +23,13 @@ services:
       - key: AGENTIC_SMOKE_TEST
         value: "1"
       - key: AGENTIC_EMBEDDED_COMPILE
-        value: "0"
+        value: "1"
       - key: AGENTIC_WOKWI
-        value: "0"
+        value: "1"
+      - key: WOKWI_CLI_TOKEN
+        sync: false
+      # NOTE: Render blueprints don't pass Docker build args; use Fly for the
+      # baked image (docker build --build-arg INSTALL_EMBEDDED_TOOLCHAIN=1).
       # Set these in the dashboard (do not commit secrets):
       - key: MONGO_URI
         sync: false
