@@ -15,6 +15,7 @@ import { env } from '../config/env.js';
 import { materialise, runCommand, type CommandResult } from './terminal.js';
 import { detectToolchain, type ToolInfo } from './toolchain.js';
 import { generateWokwiConfig } from './wokwiConfig.js';
+import { generateUniversalDiagram } from './universalDiagram.js';
 import type { DeviceBuildPlan, ValidationFinding, ValidationReport } from './types.js';
 import type { BuildFile } from '../schemas/build.js';
 
@@ -204,9 +205,16 @@ export async function simulateFirmware(
 
   const projectDir = path.join(options.workDir, 'embedded-project');
   const config = generateWokwiConfig(options.plan);
+  const universal = generateUniversalDiagram(options.plan, {
+    version: 1,
+    author: 'Wireup',
+    parts: config.diagramJson ? JSON.parse(config.diagramJson).parts ?? [] : [],
+    connections: config.diagramJson ? JSON.parse(config.diagramJson).connections ?? [] : [],
+  });
   await materialise(projectDir, [
     { path: 'wokwi.toml', content: config.wokwiToml },
-    { path: 'diagram.json', content: config.diagramJson },
+    { path: 'diagram.json', content: JSON.stringify(universal, null, 2) },
+    { path: 'hardware/universal-diagram.json', content: JSON.stringify(universal, null, 2) },
   ]);
   if (config.unsupported.length > 0) {
     checks.push({

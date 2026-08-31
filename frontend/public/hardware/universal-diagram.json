@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "format": "wireup-universal",
+  "author": "Wireup",
+  "sourcePlan": "dht22-esp32-weather",
+  "parts": [
+    { "type": "board-esp32-devkit-v1", "id": "esp", "role": "mcu", "model": "esp32-devkit-v1", "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht_1", "role": "sensor", "model": "dht22", "attrs": {} },
+    { "type": "resistor-10k", "id": "pullup_1w_1", "role": "passive", "model": "10k", "attrs": { "value": "10k", "foot": "0603" } }
+  ],
+  "connections": [
+    { "from": { "partId": "dht_1", "pin": "VCC" }, "to": { "partId": "esp", "pin": "3V3" }, "net": "+3V3" },
+    { "from": { "partId": "dht_1", "pin": "SDA" }, "to": { "partId": "esp", "pin": "4" }, "net": "GPIO4" },
+    { "from": { "partId": "dht_1", "pin": "GND" }, "to": { "partId": "esp", "pin": "GND.0" }, "net": "GND" },
+    { "from": { "partId": "pullup_1w_1", "pin": "1" }, "to": { "partId": "dht_1", "pin": "SDA" }, "net": "+3V3" }
+  ],
+  "nets": [
+    { "name": "GND", "nodes": [{ "partId": "esp", "pin": "GND.0" }] },
+    { "name": "+3V3", "nodes": [{ "partId": "esp", "pin": "3V3" }] },
+    { "name": "+5V", "nodes": [{ "partId": "esp", "pin": "5V" }] }
+  ]
+}

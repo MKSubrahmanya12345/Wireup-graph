@@ -7,6 +7,7 @@ import AuthPage from './pages/AuthPage';
 import BuildPage from './pages/BuildPage';
 import GraphPage from './pages/GraphPage';
 import IntakePage from './pages/IntakePage';
+import SimPage from './pages/SimPage';
 import { useAuth } from './store/useAuth';
 
 function Workspace({ children }: { children: ReactNode }) {
@@ -71,6 +72,14 @@ export default function App() {
         element={
           <RequireAuth>
             <BuildPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/sim"
+        element={
+          <RequireAuth>
+            <SimPage />
           </RequireAuth>
         }
       />

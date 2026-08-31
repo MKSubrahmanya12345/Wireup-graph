@@ -276,9 +276,12 @@ export default function BuildPage() {
                   Clear
                 </button>
               )}
-              <button type="button" className="primary-button" disabled={!canRun} onClick={() => void run()}>
-                {result ? '↻ Re-run agentic build' : '⚡ Run agentic build'}
-              </button>
+          <Link to="/sim" className="primary-button as-link" style={{ marginLeft: 10 }}>
+            ↳ Simulation
+          </Link>
+          <button type="button" className="ghost-button" disabled={!canRun} onClick={() => void run()}>
+            {result ? '↻ Re-run agentic build' : '⚡ Run agentic build'}
+          </button>
             </>
           )}
         </div>

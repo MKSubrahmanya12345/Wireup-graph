@@ -11,6 +11,7 @@
 import type { BuildFile, FirmwareResult } from '../schemas/build.js';
 import type { DeviceBuildPlan, ResolvedModule } from './types.js';
 import { generateWokwiConfig } from './wokwiConfig.js';
+import { generateUniversalDiagram } from './universalDiagram.js';
 
 // ── Per-module code generation ──────────────────────────────────────────────
 
@@ -1007,12 +1008,14 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
   // a free token — same files the validation gate uses.
   const wokwi = generateWokwiConfig(plan);
 
+  const universal = generateUniversalDiagram(plan, { version: 1, author: 'Wireup', parts: JSON.parse(wokwi.diagramJson).parts ?? [], connections: JSON.parse(wokwi.diagramJson).connections ?? [] });
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },
     { path: `firmware/${plan.slug}.ino`, content: sketchSource(plan, codes) },
     { path: 'firmware/config.h', content: configSource(plan, codes) },
     { path: 'wokwi.toml', content: wokwi.wokwiToml },
-    { path: 'diagram.json', content: wokwi.diagramJson },
+    { path: 'diagram.json', content: JSON.stringify(universal, null, 2) },
+    { path: 'hardware/universal-diagram.json', content: JSON.stringify(universal, null, 2) },
     { path: 'README.md', content: readme(plan) },
   ];
 
