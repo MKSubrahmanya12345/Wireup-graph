@@ -1,0 +1,44 @@
+# Fly.io config for Wireup — one machine serves the frontend + API same-origin.
+# Deploy:
+#   fly launch --no-deploy --name <your-app>
+#   fly secrets set JWT_SECRET="$(openssl rand -hex 32)" MONGO_URI="..." GROQ_API_KEY="..."
+#   fly deploy
+#
+# Builds from the repo-root Dockerfile (multi-stage: vite build + tsc + runtime).
+
+app = "wireup"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  # g++ firmware gate + MERN build/boot smoke test run in the container.
+  AGENTIC_TERMINAL_VALIDATION = "1"
+  AGENTIC_SMOKE_TEST = "1"
+  # Real embedded compile/sim need PlatformIO/wokwi-cli — skip unless installed.
+  AGENTIC_EMBEDDED_COMPILE = "0"
+  AGENTIC_WOKWI = "0"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  # Agentic builds stream NDJSON for minutes; Fly proxies it live and the
+  # app sets X-Accel-Buffering: no itself. Keep auto-stop off for busy testing:
+  # set min_machines_running = 1 to avoid cold starts.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/healthz"
+
+[[vm]]
+  # Builds run g++/npm/tsc/vite — give the machine headroom.
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024

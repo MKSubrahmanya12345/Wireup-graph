@@ -41,6 +41,11 @@ const envSchema = z.object({
   // Comma separated allow-list. Never '*' in production.
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 
+  // Directory holding the built frontend (vite `dist`). When set/available the
+  // API serves the SPA same-origin, so one container serves the whole app.
+  // Auto-detected (./public, then ../frontend/dist) when left unset.
+  FRONTEND_DIST: emptyToUndefined,
+
   LOG_LEVEL: z.string().default('info'),
 
   // Guards the paid LLM endpoint against casual abuse.
@@ -79,6 +84,17 @@ const envSchema = z.object({
   // Runtime smoke test: boots the generated backend against a stub device
   // after the build. Set to '0' to skip (builds get faster, less proven).
   AGENTIC_SMOKE_TEST: z.string().default('1'),
+  // Real embedded compile: use PlatformIO (preferred) / arduino-cli to build
+  // the firmware to an actual binary, instead of only g++ syntax-checked
+  // stubs. Auto-detected: runs when the tool is installed, skips otherwise.
+  // Set to '0' to never attempt the real toolchain.
+  AGENTIC_EMBEDDED_COMPILE: z.string().default('1'),
+  // Wokwi headless simulation: boot the compiled .bin in a virtual circuit
+  // (generated wokwi.toml + diagram.json). Requires wokwi-cli AND
+  // WOKWI_CLI_TOKEN (free at https://wokwi.com/dashboard/ci).
+  AGENTIC_WOKWI: z.string().default('1'),
+  // The Wokwi CI token (read from the environment, not the .env defaults).
+  WOKWI_CLI_TOKEN: emptyToUndefined,
 });
 
 const parsed = envSchema.safeParse(process.env);

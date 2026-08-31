@@ -14,6 +14,12 @@ import { synthesizeSoftware, type SoftwareSynthResult } from './softwareSynth.js
 import { extractPublishedJsonFields, mapMetricFieldsToFirmware } from './jsonContract.js';
 import { validateFirmware } from './firmwareValidator.js';
 import { validateSoftware } from './softwareValidator.js';
+import {
+  applyFirmwareEdits,
+  deterministicFixEdits,
+  repairFirmwareWithLlm,
+  reviseFirmwareWithLlm,
+} from './repairAgent.js';
 import { createWorkDir } from './terminal.js';
 import type {
   AgenticBuildResult,
@@ -119,8 +125,30 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       say('firmware', 'No LLM key configured — knowledge-base synthesis engine drives (this is the primary path, not a fallback).');
     }
 
+    // ── Multi-turn revision: apply a human follow-up request before gating ──
+    const revision = input.revisionInstruction?.trim();
+    if (revision) {
+      emit({ type: 'stage', stage: 'firmware-revise', title: 'Applying requested change' });
+      if (!isLlmAvailable(input.provider)) {
+        say('firmware-revise', `Cannot apply change ("${revision.slice(0, 80)}") without an LLM key — building the unmodified plan instead.`, 'warn');
+      } else {
+        const revised = await reviseFirmwareWithLlm(firmware, revision, plan, {
+          provider: input.provider,
+          model: input.model,
+        });
+        if (revised) {
+          firmware = revised.firmware;
+          firmwareSource = 'llm-assisted';
+          say('firmware-revise', `change applied: ${revised.summary} (${revised.applied.length} edit(s)${revised.skipped.length ? `, ${revised.skipped.length} rejected` : ''})`, 'ok');
+        } else {
+          say('firmware-revise', 'the model returned no applicable edits for that change — validating the unmodified firmware instead.', 'warn');
+        }
+      }
+    }
+
     let firmwareReport: ValidationReport | null = null;
     let firmwareIterations = 0;
+    let previousFirmwareFingerprint = '';
 
     for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
       firmwareIterations = attempt;
@@ -129,6 +157,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         workDir: path.join(work.root, 'firmware'),
         boardDefine: plan.board.archDefine,
         expectedJsonFields,
+        plan,
       });
       reportToEvents('firmware-validate', firmwareReport, emit);
 
@@ -149,23 +178,65 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
 
       if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
 
-      // Repair policy: deterministic fix-ups first; if the draft came from the
-      // LLM and cannot be fixed structurally (or breaks the JSON contract the
-      // dashboard is built against), swap in the KB synthesiser — its fields
-      // are the contract by construction.
-      const repaired = repairFirmware(firmware, errors, plan);
-      if (repaired) {
-        say('firmware-repair', 'repair pass applied: unknown includes stripped / entrypoint normalised');
-        firmware = repaired;
+      // ── Repair, diagnostics-first ─────────────────────────────────────────
+      // Layer 1: mechanical fix-ups derived from the findings (include remap,
+      // missing prelude, DHT-class spelling). Layer 2: when an LLM is
+      // configured, hand it the failing sources AND the exact compiler output
+      // and apply the surgical edits it returns. Layer 3 (last resort): an
+      // LLM draft that cannot be patched is replaced by the KB synthesiser,
+      // whose published fields are the contract by construction.
+      const structural = errors.some((e) => e.code === 'NO-ENTRYPOINT' || e.code === 'NO-SETUP-LOOP');
+      let next: FirmwareResult | null = null;
+      let repairNote = '';
+
+      if (!structural) {
+        const autoEdits = deterministicFixEdits(firmware, errors);
+        if (autoEdits.length > 0) {
+          const applied = applyFirmwareEdits(firmware.files, autoEdits);
+          if (applied.changed) {
+            next = firmwareResultSchema.parse({ ...firmware, files: applied.files });
+            repairNote = `mechanical fix-ups: ${applied.applied.map((e) => e.reason).filter(Boolean).join('; ')}`;
+          }
+        }
+
+        // Layer 2: the model reads the real diagnostics and edits the code.
+        if (!next && isLlmAvailable(input.provider)) {
+          const llmRepair = await repairFirmwareWithLlm(firmware, firmwareReport.findings, plan, {
+            provider: input.provider,
+            model: input.model,
+            expectedJsonFields,
+          });
+          if (llmRepair) {
+            next = llmRepair.firmware;
+            firmwareSource = 'llm-assisted';
+            repairNote = `LLM patch from diagnostics — ${llmRepair.summary} (${llmRepair.applied.length} edit(s) applied${llmRepair.skipped.length ? `, ${llmRepair.skipped.length} rejected` : ''})`;
+          }
+        }
+      }
+
+      if (next) {
+        const fingerprint = firmwareFingerprint(next);
+        if (fingerprint === previousFirmwareFingerprint) {
+          say('firmware-repair', 'repair produced no change to the source — the loop cannot make progress; falling through', 'warn');
+          next = null;
+        } else {
+          previousFirmwareFingerprint = fingerprint;
+        }
+      }
+
+      if (next) {
+        say('firmware-repair', repairNote, 'ok');
+        firmware = next;
       } else if (firmwareSource === 'llm-assisted') {
         const reason = errors.some((e) => e.code === 'FW-CONTRACT-FIELD')
           ? 'LLM draft does not publish the JSON fields the dashboard contract requires — replacing with knowledge-base synthesis'
-          : 'LLM draft is unrepairable — replacing with knowledge-base synthesis';
+          : 'LLM draft is unrepairable by diagnostics — replacing with knowledge-base synthesis';
         say('firmware-repair', reason, 'warn');
         firmware = synthesizeFirmware(plan);
         firmwareSource = 'deterministic';
+        previousFirmwareFingerprint = '';
       } else {
-        say('firmware-repair', 'deterministic engine produced an invalid artifact — stopping with diagnostics', 'error');
+        say('firmware-repair', 'no repair strategy could change the artifact — stopping with diagnostics', 'error');
         break;
       }
     }
@@ -203,6 +274,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         workDir: path.join(work.root, 'software'),
         devicePort: 80,
         firmwareJsonFields,
+        metrics: plan.modules.flatMap((m) => m.metrics),
       });
       reportToEvents('software-validate', softwareReport, emit);
 
@@ -326,59 +398,12 @@ function collectFirmwareJsonFields(firmware: FirmwareResult): string[] {
   return extractPublishedJsonFields(firmware.files.map((f) => f.content));
 }
 
-/** Deterministic fix-ups for LLM-drafted firmware. */
-function repairFirmware(
-  firmware: FirmwareResult,
-  errors: ValidationFinding[],
-  plan: import('./types.js').DeviceBuildPlan,
-): FirmwareResult | null {
-  const unknownIncludes = new Set(
-    errors.filter((e) => e.code === 'UNKNOWN-INCLUDE').map((e) => e.message.match(/#include <([^>]+)>/)?.[1]).filter(Boolean) as string[],
-  );
-  const missingEntrypoint = errors.some((e) => e.code === 'NO-ENTRYPOINT' || e.code === 'NO-SETUP-LOOP');
-
-  if (missingEntrypoint) return null; // structural — switch generator
-
-  if (unknownIncludes.size > 0) {
-    // Known near-miss header spellings → the libraries the harness supports.
-    const remap = new Map<string, string>([
-      ['Adafruit_DHT.h', 'DHT.h'],
-      ['DHTesp.h', 'DHT.h'],
-      ['WiFi101.h', 'WiFi.h'],
-      ['ESP8266WiFi.h', 'WiFi.h'],
-      ['ESP32WebServer.h', 'WebServer.h'],
-    ]);
-    const files: BuildFile[] = firmware.files.map((file) => ({
-      ...file,
-      content: file.content
-        .split('\n')
-        .map((line) => {
-          const inc = line.match(/#include\s*[<"]([^>"]+)[>"]/)?.[1];
-          if (!inc) return line;
-          if (unknownIncludes.has(inc)) {
-            const replacement = remap.get(inc) ?? remap.get(inc.split('/').pop() ?? '');
-            return replacement ? `#include <${replacement}>` : null; // unknown lib → drop the include
-          }
-          return line;
-        })
-        .filter((line): line is string => line !== null)
-        .join('\n'),
-    }));
-    return { ...firmware, files };
-  }
-
-  // "not declared in this scope" for standard Arduino symbols → the sketch is
-  // salvageable by forcing the Arduino prelude.
-  if (errors.some((e) => /was not declared|not declared in this scope/.test(e.message))) {
-    const files: BuildFile[] = firmware.files.map((file) =>
-      /\.ino$/.test(file.path) && !/#include\s*[<"]Arduino\.h[>"]/.test(file.content)
-        ? { ...file, content: `#include <Arduino.h>\n${file.content}` }
-        : file,
-    );
-    return { ...firmware, files };
-  }
-
-  return null;
+/** Byte-level identity of firmware source — the repair loop's progress guard. */
+function firmwareFingerprint(firmware: FirmwareResult): string {
+  return firmware.files
+    .filter((f) => /\.(ino|cpp|h|hpp)$/.test(f.path))
+    .map((f) => `${f.path}:${f.content}`)
+    .join('\n');
 }
 
 /**

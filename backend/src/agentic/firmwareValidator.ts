@@ -6,7 +6,8 @@ import { env } from '../config/env.js';
 import type { BuildFile } from '../schemas/build.js';
 import { extractPublishedJsonFields } from './jsonContract.js';
 import { materialise, runCommand, type CommandResult } from './terminal.js';
-import type { ValidationFinding, ValidationReport } from './types.js';
+import { compileFirmware, simulateFirmware } from './embeddedBuild.js';
+import type { DeviceBuildPlan, ValidationFinding, ValidationReport } from './types.js';
 
 /**
  * Firmware validator — real compilation, not vibes.
@@ -143,6 +144,12 @@ export interface FirmwareValidationOptions {
    * the structural tier so it holds even when g++ is unavailable.
    */
   expectedJsonFields?: string[];
+  /**
+   * The resolved build plan — when present, the validator additionally runs
+   * the real embedded toolchain (PlatformIO/arduino-cli) and the Wokwi
+   * simulation gate, both auto-skipping when the tool is not installed.
+   */
+  plan?: DeviceBuildPlan;
 }
 
 export async function validateFirmware(
@@ -269,6 +276,26 @@ export async function validateFirmware(
         file: file.path,
         hint: 'The dashboard HTML is served to browsers — fix the script syntax.',
       });
+    }
+  }
+
+  // ── Stage 3: real embedded toolchain + Wokwi simulation (best-effort) ────
+  // g++ against stubs proves syntax; this proves the firmware actually builds
+  // for the target MCU and BOOTS in a virtual circuit. Both auto-skip when
+  // PlatformIO/arduino-cli/wokwi-cli (or the Wokwi token) are absent — a skip
+  // is a passing check, a present-but-failing tool is a hard error.
+  if (options.plan) {
+    const compileGate = await compileFirmware(files, { workDir: options.workDir, plan: options.plan });
+    for (const command of compileGate.commands) commands.push(command);
+    checks.push(...compileGate.checks);
+    findings.push(...compileGate.findings);
+
+    const compiledOk = compileGate.checks.some((c) => /real ESP32 binary|arduino-cli compile/.test(c.name) && c.ok);
+    if (!findings.some((f) => f.severity === 'error')) {
+      const simGate = await simulateFirmware(files, { workDir: options.workDir, plan: options.plan, compiled: compiledOk });
+      for (const command of simGate.commands) commands.push(command);
+      checks.push(...simGate.checks);
+      findings.push(...simGate.findings);
     }
   }
 

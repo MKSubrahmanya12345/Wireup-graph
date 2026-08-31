@@ -78,6 +78,18 @@ export interface DeviceBuildPlan {
   wifi: { ssid: string; password: string; configured: boolean };
 }
 
+/**
+ * Why a GPIO must not be used (or must be used carefully) for a wiring role.
+ * These are the pins a board reads at boot or uses internally — assigning a
+ * module to one of them can stop the firmware from booting at all, a class of
+ * failure the compiler can never catch.
+ */
+export type PinRestriction =
+  | 'strapping' // sampled at boot; level during power-on decides boot mode/flash voltage
+  | 'input-only' // no output driver; digitalWrite/ledc/I2C SDA cannot work
+  | 'flash' // bonded to the SPI flash chip; unavailable
+  | 'reserved'; // reserved for the USB/JTAG/onboard subsystem
+
 export interface BoardProfile {
   id: string;
   name: string;
@@ -88,6 +100,13 @@ export interface BoardProfile {
   wifi: boolean;
   /** Preferred GPIOs for each signal role. */
   pinPreferences: Record<string, string[]>;
+  /**
+   * Per-GPIO engineering constraints for general wiring. Pins absent from
+   * this map are free for general use. `safeFor` lets a strapping pin be used
+   * by an input-only role (e.g. a strapping pin sampled HIGH is fine as an
+   * output) where that is genuinely safe.
+   */
+  gpioConstraints?: Record<string, { restriction: PinRestriction; note: string }>;
   archDefine: string;
 }
 
@@ -137,6 +156,14 @@ export interface PipelineInput {
    * the question existed but its answer never reached the firmware.
    */
   sampleIntervalMs?: number;
+  /**
+   * Optional follow-up change request for a SECOND+ build turn ("make the
+   * relay active-low", "publish battery voltage"). When present and an LLM is
+   * configured, the generated firmware is edited to satisfy it before the
+   * normal validate → repair gauntlet runs — so multi-turn iteration is held
+   * to the exact same terminal gate as a first draft.
+   */
+  revisionInstruction?: string;
 }
 
 export type EmitFn = (event: BuildEvent) => void;

@@ -20,6 +20,7 @@ import type {
   DeviceBuildPlan,
   DeviceControlSpec,
   DeviceMetricSpec,
+  PinRestriction,
   ResolvedModule,
 } from './types.js';
 
@@ -37,6 +38,46 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
   return slug || 'wireup-device';
+}
+
+// ── Pin safety ──────────────────────────────────────────────────────────────
+// The ESP32 reads certain GPIOs at boot (strapping), has no output driver on
+// ADC1 pins, and bonds GPIO6–11 to flash. Assigning a module to one of these
+// produces firmware that compiles cleanly but never boots or never drives —
+// a failure class no compiler can catch. The board profile carries the table;
+// these helpers enforce it during allocation and graph overlay.
+
+function pinNumber(pin: string): number | null {
+  const match = pin.toUpperCase().match(/^GPIO?(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+/** The board's engineering constraint for a pin, if any (null = free for use). */
+export function pinConstraint(
+  board: BoardProfile,
+  pin: string,
+): { restriction: PinRestriction; note: string } | null {
+  const n = pinNumber(pin);
+  if (n === null) return null;
+  return board.gpioConstraints?.[`GPIO${n}`] ?? null;
+}
+
+/** True when the pin can drive a signal (PWM, I2C, one-wire, digital out). */
+export function isOutputSafe(board: BoardProfile, pin: string): boolean {
+  const constraint = pinConstraint(board, pin);
+  if (!constraint) return true;
+  // Input-only, flash and strapping pins are all excluded from auto-allocated
+  // outputs. Strapping pins could technically work as outputs, but a module
+  // that dials the wrong level at power-up prevents boot — not worth the risk
+  // in generated wiring.
+  return false;
+}
+
+/** True when the pin can at least be read (ADC / digital in). */
+export function isInputSafe(board: BoardProfile, pin: string): boolean {
+  const constraint = pinConstraint(board, pin);
+  if (!constraint) return true;
+  return constraint.restriction === 'input-only' || constraint.restriction === 'strapping';
 }
 
 function detectSampleInterval(brief: string): number {
@@ -77,52 +118,98 @@ function deviceForNode(node: { name: string; partNumber: string | null }, hits: 
   return best?.device ?? null;
 }
 
-/** Deterministic GPIO allocation: bus preference list, first free wins. */
+/** Deterministic GPIO allocation: bus preference list, first safe+free wins. */
 function allocatePins(
   device: DeviceKnowledge,
   board: BoardProfile,
   used: Set<string>,
+  warnings: string[],
 ): Record<string, string> {
   const pins: Record<string, string> = {};
   const prefs = board.pinPreferences;
-  const take = (listKey: string, fallback: string[]): string => {
+  const take = (
+    listKey: string,
+    fallback: string[],
+    safe: (pin: string) => boolean,
+    label: string,
+  ): string => {
     const pool = [...(prefs[listKey] ?? []), ...fallback];
-    const free = pool.find((pin) => !used.has(pin));
-    const pin = free ?? pool[0] ?? 'GPIO4';
-    used.add(pin);
-    return pin;
+    // Never hand back a board-constrained pin (strapping/flash/input-only),
+    // nor one another module already holds.
+    const free = pool.find((pin) => !used.has(pin) && safe(pin));
+    if (free) {
+      used.add(free);
+      return free;
+    }
+    // Nothing safe in the preferred pool — search every GPIO and take the
+    // first legal one rather than emitting a pin that will not boot.
+    for (let n = 0; n <= 48; n += 1) {
+      const candidate = `GPIO${n}`;
+      if (used.has(candidate) || !safe(candidate)) continue;
+      used.add(candidate);
+      warnings.push(
+        `${device.name}: preferred ${label} pins were exhausted/unsafe — assigned ${candidate} automatically.`,
+      );
+      return candidate;
+    }
+    const lastResort = pool[0] ?? 'GPIO4';
+    warnings.push(
+      `${device.name}: no safe free GPIO left for ${label} — fell back to ${lastResort}, which is board-constrained. Review the wiring.`,
+    );
+    used.add(lastResort);
+    return lastResort;
   };
 
   for (const port of device.ports) {
     if (port.signal === 'power' || port.signal === 'ground') continue;
+    // Only an ANALOG signal is read by the MCU (it needs a readable/ADC pin).
+    // Every other role — digital inputs the MCU samples (PIR, echo) AND the
+    // relay IN pin — is driven or sampled on a general GPIO and must be
+    // output-capable. The KB `direction` is the MODULE side (relay IN is an
+    // input to the relay but the MCU drives it), so it must not decide this.
+    const mcuReads = port.signal === 'analog';
+    const safe = mcuReads
+      ? (pin: string) => isInputSafe(board, pin)
+      : (pin: string) => isOutputSafe(board, pin);
     switch (device.bus) {
       case 'single-wire':
       case 'gpio':
         pins[port.role] =
           port.role === 'trig'
-            ? take('gpio', ['GPIO5', 'GPIO19'])
+            ? take('gpio', ['GPIO13', 'GPIO14', 'GPIO27'], safe, `${port.role} (trigger)`)
             : port.role === 'echo'
-              ? take('gpio', ['GPIO18', 'GPIO23'])
+              ? take('gpio', ['GPIO14', 'GPIO27', 'GPIO33'], safe, `${port.role} (echo)`)
               : port.role === 'in'
-                ? take('gpio', ['GPIO26', 'GPIO25'])
-                : take('single-wire', ['GPIO4', 'GPIO16']);
+                ? take('gpio', ['GPIO26', 'GPIO25', 'GPIO33'], safe, port.role)
+                : take('single-wire', ['GPIO4', 'GPIO16'], safe, port.role);
         break;
       case 'analog':
-        pins[port.role] = take('analog', ['GPIO34', 'GPIO35']);
+        pins[port.role] = take('analog', ['GPIO34', 'GPIO35', 'GPIO32', 'GPIO33'], safe, port.role);
         break;
       case 'pwm':
-        pins[port.role] = take('pwm', ['GPIO18', 'GPIO19']);
+        pins[port.role] = take('pwm', ['GPIO18', 'GPIO19', 'GPIO25', 'GPIO26'], safe, port.role);
         break;
       case 'i2c': {
+        // The default I2C bus is SDA=21/SCL=22 on both profiles — both safe.
         const pin = port.role === 'scl' ? 'GPIO22' : 'GPIO21';
-        pins[port.role] = pin;
-        used.add(pin);
+        if (!isOutputSafe(board, pin) || used.has(pin)) {
+          const reassigned = take('gpio', ['GPIO13', 'GPIO14'], safe, `i2c ${port.role}`);
+          pins[port.role] = reassigned;
+        } else {
+          pins[port.role] = pin;
+          used.add(pin);
+        }
         break;
       }
       case 'uart': {
-        const pin = port.role === 'tx' ? 'GPIO17' : 'GPIO16';
-        pins[port.role] = pin;
-        used.add(pin);
+        // TX drives; RX is an input. Both UART pins default safe on the profiles.
+        const defaultPin = port.role === 'tx' ? 'GPIO17' : 'GPIO16';
+        if (!safe(defaultPin) || used.has(defaultPin)) {
+          pins[port.role] = take('gpio', ['GPIO13', 'GPIO14'], safe, `uart ${port.role}`);
+        } else {
+          pins[port.role] = defaultPin;
+          used.add(defaultPin);
+        }
         break;
       }
     }
@@ -143,20 +230,62 @@ function overlayGraphPins(
   node: ArchitectureGraph['nodes'][number] | undefined,
   graph: ArchitectureGraph,
   allocated: Record<string, string>,
+  board: BoardProfile,
+  device: DeviceKnowledge,
+  warnings: string[],
 ): Record<string, string> {
   if (!node) return allocated;
   const pins = { ...allocated };
+  const seenWarnings = new Set<string>();
+  // Every signal role this device owns — union of the KB port roles and the
+  // roles already allocated, so a graph that names a role by a slightly
+  // different convention still validates against the board constraints.
+  const knownRoles = new Set([
+    ...device.ports.map((p) => p.role),
+    ...Object.keys(pins),
+  ]);
   const apply = (role: string | null, pin: string) => {
-    if (!role || !pins[role]) return;
-    pins[role] = pin;
+    if (!role) return;
+    const normalised = pin.toUpperCase();
+    if (!knownRoles.has(role)) {
+      // Unknown role on a recognised node — trust the auto-assigned wiring.
+      return;
+    }
+    // Respect a pin the human deliberately drew, but flag board-constrained
+    // choices (strapping/flash/input-only) instead of silently burning them
+    // into firmware — the compiler can never catch a bad strapping level.
+    const port = device.ports.find((p) => p.role === role);
+    // Analog signals are read by the MCU (need a readable pin); everything
+    // else, including a relay's "IN" pin, is driven by the MCU.
+    const mcuDrives = port ? port.signal !== 'analog' : true;
+    const ok = mcuDrives ? isOutputSafe(board, normalised) : isInputSafe(board, normalised);
+    if (!ok) {
+      const constraint = pinConstraint(board, normalised);
+      const key = `${role}:${normalised}`;
+      if (!seenWarnings.has(key)) {
+        seenWarnings.add(key);
+        warnings.push(
+          `${device.name}: the graph pins ${role} to ${normalised}, but that is a ${constraint?.restriction ?? 'restricted'} pin (${constraint?.note ?? 'board-limited'}). Firmware keeps the safe auto-assigned ${pins[role] ?? 'pin'} — change the graph to a free GPIO.`,
+        );
+      }
+      return;
+    }
+    pins[role] = normalised;
   };
 
   for (const port of node.ports ?? []) {
     const match = port.label?.match(/→\s*([A-Za-z0-9]+)/);
     if (!match || !PIN_NAME.test(match[1] ?? '')) continue;
     // Port ids are "<nodeId>-<role>" (e.g. "sensor-dht22-data") — the last
-    // segment names the signal role the pin belongs to.
-    const role = (port.id ?? '').split('-').pop()?.toLowerCase() ?? '';
+    // segment names the signal role, but the graph's spelling can differ from
+    // the KB port role; fall back to the device's single signal port.
+    let role = (port.id ?? '').split('-').pop()?.toLowerCase() ?? '';
+    if (!knownRoles.has(role)) {
+      const signalPorts = device.ports.filter(
+        (p) => p.signal !== 'power' && p.signal !== 'ground',
+      );
+      role = signalPorts.length === 1 ? signalPorts[0]!.role : role;
+    }
     apply(role, match[1]!.toUpperCase());
   }
   for (const connection of graph.connections) {
@@ -164,7 +293,16 @@ function overlayGraphPins(
     const label = connection.label?.trim() ?? '';
     if (!PIN_NAME.test(label)) continue;
     const portRef = connection.from === node.id ? connection.fromPort : connection.toPort;
-    const role = (portRef ?? '').split('-').pop()?.toLowerCase() ?? '';
+    let role = (portRef ?? '').split('-').pop()?.toLowerCase() ?? '';
+    // The graph port-id tail ("...-sig"/"...-data") may spell the role
+    // differently than this device's KB port role — fall back to the device's
+    // single signal (non-power/ground) port so the constraint still applies.
+    if (!knownRoles.has(role)) {
+      const signalPorts = device.ports.filter(
+        (p) => p.signal !== 'power' && p.signal !== 'ground',
+      );
+      role = signalPorts.length === 1 ? signalPorts[0]!.role : role;
+    }
     apply(role, label.toUpperCase());
   }
   return pins;
@@ -216,11 +354,11 @@ export function resolveBuildPlan(
   const modules: ResolvedModule[] = [];
   const usedPins = new Set<string>();
 
-  // Onboard LED does not count as a used pin for external wiring.
   for (const hit of chosen) {
     // Match a graph node so naming stays stable; brief-only modules get one.
     const node = graph.nodes.find((n) => deviceForNode(n, [hit])?.id === hit.device.id);
-    const pins = overlayGraphPins(node, graph, allocatePins(hit.device, board, usedPins));
+    const allocated = allocatePins(hit.device, board, usedPins, warnings);
+    const pins = overlayGraphPins(node, graph, allocated, board, hit.device, warnings);
     // Everything the graph pinned counts as taken — later modules must not
     // silently collide with a pin the human chose.
     for (const pin of Object.values(pins)) usedPins.add(pin);

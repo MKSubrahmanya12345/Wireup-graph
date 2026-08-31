@@ -24,6 +24,8 @@ const bodySchema = z.object({
   model: z.string().optional(),
   // Page-01's sample-interval answer — honored in firmware/config.h.
   sampleIntervalMs: z.coerce.number().int().min(1000).max(600000).optional(),
+  // Follow-up change request for a 2nd+ turn (e.g. "make the relay active-low").
+  revisionInstruction: z.string().trim().min(1).max(2000).optional(),
 });
 
 export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Response) => {
@@ -31,7 +33,7 @@ export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Resp
   if (!parsed.success) {
     throw ApiError.badRequest('Invalid agentic build request.', parsed.error.flatten());
   }
-  const { brief, projectName, provider, model, sampleIntervalMs } = parsed.data;
+  const { brief, projectName, provider, model, sampleIntervalMs, revisionInstruction } = parsed.data;
   const { graph } = normaliseGraph(parsed.data.graph ?? {});
 
   res.status(200);
@@ -51,7 +53,7 @@ export const agenticStreamEndpoint = asyncHandler(async (req: Request, res: Resp
   };
 
   try {
-    await runAgenticPipeline({ brief, projectName, graph, provider, model, sampleIntervalMs }, emit);
+    await runAgenticPipeline({ brief, projectName, graph, provider, model, sampleIntervalMs, revisionInstruction }, emit);
   } catch (error) {
     emit({ type: 'error', message: error instanceof Error ? error.message : 'Agentic build failed.' });
   } finally {
@@ -64,14 +66,14 @@ export const agenticBufferedEndpoint = asyncHandler(async (req: Request, res: Re
   if (!parsed.success) {
     throw ApiError.badRequest('Invalid agentic build request.', parsed.error.flatten());
   }
-  const { brief, projectName, provider, model, sampleIntervalMs } = parsed.data;
+  const { brief, projectName, provider, model, sampleIntervalMs, revisionInstruction } = parsed.data;
   const { graph } = normaliseGraph(parsed.data.graph ?? {});
 
   const events: BuildEvent[] = [];
   let result: AgenticBuildResult | null = null;
   let failure: string | null = null;
 
-  await runAgenticPipeline({ brief, projectName, graph, provider, model, sampleIntervalMs }, (event) => {
+  await runAgenticPipeline({ brief, projectName, graph, provider, model, sampleIntervalMs, revisionInstruction }, (event) => {
     events.push(event);
     if (event.type === 'result') result = event.result;
     if (event.type === 'error') failure = event.message;

@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.env
+**/.data
+**/*.log
+backend/.data
+frontend/.vite
+.git
+.github
+*.md
+!backend/README.md
