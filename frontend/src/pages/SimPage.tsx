@@ -1,210 +1,257 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-
 /**
- * Page 4 — /sim (Simulation + universal circuit view + website preview toggle).
+ * Page 04 — /sim. Two halves of the same build, one swap button.
  *
- * The agentic pipeline produces:
- *   - firmware zip (sketch + platformio.ini + diagram.json + universal-diagram.json)
- *   - software zip (MERN dashboard code)
+ *   Simulation  — the circuit this build resolved, running.
+ *                 · By default: Wireup's own browser bench (avr8js executing
+ *                   real AVR machine code + @wokwi/elements drawing the parts
+ *                   from the generated diagram). No Docker, no external
+ *                   service, works offline.
+ *                 · When this deployment sets VELXIO_URL, the same panel
+ *                   embeds that Velxio instance instead (external/velxio,
+ *                   AGPL-3.0) — the full multi-board emulator.
+ *                 · Either way the build ships a .vlx project you can open in
+ *                   Velxio directly.
  *
- * This page reads the universal-diagram.json (backwards-compatible with Wokwi,
- * extendable for Velxio) and shows both the simulated circuit and the website
- * output — toggled by the user, working together.
+ *   Website     — the generated MERN dashboard, actually running. The bundle
+ *                 served in the iframe is the one the software gate built;
+ *                 the device API behind it is Wireup's preview stub, because a
+ *                 browser tab cannot reach your ESP32 over your LAN.
+ *
+ * The swap button flips between them, keeps its state in the URL (?view=…) so
+ * a reload or a shared link lands on the same half, and reports plainly when a
+ * half has nothing to show instead of rendering an empty frame.
  */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
-interface UniversalPart {
-  type: string;
-  id: string;
-  role: string;
-  model: string;
-  attrs: Record<string, string>;
+import WokwiBench from '../components/WokwiBench';
+import { samplesFromLog } from '../sim/diagram';
+import { api, type SimConfig } from '../services/api';
+import { useBuildStore } from '../store/useBuildStore';
+import {
+  chooseEngine,
+  previewBlockedReason,
+  previewTarget,
+  velxioArtifact,
+  type SimEngine,
+} from '../lib/simSources';
+
+type View = 'simulation' | 'website';
+
+function isView(value: string | null): value is View {
+  return value === 'simulation' || value === 'website';
 }
 
-interface UniversalConnection {
-  from: { partId: string; pin: string };
-  to: { partId: string; pin: string };
-  net?: string;
-}
-
-interface UniversalDiagram {
-  version: number;
-  format: string;
-  author: string;
-  sourcePlan?: string;
-  parts: UniversalPart[];
-  connections: UniversalConnection[];
-  nets?: Array<{ name: string; voltage?: string; nodes: Array<{ partId: string; pin: string }> }>;
+/** Download the .vlx so it can be opened in Velxio. */
+function downloadText(filename: string, content: string): void {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export default function SimPage() {
-  const [showSim, setShowSim] = useState(true);
-  const [diagram, setDiagram] = useState<UniversalDiagram | null>(null);
-  const [diagramError, setDiagramError] = useState<string | null>(null);
+  const result = useBuildStore((state) => state.result);
+  const [params, setParams] = useSearchParams();
+  const [config, setConfig] = useState<SimConfig | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [engineChoice, setEngineChoice] = useState<SimEngine | null>(null);
 
-  // Load the universal diagram produced by the agentic pipeline.
+  const view: View = isView(params.get('view')) ? (params.get('view') as View) : 'simulation';
+
+  const setView = useCallback(
+    (next: View) => {
+      const updated = new URLSearchParams(params);
+      updated.set('view', next);
+      setParams(updated, { replace: true });
+    },
+    [params, setParams],
+  );
+
   useEffect(() => {
-    fetch('/hardware/universal-diagram.json')
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as UniversalDiagram;
-        setDiagram(data);
-      })
-      .catch((err) => {
-        setDiagramError(err instanceof Error ? err.message : 'Failed to load universal diagram');
+    let alive = true;
+    api
+      .simConfig()
+      .then((value) => alive && setConfig(value))
+      .catch((error: unknown) => {
+        if (!alive) return;
+        setConfigError(error instanceof Error ? error.message : 'Could not read the simulator config');
       });
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const circuitParts = diagram?.parts?.filter((p) => p.role !== 'passive') ?? [];
-  const passiveParts = diagram?.parts?.filter((p) => p.role === 'passive') ?? [];
+  const engine = chooseEngine(config, engineChoice);
+  const velxioUrl = config?.velxio.embedUrl ?? null;
+  const vlx = useMemo(() => velxioArtifact(result), [result]);
+  const preview = useMemo(() => previewTarget(result), [result]);
+  const samples = useMemo(() => samplesFromLog(result?.simulation?.hardware.log), [result]);
 
   return (
-    <div className="sim-page" style={{ minHeight: '100vh', background: '#0a0f1b', color: '#e8edf5' }}>
-      {/* Mobile sticky header */}
-      <header style={{
-        position: 'sticky', top: 0, zIndex: 50,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px', background: 'rgba(10,15,27,0.92)',
-        backdropFilter: 'blur(8px)', borderBottom: '1px solid #1e2a44'
-      }}>
-        <Link to="/build" style={{ color: '#7fb0ff', textDecoration: 'none', fontWeight: 600, fontSize: 15 }}>
+    <div className="sim-page">
+      <header className="sim-head">
+        <Link to="/build" className="sim-back">
           ← Build
         </Link>
-        <h1 style={{ fontSize: 15, margin: 0, letterSpacing: '0.4px', color: '#b0bdd8' }}>
-          Simulation & Website
-        </h1>
-        <button
-          onClick={() => setShowSim(!showSim)}
-          style={{
-            padding: '8px 14px', borderRadius: 8, border: '1px solid #7fb0ff',
-            background: showSim ? '#7fb0ff' : 'transparent',
-            color: showSim ? '#0a0f1b' : '#7fb0ff', fontWeight: 700,
-            cursor: 'pointer', transition: 'all 0.15s ease', fontSize: 13,
-          }}
-          aria-label={showSim ? 'Switch to website preview' : 'Switch to simulation'}
-        >
-          {showSim ? 'Website' : 'Simulation'}
-        </button>
+
+        <div className="sim-title">
+          <h1>{result ? result.projectName : 'Simulation & website'}</h1>
+          <span className="tiny muted">
+            {result
+              ? `${result.slug} · ${result.firmware.board}`
+              : 'No build loaded — run the agentic build on page 03'}
+          </span>
+        </div>
+
+        {/* The swap. One control, two states, and it says where it will take
+            you — not just where you are. */}
+        <div className="sim-swap" role="group" aria-label="Switch between the simulation and the website">
+          <button
+            type="button"
+            className={view === 'simulation' ? 'active' : ''}
+            aria-pressed={view === 'simulation'}
+            onClick={() => setView('simulation')}
+          >
+            ⚡ Simulation
+          </button>
+          <button
+            type="button"
+            className={view === 'website' ? 'active' : ''}
+            aria-pressed={view === 'website'}
+            onClick={() => setView('website')}
+          >
+            🖥 Website
+          </button>
+        </div>
       </header>
 
-      {/* Main: either simulation (iframe + circuit info) or website preview */}
-      <main style={{ padding: '0', height: 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
-        {showSim ? (
-          <section style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            {/* Circuit info sidebar (from universal JSON) */}
-            <aside style={{
-              width: 280, minWidth: 260, maxWidth: 320,
-              background: '#0d1220', borderRight: '1px solid #1e2a44',
-              padding: '16px 16px', overflowY: 'auto',
-            }}>
-              <h2 style={{ fontSize: 15, margin: '0 0 14px', color: '#b0bdd8' }}>Circuit</h2>
-              {diagram ? (
-                <>
-                  <div style={{ fontSize: 12, color: '#8892b0', marginBottom: 10, lineHeight: 1.5 }}>
-                    <strong style={{ color: '#c0d0f5' }}>{diagram.sourcePlan || 'unknown'}</strong>
-                    <br />
-                    Format: <code style={{ fontSize: 11, color: '#7fb0ff' }}>{diagram.format}</code>
-                    <br />
-                    Version: v{diagram.version}
-                  </div>
+      <main className="sim-main">
+        {view === 'simulation' ? (
+          <section className="sim-panel">
+            <div className="sim-panel-bar">
+              <div>
+                <strong>
+                  {engine === 'velxio' ? 'Velxio emulator (embedded)' : 'Wireup browser bench'}
+                </strong>
+                <span className="tiny muted">
+                  {engine === 'velxio'
+                    ? `Embedded from ${velxioUrl} — full multi-board emulation, AGPL-3.0.`
+                    : 'avr8js + @wokwi/elements, running in this tab. The ESP32 firmware is compiled and simulated server-side.'}
+                </span>
+              </div>
 
-                  <h3 style={{ fontSize: 12, margin: '14px 0 8px', color: '#8892b0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Components</h3>
-                  <ul style={{ paddingLeft: 16, margin: 0, fontSize: 12.5, lineHeight: 1.7, color: '#b0bdd8' }}>
-                    {circuitParts.map((part) => (
-                      <li key={part.id} style={{ marginBottom: 4 }}>
-                        <span style={{ color: '#7fb0ff', fontWeight: 600 }}>{part.id}</span>
-                        <br />
-                        <span style={{ color: '#7a89a8', fontSize: 11 }}>
-                          {part.role} · {part.model}
-                        </span>
-                      </li>
-                    ))}
-                    {passiveParts.length > 0 && (
-                      <li style={{ marginTop: 6, color: '#7a89a8', fontSize: 11 }}>
-                        + {passiveParts.length} passive(s): {passiveParts.map((p) => p.id).join(', ')}
-                      </li>
-                    )}
-                  </ul>
-
-                  {diagram.nets && diagram.nets.length > 0 && (
-                    <>
-                      <h3 style={{ fontSize: 12, margin: '16px 0 8px', color: '#8892b0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Nets</h3>
-                      <ul style={{ paddingLeft: 16, margin: 0, fontSize: 12, lineHeight: 1.6, color: '#a8b0c8' }}>
-                        {diagram.nets.map((net) => (
-                          <li key={net.name} style={{ marginBottom: 3 }}>
-                            <span style={{ color: '#7fb0ff', fontWeight: 600 }}>{net.name}</span>
-                            {net.voltage && <span style={{ color: '#5f7188', fontSize: 10, marginLeft: 6 }}>({net.voltage})</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-
-                  <h3 style={{ fontSize: 12, margin: '16px 0 8px', color: '#8892b0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Connections</h3>
-                  <ul style={{ paddingLeft: 16, margin: 0, fontSize: 11, lineHeight: 1.5, color: '#8a96b8' }}>
-                    {diagram.connections.map((conn, idx) => (
-                      <li key={idx} style={{ marginBottom: 3 }}>
-                        <span style={{ color: '#b0bdd8' }}>{conn.from.partId}</span>:{conn.from.pin}
-                        <span style={{ color: '#5f7188', margin: '0 4px' }}>→</span>
-                        <span style={{ color: '#b0bdd8' }}>{conn.to.partId}</span>:{conn.to.pin}
-                        {conn.net && <span style={{ color: '#5f7188', fontSize: 10, marginLeft: 6 }}>({conn.net})</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : diagramError ? (
-                <p style={{ color: '#f87171', fontSize: 13 }}>{diagramError}</p>
-              ) : (
-                <p style={{ color: '#7a89a8', fontSize: 13 }}>Loading universal diagram…</p>
-              )}
-            </aside>
-
-            {/* Simulation iframe */}
-            <section style={{ flex: 1, position: 'relative' }}>
-              <iframe
-                src="https://velxio.dev"
-                title="Velxio Simulation"
-                style={{ width: '100%', height: '100%', border: 'none', borderRadius: 0 }}
-                allow="camera; microphone; fullscreen; encrypted-media"
-              />
-            </section>
-          </section>
-        ) : (
-          <section style={{ overflowY: 'auto', padding: 20, background: '#0a0f1b' }}>
-            <div style={{
-              maxWidth: 720, margin: '0 auto',
-              background: '#111827', borderRadius: 16, padding: 24,
-              border: '1px solid #1e2a44', boxShadow: '0 12px 32px rgba(0,0,0,0.4)'
-            }}>
-              <h2 style={{ marginTop: 0, fontSize: 20, color: '#b0bdd8' }}>Website Preview</h2>
-              <p style={{ opacity: 0.85, lineHeight: 1.65, fontSize: 14, color: '#8892b0' }}>
-                This is the generated MERN dashboard (software zip). It connects to your ESP32
-                over the local network using the device endpoints configured in the agentic build.
-                The universal circuit diagram above ensures the dashboard matches the hardware exactly.
-              </p>
-              <div style={{
-                marginTop: 20, padding: 16, borderRadius: 12,
-                background: '#0d1220', border: '1px dashed #2a364e', color: '#7a89a8', fontSize: 13
-              }}>
-                <strong style={{ color: '#b0bdd8' }}>Universal diagram loaded:</strong>
-                {diagram ? (
-                  <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#7fb0ff' }}>
-                    <li>Format: {diagram.format}</li>
-                    <li>Components: {diagram.parts?.length ?? 0}</li>
-                    <li>Connections: {diagram.connections?.length ?? 0}</li>
-                    <li>Plan: {diagram.sourcePlan ?? '—'}</li>
-                  </ul>
-                ) : (
-                  <p style={{ margin: '8px 0 0', fontSize: 12, color: '#f87171' }}>
-                    {diagramError ? diagramError : 'No universal diagram available — build the project first.'}
-                  </p>
+              <div className="sim-panel-actions">
+                {config?.velxio.configured && (
+                  <button
+                    type="button"
+                    onClick={() => setEngineChoice(engine === 'velxio' ? 'native' : 'velxio')}
+                  >
+                    {engine === 'velxio' ? 'Use the browser bench' : 'Use the Velxio instance'}
+                  </button>
+                )}
+                {vlx && (
+                  <button type="button" onClick={() => downloadText(vlx.filename, vlx.content)}>
+                    ⬇ {vlx.filename}
+                  </button>
+                )}
+                {vlx && (
+                  <a
+                    className="sim-linkbtn"
+                    href={velxioUrl ?? 'https://velxio.dev'}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Open Velxio ↗
+                  </a>
                 )}
               </div>
-              <div style={{ marginTop: 16, padding: 14, borderRadius: 12, background: '#0d1220', border: '1px dashed #2a364e', color: '#8892b0', fontSize: 13 }}>
-                The dashboard reads live sensor values from <code>/api/sensors</code>, shows device status at <code>/api/status</code>,
-                and stores a one-minute history ring buffer served at <code>/api/history</code>.
+            </div>
+
+            {engine === 'velxio' && velxioUrl ? (
+              <iframe
+                className="sim-frame"
+                src={velxioUrl}
+                title="Velxio emulator"
+                allow="clipboard-write; fullscreen; serial; usb"
+              />
+            ) : result ? (
+              <WokwiBench
+                files={result.firmware.files}
+                samples={samples}
+                provider={result.simulation?.hardware.provider}
+                hardwareReady={result.simulation?.hardware.ready}
+                sourceNote={
+                  vlx
+                    ? `The same circuit is exported as ${vlx.filename} (${vlx.parts} parts, ${vlx.wires} wires) for the Velxio emulator.`
+                    : undefined
+                }
+              />
+            ) : (
+              <div className="sim-empty">
+                <h2>Nothing to simulate yet</h2>
+                <p>
+                  The bench draws the circuit from the diagram a build produces. Run the agentic
+                  build on <Link to="/build">page 03</Link> and come back — the result is kept in
+                  this browser.
+                </p>
+              </div>
+            )}
+
+            {vlx && (
+              <p className="sim-foot tiny muted">
+                <code>{vlx.path}</code> is a native Velxio project ({vlx.boardKind ?? 'board'} ·{' '}
+                {vlx.parts} parts · {vlx.wires} wires) generated from this build's plan — the same
+                pins the firmware drives. Velxio is open source (AGPL-3.0):{' '}
+                <a href="https://github.com/davidmonterocrespo24/velxio" target="_blank" rel="noreferrer noopener">
+                  github.com/davidmonterocrespo24/velxio
+                </a>
+                , vendored here as the <code>external/velxio</code> submodule.
+              </p>
+            )}
+            {configError && <p className="sim-foot tiny bad">Simulator config unavailable: {configError}</p>}
+          </section>
+        ) : (
+          <section className="sim-panel">
+            <div className="sim-panel-bar">
+              <div>
+                <strong>Generated dashboard — live</strong>
+                <span className="tiny muted">
+                  {preview
+                    ? 'This is the real bundle the software gate built. Its device API is a Wireup preview stub; the shipped Express backend talks to your board over the LAN.'
+                    : 'Not published for this build.'}
+                </span>
+              </div>
+              <div className="sim-panel-actions">
+                {preview && (
+                  <a className="sim-linkbtn" href={preview.url} target="_blank" rel="noreferrer noopener">
+                    Open in a tab ↗
+                  </a>
+                )}
+                <Link className="sim-linkbtn" to="/build">
+                  Download the zip
+                </Link>
               </div>
             </div>
+
+            {preview ? (
+              <iframe
+                className="sim-frame"
+                src={preview.url}
+                title="Generated dashboard preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            ) : (
+              <div className="sim-empty">
+                <h2>No live dashboard for this build</h2>
+                <p>{previewBlockedReason(result)}</p>
+              </div>
+            )}
           </section>
         )}
       </main>

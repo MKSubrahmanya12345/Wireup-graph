@@ -67,6 +67,16 @@ export interface BuildSimulationSummary {
   downloadUnlocked: boolean;
 }
 
+/** Where page 04 can serve the dashboard this build produced. */
+export interface BuildPreviewSummary {
+  id: string;
+  url: string;
+  apiBase: string;
+  publishedAt: string;
+  stubbedApi: true;
+  note: string;
+}
+
 export interface AgenticBuildResult {
   projectName: string;
   slug: string;
@@ -92,6 +102,8 @@ export interface AgenticBuildResult {
   instructions: { path: string; content: string };
   /** BOM with purchase links for this exact build. */
   bom: import('./bom.js').Bom;
+  /** Null when the dashboard build produced nothing servable. */
+  preview: BuildPreviewSummary | null;
 }
 
 /** The resolved, build-ready device model the generators consume. */

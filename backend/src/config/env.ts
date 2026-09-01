@@ -125,6 +125,10 @@ const envSchema = z.object({
   VELXIO_API_KEY: emptyToUndefined,
   VELXIO_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 
+  // Where the live dashboard previews (page 04's "Website" half) are kept.
+  // Defaults to a temp directory; each build's bundle lands in <dir>/<id>.
+  PREVIEW_DIR: emptyToUndefined,
+
   // ── Billing / admin persistence ──────────────────────────────────────────
   // File-backed billing store (used when MONGO_URI is not set).
   BILLING_DB_PATH: z.string().min(1).default('.data/billing.json'),

@@ -42,4 +42,29 @@ router.get(
   }),
 );
 
+/**
+ * GET /api/config/sim — what page 04 should run.
+ *
+ * `velxio.embedUrl` is set only when this deployment points at a Velxio
+ * instance (self-hosted from the external/velxio submodule, or velxio.dev).
+ * Without it the page runs Wireup's own in-browser bench, which needs no
+ * external service at all.
+ */
+router.get('/config/sim', (_req, res) => {
+  const embedUrl = env.VELXIO_URL;
+  res.status(200).json({
+    simMode: env.SIM_MODE,
+    velxio: {
+      configured: Boolean(embedUrl),
+      embedUrl: embedUrl ?? null,
+      source: 'https://github.com/davidmonterocrespo24/velxio',
+      licence: 'AGPL-3.0',
+    },
+    native: {
+      engine: 'avr8js + @wokwi/elements',
+      note: 'Runs entirely in the browser. The ESP32 firmware itself is compiled and simulated server-side.',
+    },
+  });
+});
+
 export default router;

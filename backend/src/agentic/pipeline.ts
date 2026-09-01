@@ -17,7 +17,7 @@ import { synthesizeFirmware } from './firmwareSynth.js';
 import { synthesizeSoftware, type SoftwareSynthResult } from './softwareSynth.js';
 import { extractPublishedJsonFields, mapMetricFieldsToFirmware } from './jsonContract.js';
 import { validateFirmware } from './firmwareValidator.js';
-import { validateSoftware } from './softwareValidator.js';
+import { softwareTreeDir, validateSoftware } from './softwareValidator.js';
 import {
   applyFirmwareEdits,
   deterministicFixEdits,
@@ -25,6 +25,7 @@ import {
   reviseFirmwareWithLlm,
 } from './repairAgent.js';
 import { createWorkDir } from './terminal.js';
+import { newPreviewId, previewApiBaseFor, previewBaseFor, publishPreview } from './preview.js';
 import type {
   AgenticBuildResult,
   BuildEvent,
@@ -64,6 +65,10 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     emit({ type: 'log', stage, line: `[${now()}] ${line}`, tone });
 
   const work = await createWorkDir(slug);
+  // Chosen before the build so the dashboard can be compiled FOR this prefix —
+  // the bundle the gate validates is the bundle page 04 serves.
+  const previewId = newPreviewId();
+  let preview: Awaited<ReturnType<typeof publishPreview>> = null;
   let result: AgenticBuildResult | null = null;
 
   try {
@@ -302,6 +307,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         devicePort: 80,
         firmwareJsonFields,
         metrics: plan.modules.flatMap((m) => m.metrics),
+        preview: { base: previewBaseFor(previewId), apiBase: previewApiBaseFor(previewId) },
       });
       reportToEvents('software-validate', softwareReport, emit);
 
@@ -356,6 +362,20 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       summary: `MERN dashboard · ${software.files.length} files`,
       files: software.files.map((f) => f.path),
     });
+
+    // Keep the dashboard the gate just built, before the workspace is wiped —
+    // page 04 serves this exact bundle. Best effort: no preview never fails a
+    // build, it only means page 04 says why there is nothing to show.
+    preview = await publishPreview({
+      id: previewId,
+      plan,
+      distDir: path.join(softwareTreeDir(path.join(work.root, 'software')), 'frontend', 'dist'),
+    });
+    if (preview) {
+      say('software', `live preview published at ${preview.url} (real bundle, stub device API)`, 'ok');
+    } else {
+      say('software', 'no live preview: the dashboard build produced no dist/ to serve', 'warn');
+    }
 
     // ── Stage 4: cross-artifact consistency ─────────────────────────────────
     emit({ type: 'stage', stage: 'consistency', title: 'Cross-checking firmware ⇄ software contract' });
@@ -480,6 +500,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       simulation,
       instructions: { path: instructionsPath, content: instructionsContent },
       bom,
+      preview,
     };
 
     // The single line an operator can grep for: which provider actually ran.

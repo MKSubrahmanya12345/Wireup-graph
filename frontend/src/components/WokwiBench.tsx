@@ -18,9 +18,8 @@
 import { createElement, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 
-import type { AgenticBuildResult } from '../types/build';
-import { diagramFromFiles, samplesFromLog } from '../sim/diagram';
-import type { BenchPart } from '../sim/diagram';
+import { diagramFromFiles } from '../sim/diagram';
+import type { BenchPart, BenchSample } from '../sim/diagram';
 import { useAvrHeartbeat } from '../sim/useAvrHeartbeat';
 
 /** @wokwi/elements registers its custom elements as a side effect of import.
@@ -97,14 +96,31 @@ function liveProps(
   }
 }
 
-export default function WokwiBench({ result }: { result: AgenticBuildResult }) {
-  const elementsReady = useWokwiElements();
-  const diagram = useMemo(() => diagramFromFiles(result.firmware.files), [result]);
-  const samples = useMemo(() => samplesFromLog(result.simulation?.hardware.log), [result]);
-  const heartbeat = useAvrHeartbeat(true);
+export interface WokwiBenchProps {
+  /** Files to look for a diagram in (the firmware zip, usually). */
+  files: { path: string; content: string }[];
+  /** Sensor samples replayed from the hardware simulation log. */
+  samples?: BenchSample[];
+  /** Which hardware sim produced those samples. */
+  provider?: string;
+  /** Whether the hardware readiness gate passed for this build. */
+  hardwareReady?: boolean;
+  /** Extra line of provenance shown under the title. */
+  sourceNote?: string;
+  /** Set false to render without the outer panel chrome. */
+  heading?: boolean;
+}
 
-  const provider = result.simulation?.hardware.provider ?? 'unknown';
-  const hardwareReady = result.simulation?.hardware.ready ?? false;
+export default function WokwiBench({
+  files,
+  samples = [],
+  provider = 'unknown',
+  hardwareReady = false,
+  sourceNote,
+}: WokwiBenchProps) {
+  const elementsReady = useWokwiElements();
+  const diagram = useMemo(() => diagramFromFiles(files), [files]);
+  const heartbeat = useAvrHeartbeat(true);
 
   if (!diagram) {
     return (
@@ -133,6 +149,7 @@ export default function WokwiBench({ result }: { result: AgenticBuildResult }) {
             Circuit drawn from <code>{diagram.source}</code> · heartbeat executed by avr8js
             (ATmega328p) in this tab · sensor values replayed from the <strong>{provider}</strong> run.
             Your ESP32 firmware is compiled and simulated server-side, not in the browser.
+            {sourceNote ? ` ${sourceNote}` : ''}
           </p>
         </div>
         <div className="bench-controls">

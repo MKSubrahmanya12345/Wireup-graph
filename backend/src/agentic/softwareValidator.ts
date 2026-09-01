@@ -128,6 +128,12 @@ export function parseTscOutput(output: string, treeRoot: string): ValidationFind
   return findings;
 }
 
+/** Where validateSoftware materialises the generated tree. Exported so the
+ *  pipeline can find the built dashboard (`frontend/dist`) without guessing. */
+export function softwareTreeDir(workDir: string): string {
+  return path.join(workDir, 'software-tree');
+}
+
 export interface SoftwareValidationOptions {
   workDir: string;
   /** Expected device web port from the firmware (WEB_SERVER_PORT). */
@@ -140,6 +146,13 @@ export interface SoftwareValidationOptions {
    */
   metrics?: DeviceMetricSpec[];
   terminal?: boolean;
+  /**
+   * Serve-the-real-bundle support for page 04. When set, the dashboard is
+   * built for this URL prefix (`vite build --base`) and its API client is
+   * pointed at the matching preview stub (`VITE_API_BASE`) — so the artifact
+   * the gate approves is byte-for-byte the artifact the preview serves.
+   */
+  preview?: { base: string; apiBase: string };
 }
 
 export async function validateSoftware(
@@ -240,7 +253,7 @@ export async function validateSoftware(
     return finish(checks, findings, commands, startedAt);
   }
 
-  const treeDir = path.join(options.workDir, 'software-tree');
+  const treeDir = softwareTreeDir(options.workDir);
   await materialise(treeDir, files);
 
   const network = await runCommand(['npm', 'ping', '--registry=https://registry.npmjs.org'], { timeoutMs: 25_000 });
@@ -284,10 +297,15 @@ export async function validateSoftware(
     findings.push({ severity: 'error', code: 'TSC-BACKEND', message: beTsc.output.split('\n').slice(-4).join(' | ') });
   }
 
-  // Frontend production build (tsc -b + vite build).
-  const feBuild = await runCommand(['npm', 'run', 'build'], {
+  // Frontend production build (tsc -b + vite build). With a preview
+  // requested, the same build is emitted under the preview prefix.
+  const feBuildArgv = options.preview
+    ? ['npm', 'run', 'build', '--', `--base=${options.preview.base}`]
+    : ['npm', 'run', 'build'];
+  const feBuild = await runCommand(feBuildArgv, {
     cwd: path.join(treeDir, 'frontend'),
     timeoutMs: 300_000,
+    env: options.preview ? { ...process.env, VITE_API_BASE: options.preview.apiBase } : undefined,
   });
   commands.push(feBuild);
   const feErrors = feBuild.exitCode === 0 ? [] : parseTscOutput(feBuild.output, treeDir);

@@ -107,6 +107,29 @@ webhook), `Plan` / `Admin` links in the top nav.
 
 Not verified: pixel rendering in a real browser — this sandbox has no Chrome/Playwright. Types, bundling, the AVR core and the diagram parsing are all covered by `frontend/npm test`; the visual layer is the standard @wokwi/elements web components.
 
+## M7 — Velxio submodule, simulator page, live website preview ✅
+
+| # | Item | Verified |
+| - | ---- | -------- |
+| 44 | Velxio vendored at `external/velxio` as a **git submodule** pinned to `2642ed7`, with `external/README.md` covering the AGPL-3.0 boundary | `git submodule status`; repo objects unchanged (upstream is 101 MB / 1,866 files) |
+| 45 | Every build emits a native Velxio project `simulation/<slug>.vlx` (`format: velxio-project`, v1: board + sketch + components + wires) | ✅ `npm test` → `velxioProject.test.mjs` 6/6, and end-to-end over `/api/build/agentic/stream` |
+| 46 | Plan nets translated to pin names the board element really has (`4`→`D4`, `GND.0`→`GND.1`, `5V`→`VIN`) — a wire to a non-existent pin is dropped silently on import | ✅ asserted per wire, plus a unit test of the translator |
+| 47 | Parts Velxio has no model for are reported, never substituted | ✅ test 4 of the suite |
+| 48 | Page 04 rewritten: swap button (Simulation ⇄ Website), state in `?view=`, both halves say why they are empty when they are | ✅ `simSources.test.mjs` 4/4 + `tsc -b` + `vite build` |
+| 49 | Simulation half runs the native bench by default and embeds `VELXIO_URL` when configured, with a manual switch and a `.vlx` download | ✅ `GET /api/config/sim`; `chooseEngine` falls back to native rather than iframing `null` |
+| 50 | Website half serves the **real generated bundle**: the gate builds it with `vite build --base=/api/preview/<id>/`, the pipeline keeps that `dist/` before the workspace is wiped | ✅ live run — `curl /api/preview/<id>/` returns the dashboard HTML with its hashed assets |
+| 51 | Preview device API stub answers the dashboard's contract (`/health`, `/capabilities`, `/telemetry/live`, `/telemetry/history`, `/telemetry/control`) with this plan's metric fields | ✅ `preview.test.mjs` 7/7 against a real socket; live payload nests `temperature.temperature_c` exactly as the device does |
+| 52 | Preview routes are open (an iframe cannot send a Bearer token) but keyed by 12 random base64url chars, capped at the newest 8 builds, and 404 cleanly when expired | ✅ tests 1/5 of that suite |
+| 53 | Firmware validator no longer misreads an artifact that *embeds* the sketch (the `.vlx`) as a malformed dashboard string | ✅ full backend suite back to green after the fix |
+
+**Honest limits of M7**: the preview's API is a stub, and that sentence is on
+screen above the iframe. The native bench still clocks its animation with
+avr8js (AVR), not an emulated ESP32 — an embedded Velxio instance is what gives
+you true ESP32/RISC-V emulation in the browser, which is why the swap to it is
+one env var. Neither Docker nor the Velxio backend is installed in this
+sandbox, so the embed path is proven by config plumbing and fallback logic, not
+by a running Velxio.
+
 ---
 
 ## ⛔ Blocked — needs a human, not code
@@ -118,6 +141,7 @@ Not verified: pixel rendering in a real browser — this sandbox has no Chrome/P
 | **Velxio pipeline** — not in this repo | `VelxioSimProvider`, a thin adapter posting the resolved plan to `POST {VELXIO_URL}/simulate` and expecting `{ ok, checks[], log[], runUrl }` | `SIM_MODE=velxio`, `VELXIO_URL`, optional `VELXIO_API_KEY`. If the real pipeline's contract differs, only `velxioSimProvider.ts` changes |
 | **[BLOCKED — NEEDS HUMAN: pricing]** | Plans, checkout, revenue reporting and the admin panel all handle real amounts today | Set `amountPaise` (and `pricingPending: false`) for each plan in `backend/src/billing/plans.ts`. Everything else follows automatically |
 | Admin credentials | Admin seeding is automatic | `ADMIN_EMAIL`, `ADMIN_PASSWORD` (the default `wireup-admin-dev` is dev-only and warns loudly at boot) |
+| **Velxio instance for the embed** | `/sim` embeds it when configured, and falls back to the native bench when not | `VELXIO_URL=http://localhost:3000` after `docker compose -f external/velxio/docker-compose.yml up -d`. Its compile/emulate backend needs Docker + the ESP-IDF/QEMU images — not installable in this sandbox |
 | Affiliate program IDs | BOM links render with the tag appended when configured | `AFFILIATE_TAG_AMAZON`, `AFFILIATE_TAG_ROBU`, `AFFILIATE_TAG_DIGIKEY` |
 
 ## Known open item (honest list)
@@ -140,7 +164,8 @@ Not verified: pixel rendering in a real browser — this sandbox has no Chrome/P
 
 ```bash
 cd backend  && npm install && npm test       # 90 tests: gates + billing + providers
-cd frontend && npm install && npm test       # 12 tests: avr8js heartbeat + bench diagram parsing
+cd frontend && npm install && npm test       # 16 tests: avr8js heartbeat, diagram parsing, page-04 sources
+git submodule update --init external/velxio  # the emulator source (AGPL-3.0, 101 MB)
 cd backend && npx tsx src/server.ts          # boot banner proves which adapters are live
 # full loop against mocks:
 curl -X POST localhost:5000/api/auth/signup  -d '{"name":"A","email":"a@b.c","password":"password123"}' -H 'content-type: application/json'

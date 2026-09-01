@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 import CodeBlock from '../components/CodeBlock';
 import WokwiBench from '../components/WokwiBench';
+import { samplesFromLog } from '../sim/diagram';
 import { downloadZip } from '../lib/zip';
 import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
@@ -490,7 +491,12 @@ export default function BuildPage() {
 
           {/* Live browser bench: the generated diagram, rendered with real
               Wokwi elements and clocked by an avr8js core running in-tab. */}
-          <WokwiBench result={result} />
+          <WokwiBench
+            files={result.firmware.files}
+            samples={samplesFromLog(result.simulation?.hardware.log)}
+            provider={result.simulation?.hardware.provider}
+            hardwareReady={result.simulation?.hardware.ready}
+          />
 
           {result.simulation && !unlocked && (
             <div className="download-locked">

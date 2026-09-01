@@ -12,6 +12,7 @@ import type { BuildFile, FirmwareResult } from '../schemas/build.js';
 import type { DeviceBuildPlan, ResolvedModule } from './types.js';
 import { generateWokwiConfig } from './wokwiConfig.js';
 import { generateUniversalDiagram } from './universalDiagram.js';
+import { generateVelxioProject } from './velxioProject.js';
 
 // ── Per-module code generation ──────────────────────────────────────────────
 
@@ -1009,13 +1010,19 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
   const wokwi = generateWokwiConfig(plan);
 
   const universal = generateUniversalDiagram(plan, { version: 1, author: 'Wireup', parts: JSON.parse(wokwi.diagramJson).parts ?? [], connections: JSON.parse(wokwi.diagramJson).connections ?? [] });
+  // Native Velxio project: the same circuit, openable in the emulator with the
+  // generated sketch already loaded (external/velxio, AGPL-3.0).
+  const sketch = { name: `${plan.slug}.ino`, content: sketchSource(plan, codes) };
+  const velxio = generateVelxioProject(plan, sketch);
+
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },
-    { path: `firmware/${plan.slug}.ino`, content: sketchSource(plan, codes) },
+    { path: `firmware/${plan.slug}.ino`, content: sketch.content },
     { path: 'firmware/config.h', content: configSource(plan, codes) },
     { path: 'wokwi.toml', content: wokwi.wokwiToml },
     { path: 'diagram.json', content: JSON.stringify(universal, null, 2) },
     { path: 'hardware/universal-diagram.json', content: JSON.stringify(universal, null, 2) },
+    { path: `simulation/${plan.slug}.vlx`, content: velxio.json },
     { path: 'README.md', content: readme(plan) },
   ];
 

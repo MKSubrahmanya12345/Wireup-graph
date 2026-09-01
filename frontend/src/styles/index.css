@@ -1084,3 +1084,49 @@ button { font-family: inherit; }
 .bench-nets summary { cursor: pointer; color: var(--ink-soft); }
 .bench-nets ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; }
 .bench-nets code { font: 600 11.5px var(--mono); color: var(--ink); }
+
+/* Page 04 — /sim: simulation ⇄ website */
+.sim-page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); }
+.sim-head {
+  position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 16px;
+  padding: 12px 18px; background: rgba(10, 15, 27, .92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.sim-back { color: var(--cyan); text-decoration: none; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.sim-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sim-title h1 { margin: 0; font-size: 16px; letter-spacing: .2px; }
+.sim-swap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sim-swap button {
+  border: 0; background: transparent; color: var(--ink-soft); cursor: pointer;
+  padding: 8px 14px; font: 600 13px var(--mono); transition: background .15s ease, color .15s ease;
+}
+.sim-swap button + button { border-left: 1px solid var(--line); }
+.sim-swap button:hover { color: var(--ink); background: var(--bg-raise); }
+.sim-swap button.active { background: var(--cyan); color: #06101f; }
+.sim-main { flex: 1; display: flex; padding: 16px; }
+.sim-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.sim-panel-bar {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel);
+}
+.sim-panel-bar strong { display: block; font-size: 14px; margin-bottom: 2px; }
+.sim-panel-bar .tiny { display: block; max-width: 68ch; }
+.sim-panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sim-panel-actions button, .sim-linkbtn {
+  border: 1px solid var(--line); background: var(--bg-raise); color: var(--ink);
+  border-radius: 9px; padding: 7px 11px; font: 600 12px var(--mono); cursor: pointer; text-decoration: none;
+}
+.sim-panel-actions button:hover, .sim-linkbtn:hover { border-color: var(--cyan); color: var(--cyan); }
+.sim-frame {
+  flex: 1; min-height: 62vh; width: 100%; border: 1px solid var(--line);
+  border-radius: 14px; background: #fff;
+}
+.sim-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; text-align: center; border: 1px dashed var(--line); border-radius: 14px;
+  padding: 48px 24px; background: var(--panel); min-height: 40vh;
+}
+.sim-empty h2 { margin: 0; font-size: 17px; }
+.sim-empty p { margin: 0; max-width: 56ch; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.sim-foot { margin: 0; }
+.sim-foot.bad { color: var(--red); }

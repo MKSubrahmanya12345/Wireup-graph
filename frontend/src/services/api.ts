@@ -93,8 +93,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+export interface SimConfig {
+  simMode: 'auto' | 'mock' | 'velxio';
+  velxio: { configured: boolean; embedUrl: string | null; source: string; licence: string };
+  native: { engine: string; note: string };
+}
+
 export const api = {
   health: () => request<{ status: string }>('/healthz'),
+
+  /** What page 04 should run: the native bench, or an embedded Velxio. */
+  simConfig: () => request<SimConfig>('/config/sim'),
 
   planArchitecture: (body: {
     request: string;

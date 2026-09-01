@@ -175,6 +175,18 @@ export interface Bom {
   incomplete: boolean;
 }
 
+/** Where page 04 serves the generated dashboard from. */
+export interface BuildPreview {
+  id: string;
+  /** Iframe src — the real built bundle. */
+  url: string;
+  /** Where that bundle's API calls land (Wireup's device stub). */
+  apiBase: string;
+  publishedAt: string;
+  stubbedApi: true;
+  note: string;
+}
+
 export interface AgenticBuildResult {
   projectName: string;
   slug: string;
@@ -197,6 +209,9 @@ export interface AgenticBuildResult {
   simulation: BuildSimulationSummary;
   instructions: { path: string; content: string };
   bom: Bom;
+  /** Live preview of the dashboard this build produced (page 04). Null when
+   *  the build produced nothing servable, or for results saved before M7. */
+  preview?: BuildPreview | null;
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
