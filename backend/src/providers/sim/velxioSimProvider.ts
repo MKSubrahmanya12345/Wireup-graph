@@ -4,6 +4,7 @@ import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import type { DeviceBuildPlan } from '../../agentic/types.js';
 import type { HardwareSimProvider, SimCheck, SimContext, SimResult } from './types.js';
+import { normalizeWifiForEmulator } from '../../agentic/velxioProject.js';
 
 /**
  * VelxioSimProvider — REAL adapter for the vendored Velxio emulator
@@ -219,7 +220,11 @@ export class VelxioSimProvider implements HardwareSimProvider {
         sources.push({ name: file.path.split('/').pop() ?? 'config.h', content: file.content });
       }
     }
-    return sources;
+    // QEMU has exactly one AP ("Espressif", open). Velxio only rewrites the
+    // entry sketch; our credentials live in config.h — normalise them here so
+    // the emulated board genuinely joins the network and its web server is
+    // reachable through Velxio's IoT gateway.
+    return normalizeWifiForEmulator(sources);
   }
 
   /** Async job API first (survives long first-time core builds), sync fallback. */

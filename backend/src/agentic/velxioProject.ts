@@ -169,6 +169,38 @@ const PART_ROW_Y = 60;
 const PIN_OFFSET = { x: 40, y: 30 };
 
 /**
+ * Velxio's QEMU fork emulates exactly one Wi-Fi access point: SSID
+ * "Espressif", open auth, with slirp NAT + a hostfwd of the board's port 80
+ * out to Velxio's IoT gateway (`/api/gateway/{client_id}/…`).
+ *
+ * Velxio's compiler rewrites SSID string literals for QEMU itself — but only
+ * in the ENTRY sketch, and Wireup keeps credentials in `config.h`. Left
+ * alone, the simulated board would try to join the user's home SSID (which
+ * does not exist inside QEMU), fail, and fall back to a softAP the gateway
+ * explicitly cannot reach. So every artifact that goes TO the emulator gets
+ * the same normalisation applied to all its files: SSID → "Espressif",
+ * password → "" . The firmware zip the user flashes is untouched — their
+ * real credentials stay in `firmware/config.h`.
+ */
+export const QEMU_WIFI_SSID = 'Espressif';
+
+export function normalizeWifiForEmulator(files: { name: string; content: string }[]): {
+  name: string;
+  content: string;
+}[] {
+  return files.map((file) => {
+    if (!/\.(ino|h|hpp|cpp|c)$/.test(file.name)) return file;
+    const content = file.content
+      .replace(
+        /(#define\s+WIFI_SSID\s+)"[^"]*"/,
+        `$1"${QEMU_WIFI_SSID}" // Velxio/QEMU emulated AP (open). Your real SSID stays in the firmware zip.`,
+      )
+      .replace(/(#define\s+WIFI_PASSWORD\s+)"[^"]*"/, '$1"" // open auth in the emulator');
+    return content === file.content ? file : { ...file, content };
+  });
+}
+
+/**
  * Build the .vlx project for a resolved plan.
  *
  * `sketch` is the generated Arduino source; it becomes the board's file group
@@ -277,7 +309,12 @@ export function generateVelxioProject(
     fileGroups: {
       // The sketch first (Velxio's main file), then every local header it
       // includes — the group must be self-contained for the compile to work.
-      [fileGroupId]: [{ name: sketch.name, content: sketch.content }, ...extraFiles],
+      // Wi-Fi credentials are normalised to the emulator's AP (see
+      // normalizeWifiForEmulator): this file targets QEMU, not the bench.
+      [fileGroupId]: normalizeWifiForEmulator([
+        { name: sketch.name, content: sketch.content },
+        ...extraFiles,
+      ]),
     },
     components,
     wires,
