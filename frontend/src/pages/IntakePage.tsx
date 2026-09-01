@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 import IntakeScene from '../three/IntakeScene';
 import { evaluateGraphValidity } from '../lib/graphValidity';
 import { api } from '../services/api';
+import { useAuth } from '../store/useAuth';
 import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
@@ -30,6 +31,7 @@ const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[
  */
 export default function IntakePage() {
   const navigate = useNavigate();
+  const authedUser = useAuth((state) => state.user);
   const loadResult = useBuildStore((state) => state.loadResult);
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
@@ -107,7 +109,14 @@ export default function IntakePage() {
           <span className="tiny muted">
             Pre-baked: “esp32 + bme280 weather station logging to a website i can open at home”.
             Lands you on page 04 with the circuit, the code and the live website.
+            {!authedUser && ' No login needed for this.'}
           </span>
+          {!authedUser && (
+            <span className="tiny muted">
+              The full pipeline below still needs an account — <Link to="/login">sign in</Link> to
+              run your own brief.
+            </span>
+          )}
           {demoError && <span className="tiny bad">{demoError}</span>}
         </div>
       </section>
