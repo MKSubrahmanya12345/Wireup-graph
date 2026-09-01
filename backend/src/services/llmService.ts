@@ -62,7 +62,9 @@ export async function callLlm(
       'GEMINI_API_KEY is not set — falling back to Groq for this call (Pro-tier quality is degraded until the key is configured).',
     );
     provider = 'groq';
-    model = options.model && options.provider !== 'gemini' ? model : DEFAULT_MODELS.groq;
+    // Always use Groq's default model when falling back from Gemini —
+    // the requested Gemini model (e.g., gemini-2.5-flash) doesn't exist on Groq.
+    model = DEFAULT_MODELS.groq;
   }
   options.onProviderResolved?.(provider, model);
 

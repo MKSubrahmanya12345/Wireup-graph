@@ -8,8 +8,10 @@ import { downloadZip } from '../lib/zip';
 import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
 import { useGraphStore } from '../store/useGraphStore';
+import { useDesignSession } from '../store/useDesignSession';
 import { toast } from '../store/useToastStore';
 import type { AgenticBuildResult, ValidationReport } from '../types/build';
+import type { LlmProvider } from '../types/llm';
 
 /**
  * Two INDEPENDENT readiness indicators (M4).
@@ -332,6 +334,12 @@ function FileBrowser({ result }: { result: AgenticBuildResult }) {
  * The terminal stays open while the engine retrieves, generates, compiles,
  * installs, builds and cross-checks. Two zip files come out.
  */
+const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[] }[] = [
+  { value: 'groq', label: 'Groq', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
+  { value: 'bedrock', label: 'AWS Bedrock', models: ['moonshotai.kimi-k2.5', 'minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
+  { value: 'gemini', label: 'Google Gemini', models: ['gemini-2.5-flash'] },
+];
+
 export default function BuildPage() {
   const graph = useGraphStore((state) => state.graph);
   const lines = useBuildStore((state) => state.lines);
@@ -342,6 +350,7 @@ export default function BuildPage() {
   const run = useBuildStore((state) => state.run);
   const cancel = useBuildStore((state) => state.cancel);
   const clear = useBuildStore((state) => state.clear);
+  const sessionLlmOptions = useDesignSession((state) => state.llmOptions);
 
   const terminalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -350,6 +359,22 @@ export default function BuildPage() {
   }, [lines]);
 
   const canRun = graph.nodes.length > 0 && !running;
+
+  // LLM provider/model selection for agentic build
+  const [provider, setProvider] = useState<LlmProvider>(sessionLlmOptions.provider ?? 'groq');
+  const [model, setModel] = useState<string>(
+    sessionLlmOptions.model ?? LLM_PROVIDER_OPTIONS[0].models[0]
+  );
+
+  const handleProviderChange = (newProvider: LlmProvider) => {
+    setProvider(newProvider);
+    const models = LLM_PROVIDER_OPTIONS.find((p) => p.value === newProvider)?.models ?? [];
+    setModel(models[0] ?? '');
+  };
+
+  const handleRun = () => {
+    void run({ provider, model });
+  };
 
   // Downloads unlock only when BOTH indicators pass (M4 #28).
   // A build result persisted before M4 has no simulation block — treat the
@@ -407,7 +432,29 @@ export default function BuildPage() {
           <Link to="/sim" className="primary-button as-link" style={{ marginLeft: 10 }}>
             ↳ Simulation
           </Link>
-          <button type="button" className="ghost-button" disabled={!canRun} onClick={() => void run()}>
+          <div className="build-llm-select" style={{ display: 'inline-flex', gap: 8, marginLeft: 10, alignItems: 'center' }}>
+            <select
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
+              disabled={running}
+              title="LLM Provider"
+            >
+              {LLM_PROVIDER_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={running}
+              title="Model"
+            >
+              {LLM_PROVIDER_OPTIONS.find((p) => p.value === provider)?.models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <button type="button" className="ghost-button" disabled={!canRun} onClick={handleRun}>
             {result ? '↻ Re-run agentic build' : '⚡ Run agentic build'}
           </button>
             </>
@@ -564,8 +611,8 @@ export default function BuildPage() {
               ))}
             </ol>
             <div className="engine-note">
-              plan: {result.llm.plan} · LLM provider that actually ran: {result.llm.actual}
-              {result.llm.note ? ` (${result.llm.note})` : ''}
+              plan: {result.llm?.plan ?? 'unknown'} · LLM provider that actually ran: {result.llm?.actual ?? 'unknown'}
+              {result.llm?.note ? ` (${result.llm.note})` : ''}
               {' · '}engine: {result.engine === 'deterministic' ? 'Wireup deterministic synthesis (knowledge base)' : 'LLM draft + terminal gauntlet'}
               {' · '}iterations: firmware {result.iterations.firmware}, software {result.iterations.software}
             </div>

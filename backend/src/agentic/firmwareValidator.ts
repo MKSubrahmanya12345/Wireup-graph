@@ -27,6 +27,7 @@ const STUB_HEADERS = new Set([
   'Arduino.h', 'Wire.h', 'WiFi.h', 'WebServer.h', 'ESPmDNS.h', 'DHT.h',
   'OneWire.h', 'DallasTemperature.h', 'ESP32Servo.h', 'Adafruit_BME280.h',
   'Preferences.h', 'ArduinoOTA.h', 'Adafruit_GFX.h', 'Adafruit_SSD1306.h',
+  'Adafruit_Sensor.h',
 ]);
 /** Real system headers g++ resolves itself. */
 const SYSTEM_HEADERS = new Set(['stdint.h', 'string.h', 'math.h', 'stdio.h', 'stdlib.h']);

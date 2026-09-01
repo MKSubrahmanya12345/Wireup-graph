@@ -89,7 +89,6 @@ export default function GraphCanvas() {
           maxZoom={1.8}
           fitView
           fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
-          proOptions={{ hideAttribution: true }}
         >
           <Background gap={22} size={1} color="#e2eae8" />
           <Controls showInteractive={false} />

@@ -266,7 +266,7 @@ Rules:
 - To INSERT new code, set "search" to "" and put the existing line it should follow in "insertAfter".
 - To DELETE a line, set "replace" to "".
 - Fix ONLY the reported errors. Keep every JSON telemetry field the contract requires — never rename or remove a published field.
-- Only use headers/libraries the Arduino ESP32 core or these supported libraries provide: Arduino.h, WiFi.h, WebServer.h, ESPmDNS.h, Wire.h, DHT.h, OneWire.h, DallasTemperature.h, ESP32Servo.h, Adafruit_BME280.h, Adafruit_GFX.h, Adafruit_SSD1306.h, Preferences.h, ArduinoOTA.h.
+- Only use headers/libraries the Arduino ESP32 core or these supported libraries provide: Arduino.h, WiFi.h, WebServer.h, ESPmDNS.h, Wire.h, DHT.h, OneWire.h, DallasTemperature.h, ESP32Servo.h, Adafruit_BME280.h, Adafruit_GFX.h, Adafruit_SSD1306.h, Preferences.h, ArduinoOTA.h, Adafruit_Sensor.h.
 - If the firmware must publish a missing telemetry field, add the json += "\\\"field\\\":" line in the sensor JSON builder and keep the value numeric (or the JSON literal null).
 - Fewer, correct edits beat broad rewrites. Every search block must exist in the file exactly as you write it.`;
 
@@ -388,7 +388,7 @@ Rules:
 - "search" MUST be copied verbatim from the provided file (matched exactly); keep each block small and unique, 1-6 lines, no line numbers.
 - To insert, set "search" to "" and put the line it follows in "insertAfter" (or position: "prepend").
 - Keep every JSON telemetry field and HTTP endpoint the dashboard contract relies on, unless the user explicitly asked to remove it.
-- Use only supported headers: Arduino.h, WiFi.h, WebServer.h, ESPmDNS.h, Wire.h, DHT.h, OneWire.h, DallasTemperature.h, ESP32Servo.h, Adafruit_BME280.h, Adafruit_GFX.h, Adafruit_SSD1306.h, Preferences.h, ArduinoOTA.h.
+- Use only supported headers: Arduino.h, WiFi.h, WebServer.h, ESPmDNS.h, Wire.h, DHT.h, OneWire.h, DallasTemperature.h, ESP32Servo.h, Adafruit_BME280.h, Adafruit_GFX.h, Adafruit_SSD1306.h, Preferences.h, ArduinoOTA.h, Adafruit_Sensor.h.
 - Pin/active-level/polarity changes must be applied consistently in setup() (pinMode/digitalWrite) and anywhere the pin is read or driven.
 - Return at least one applicable edit.`;
 
