@@ -3,7 +3,9 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import TopNav from './components/TopNav';
 import Toast from './components/Toast';
+import AdminPage from './pages/AdminPage';
 import AuthPage from './pages/AuthPage';
+import BillingPage from './pages/BillingPage';
 import BuildPage from './pages/BuildPage';
 import GraphPage from './pages/GraphPage';
 import IntakePage from './pages/IntakePage';
@@ -35,6 +37,29 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
   return <Workspace>{children}</Workspace>;
+}
+
+/**
+ * Admin-only gate. A logged-in non-admin sees an explicit 403 panel instead
+ * of the console (the API enforces the same rule server-side — this is UX,
+ * not security).
+ */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const user = useAuth((state) => state.user);
+  if (user && user.role !== 'admin') {
+    return (
+      <div className="page">
+        <div className="empty-state">
+          <div className="empty-mark">⛔</div>
+          <h1>403 — admin only</h1>
+          <p className="muted">
+            This console is restricted to Wireup administrators. Signed in as {user.email}.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return <>{children}</>;
 }
 
 /**
@@ -72,6 +97,24 @@ export default function App() {
         element={
           <RequireAuth>
             <BuildPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <RequireAuth>
+            <BillingPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AdminPage />
+            </RequireAdmin>
           </RequireAuth>
         }
       />

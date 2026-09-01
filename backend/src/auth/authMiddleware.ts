@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 import { ApiError } from '../middleware/errorHandler.js';
 import { verifyToken, type TokenPayload } from './authService.js';
+import { getUserStore } from './userStore.js';
 
 /**
  * Express augmentation: routes behind `requireAuth` can read `req.user`.
@@ -47,4 +48,36 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
     }
   }
   next();
+}
+
+/**
+ * Role gate for /admin/*.
+ *
+ * 401 when there is no session at all, 403 when the session exists but is not
+ * an admin — a non-admin must never be able to tell the two apart by luck.
+ * The role is read from the signed token AND re-checked against the store, so
+ * revoking an admin takes effect without waiting for the token to expire.
+ */
+export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
+  const user = req.user;
+  if (!user) {
+    next(new ApiError(401, 'Log in to use Wireup.'));
+    return;
+  }
+  if (user.guest) {
+    next(new ApiError(403, 'Admin access required.'));
+    return;
+  }
+  void (async () => {
+    try {
+      const stored = await getUserStore().findById(user.sub);
+      if (!stored || stored.role !== 'admin') {
+        next(new ApiError(403, 'Admin access required.'));
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  })();
 }

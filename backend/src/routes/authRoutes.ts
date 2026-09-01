@@ -64,6 +64,7 @@ router.get(
           id: 'guest',
           name: req.user.name ?? 'Guest',
           email: 'guest@wireup.local',
+          role: 'user',
           createdAt: '',
         },
       });

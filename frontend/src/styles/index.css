@@ -972,3 +972,161 @@ button { font-family: inherit; }
 
 /* ── Guest button on the auth page ───────────────────────────────────────── */
 .ghost-button.auth-submit { width: 100%; margin-top: 8px; }
+
+/* ── Admin console / billing / readiness (M1, M3, M4, M5) ─────────────────── */
+.admin-adapters { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.admin-tabs { margin: 8px 0 14px; }
+.admin-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 18px;
+  overflow-x: auto;
+}
+.admin-panel h3 { margin: 4px 0 12px; font-size: 15px; color: var(--ink-soft); }
+.admin-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.admin-metric {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px;
+}
+.admin-metric strong { font-size: 22px; }
+.admin-metric-label { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-table th {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.admin-table td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.admin-table code { font: 500 11px var(--mono); color: var(--cyan); }
+.admin-table + h3 { margin-top: 22px; }
+
+.inline-note {
+  border: 1px solid var(--cyan-dim); background: #22d3ee10; color: var(--ink-soft);
+  border-radius: 12px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
+}
+
+/* Readiness indicators on page 03 */
+.readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 16px 0; }
+.readiness-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); padding: 16px;
+}
+.readiness-card.ok { border-color: #34d39955; }
+.readiness-card.bad { border-color: #f8717155; }
+.readiness-card.errored { border-color: var(--orange); background: #fb923c12; }
+.readiness-head { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+.readiness-head .glyph { font-size: 18px; }
+.readiness-card.ok .glyph { color: var(--green); }
+.readiness-card.bad .glyph, .readiness-card.errored .glyph { color: var(--red); }
+.readiness-log {
+  margin-top: 10px; max-height: 190px; overflow: auto;
+  font: 500 11.5px var(--mono); color: var(--ink-soft);
+  background: var(--bg-raise); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+  white-space: pre-wrap;
+}
+.download-locked {
+  border: 1px dashed var(--orange); color: var(--orange);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0; font-size: 13px;
+}
+
+/* BOM view */
+.bom-links a { color: var(--cyan); margin-right: 10px; font-size: 12px; }
+
+/* Page 01 — 3D preview + complete gate */
+.intake-3d {
+  margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden;
+}
+.intake-3d-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  font: 600 12px var(--mono); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .06em;
+}
+.complete-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.complete-bar .reason { font-size: 12.5px; color: var(--muted); }
+
+/* Page 03 — live browser bench (wokwi elements + avr8js heartbeat) */
+.bench-panel { margin-top: 16px; }
+.bench-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.bench-head h3 { margin: 0 0 4px; }
+.bench-controls { display: flex; align-items: center; gap: 8px; }
+.bench-controls button {
+  border: 1px solid var(--line); background: var(--bg-raise); color: var(--ink);
+  border-radius: 9px; padding: 6px 10px; font: 600 12px var(--mono); cursor: pointer;
+}
+.bench-controls button:hover { border-color: var(--cyan); }
+.bench-beat { color: var(--green); font-size: 18px; transition: opacity .08s linear; }
+.bench-stage {
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end;
+  margin: 16px 0; padding: 18px; border: 1px solid var(--line); border-radius: 14px;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 0) 0 0/18px 18px,
+    var(--bg-raise);
+  min-height: 180px; overflow: auto;
+}
+.bench-part { margin: 0; display: flex; flex-direction: column; gap: 8px; max-width: 260px; }
+.bench-part-body { display: flex; align-items: center; justify-content: center; min-height: 60px; }
+.bench-part figcaption { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.bench-sample { font: 600 11.5px var(--mono); color: var(--cyan); }
+.bench-placeholder {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  border: 1px dashed var(--line); border-radius: 10px; padding: 14px 16px; background: var(--panel);
+}
+.bench-placeholder-chip { font: 700 12px var(--mono); color: var(--ink-soft); }
+.bench-meta dl { display: flex; flex-wrap: wrap; gap: 22px; margin: 0; }
+.bench-meta dt { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.bench-meta dd { margin: 2px 0 0; font: 600 14px var(--mono); }
+.bench-meta dd.ok { color: var(--green); }
+.bench-meta dd.bad { color: var(--red); }
+.bench-nets { margin-top: 12px; font-size: 12.5px; }
+.bench-nets summary { cursor: pointer; color: var(--ink-soft); }
+.bench-nets ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.bench-nets code { font: 600 11.5px var(--mono); color: var(--ink); }
+
+/* Page 04 — /sim: simulation ⇄ website */
+.sim-page { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); }
+.sim-head {
+  position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 16px;
+  padding: 12px 18px; background: rgba(10, 15, 27, .92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.sim-back { color: var(--cyan); text-decoration: none; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.sim-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sim-title h1 { margin: 0; font-size: 16px; letter-spacing: .2px; }
+.sim-swap { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sim-swap button {
+  border: 0; background: transparent; color: var(--ink-soft); cursor: pointer;
+  padding: 8px 14px; font: 600 13px var(--mono); transition: background .15s ease, color .15s ease;
+}
+.sim-swap button + button { border-left: 1px solid var(--line); }
+.sim-swap button:hover { color: var(--ink); background: var(--bg-raise); }
+.sim-swap button.active { background: var(--cyan); color: #06101f; }
+.sim-main { flex: 1; display: flex; padding: 16px; }
+.sim-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.sim-panel-bar {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel);
+}
+.sim-panel-bar strong { display: block; font-size: 14px; margin-bottom: 2px; }
+.sim-panel-bar .tiny { display: block; max-width: 68ch; }
+.sim-panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sim-panel-actions button, .sim-linkbtn {
+  border: 1px solid var(--line); background: var(--bg-raise); color: var(--ink);
+  border-radius: 9px; padding: 7px 11px; font: 600 12px var(--mono); cursor: pointer; text-decoration: none;
+}
+.sim-panel-actions button:hover, .sim-linkbtn:hover { border-color: var(--cyan); color: var(--cyan); }
+.sim-frame {
+  flex: 1; min-height: 62vh; width: 100%; border: 1px solid var(--line);
+  border-radius: 14px; background: #fff;
+}
+.sim-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; text-align: center; border: 1px dashed var(--line); border-radius: 14px;
+  padding: 48px 24px; background: var(--panel); min-height: 40vh;
+}
+.sim-empty h2 { margin: 0; font-size: 17px; }
+.sim-empty p { margin: 0; max-width: 56ch; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.sim-foot { margin: 0; }
+.sim-foot.bad { color: var(--red); }

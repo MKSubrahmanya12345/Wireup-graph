@@ -15,19 +15,26 @@ import { logger } from '../config/logger.js';
  *    database still has fully working authentication.
  */
 
+export type UserRole = 'admin' | 'user';
+
 export interface StoredUser {
   id: string;
   name: string;
   email: string;
   /** bcrypt hash — never the raw password. */
   passwordHash: string;
+  /** Authorisation tier. Everything under /admin requires 'admin'. */
+  role: UserRole;
   createdAt: string;
 }
 
 export interface UserStore {
   findByEmail(email: string): Promise<StoredUser | null>;
   findById(id: string): Promise<StoredUser | null>;
-  create(input: { name: string; email: string; passwordHash: string }): Promise<StoredUser>;
+  create(input: { name: string; email: string; passwordHash: string; role?: UserRole }): Promise<StoredUser>;
+  /** Admin panel — every account, newest first. */
+  list(): Promise<StoredUser[]>;
+  setRole(id: string, role: UserRole): Promise<StoredUser | null>;
 }
 
 export function normaliseEmail(email: string): string {
@@ -41,6 +48,7 @@ const userMongoSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, maxlength: 80 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
     passwordHash: { type: String, required: true },
+    role: { type: String, enum: ['admin', 'user'], default: 'user' },
   },
   { timestamps: true },
 );
@@ -49,6 +57,7 @@ interface WireupUserDoc {
   name: string;
   email: string;
   passwordHash: string;
+  role?: UserRole;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -70,9 +79,25 @@ class MongoUserStore implements UserStore {
     return doc ? toStored(doc) : null;
   }
 
-  async create(input: { name: string; email: string; passwordHash: string }): Promise<StoredUser> {
-    const doc = await MongoUser.create({ name: input.name, email: normaliseEmail(input.email), passwordHash: input.passwordHash });
+  async create(input: { name: string; email: string; passwordHash: string; role?: UserRole }): Promise<StoredUser> {
+    const doc = await MongoUser.create({
+      name: input.name,
+      email: normaliseEmail(input.email),
+      passwordHash: input.passwordHash,
+      role: input.role ?? 'user',
+    });
     return toStored(doc);
+  }
+
+  async list(): Promise<StoredUser[]> {
+    const docs = await MongoUser.find().sort({ createdAt: -1 }).lean();
+    return docs.map(toStored);
+  }
+
+  async setRole(id: string, role: UserRole): Promise<StoredUser | null> {
+    if (!mongoose.isValidObjectId(id)) return null;
+    const doc = await MongoUser.findByIdAndUpdate(id, { role }, { new: true }).lean();
+    return doc ? toStored(doc) : null;
   }
 }
 
@@ -83,6 +108,7 @@ function toStored(doc: any): StoredUser {
     name: doc.name,
     email: doc.email,
     passwordHash: doc.passwordHash,
+    role: doc.role === 'admin' ? 'admin' : 'user',
     createdAt: (doc.createdAt ?? new Date()).toISOString?.() ?? String(doc.createdAt),
   };
 }
@@ -130,15 +156,35 @@ class FileUserStore implements UserStore {
   async findByEmail(email: string): Promise<StoredUser | null> {
     const data = await this.readAll();
     const needle = normaliseEmail(email);
-    return data.users.find((user) => user.email === needle) ?? null;
+    const user = data.users.find((entry) => entry.email === needle) ?? null;
+    return user ? { ...user, role: user.role ?? 'user' } : null;
   }
 
   async findById(id: string): Promise<StoredUser | null> {
     const data = await this.readAll();
-    return data.users.find((user) => user.id === id) ?? null;
+    const user = data.users.find((entry) => entry.id === id) ?? null;
+    return user ? { ...user, role: user.role ?? 'user' } : null;
   }
 
-  create(input: { name: string; email: string; passwordHash: string }): Promise<StoredUser> {
+  async list(): Promise<StoredUser[]> {
+    const data = await this.readAll();
+    return [...data.users]
+      .map((user) => ({ ...user, role: user.role ?? 'user' }))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  setRole(id: string, role: UserRole): Promise<StoredUser | null> {
+    return this.withLock(async () => {
+      const data = await this.readAll();
+      const user = data.users.find((entry) => entry.id === id);
+      if (!user) return null;
+      user.role = role;
+      await this.writeAll(data);
+      return user;
+    });
+  }
+
+  create(input: { name: string; email: string; passwordHash: string; role?: UserRole }): Promise<StoredUser> {
     return this.withLock(async () => {
       const data = await this.readAll();
       const email = normaliseEmail(input.email);
@@ -152,6 +198,7 @@ class FileUserStore implements UserStore {
         name: input.name.trim(),
         email,
         passwordHash: input.passwordHash,
+        role: input.role ?? 'user',
         createdAt: new Date().toISOString(),
       };
       data.users.push(user);

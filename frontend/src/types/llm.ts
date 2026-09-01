@@ -1,4 +1,4 @@
-export type LlmProvider = 'groq' | 'bedrock';
+export type LlmProvider = 'groq' | 'bedrock' | 'gemini';
 
 export interface LlmConfig {
   defaultProvider: LlmProvider;

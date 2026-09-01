@@ -1,11 +1,14 @@
 import { Router } from 'express';
 
+import adminRoutes from './adminRoutes.js';
 import architectureRoutes from './architectureRoutes.js';
 import authRoutes from './authRoutes.js';
+import billingRoutes from './billingRoutes.js';
 import buildRoutes from './buildRoutes.js';
 import configRoutes from './configRoutes.js';
 import healthRoutes from './healthRoutes.js';
 import projectRoutes from './projectRoutes.js';
+import { previewRouter } from '../agentic/preview.js';
 import { requireAuth } from '../auth/authMiddleware.js';
 
 const router = Router();
@@ -16,6 +19,18 @@ router.use(authRoutes);
 
 // Config endpoint (available without auth for UI setup).
 router.use(configRoutes);
+
+// Live dashboard previews. Unauthenticated by necessity — an <iframe> cannot
+// send the Bearer token — and guarded instead by a 12-byte random id that
+// only the build's own result carries.
+router.use(previewRouter());
+
+// Billing: the provider webhook is unauthenticated by necessity (the payment
+// provider has no Wireup session); the other billing routes gate themselves.
+router.use(billingRoutes);
+
+// Admin: gates itself with requireAuth + requireAdmin.
+router.use(adminRoutes);
 
 // Everything below needs a Wireup session — these routes do the paid/heavy work.
 router.use(requireAuth);

@@ -9,13 +9,18 @@ import { logger } from '../config/logger.js';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
-export type LlmProvider = 'groq' | 'bedrock';
+export type LlmProvider = 'groq' | 'bedrock' | 'gemini';
 
 export interface LlmCallOptions {
   provider?: LlmProvider;
   model?: string;
   maxTokens: number;
   jsonResponse?: boolean;
+  /**
+   * Called with the provider/model that actually ran, after any fallback.
+   * The pipeline uses it to log "which provider actually ran per build".
+   */
+  onProviderResolved?: (provider: LlmProvider, model: string) => void;
 }
 
 /** Thrown for any provider-level failure; the controller turns this into a 502. */
@@ -34,6 +39,7 @@ export class LlmError extends Error {
 const DEFAULT_MODELS: Record<LlmProvider, string> = {
   groq: 'openai/gpt-oss-120b',
   bedrock: 'moonshotai.kimi-k2.5',
+  gemini: 'gemini-2.0-flash',
 };
 
 /**
@@ -44,8 +50,21 @@ export async function callLlm(
   messages: ChatMessage[],
   options: LlmCallOptions,
 ): Promise<string> {
-  const provider = options.provider ?? env.LLM_PROVIDER;
-  const model = options.model ?? DEFAULT_MODELS[provider];
+  let provider = options.provider ?? env.LLM_PROVIDER;
+  let model = options.model ?? DEFAULT_MODELS[provider];
+
+  // Gemini without a key must never fail silently and must never crash the
+  // build: log a loud warning and fall back to Groq. `onProviderResolved`
+  // lets the caller (the pipeline) record which provider ACTUALLY ran.
+  if (provider === 'gemini' && !env.GEMINI_API_KEY) {
+    logger.warn(
+      { requested: 'gemini', fallback: 'groq' },
+      'GEMINI_API_KEY is not set — falling back to Groq for this call (Pro-tier quality is degraded until the key is configured).',
+    );
+    provider = 'groq';
+    model = options.model && options.provider !== 'gemini' ? model : DEFAULT_MODELS.groq;
+  }
+  options.onProviderResolved?.(provider, model);
 
   logger.debug({ provider, model, maxTokens: options.maxTokens }, 'LLM call');
 
@@ -54,6 +73,8 @@ export async function callLlm(
       return callGroq(messages, model, options);
     case 'bedrock':
       return callBedrock(messages, model, options);
+    case 'gemini':
+      return callGemini(messages, model, options);
     default:
       throw new LlmError(`Unknown LLM provider: ${provider}`, 400, provider);
   }
@@ -104,6 +125,71 @@ async function callGroq(
   if (!content) throw new LlmError('Groq response did not contain message content', undefined, 'groq');
 
   logger.debug({ provider: 'groq', model, tokens: options.maxTokens }, 'LLM call completed');
+  return content;
+}
+
+async function callGemini(
+  messages: ChatMessage[],
+  model: string,
+  options: LlmCallOptions,
+): Promise<string> {
+  if (!env.GEMINI_API_KEY) {
+    // Defensive: callLlm already redirects this case to Groq.
+    throw new LlmError('GEMINI_API_KEY not configured', 503, 'gemini');
+  }
+
+  const systemText = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => m.content)
+    .join('\n\n');
+  const contents = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: options.maxTokens,
+      ...(options.jsonResponse ? { responseMimeType: 'application/json' } : {}),
+    },
+    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+  };
+
+  const response = await fetch(
+    `${env.GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!response.ok) {
+    const providerError = await response.text();
+    throw new LlmError(
+      `Gemini request failed (${response.status}): ${providerError.slice(0, 300)}`,
+      response.status,
+      'gemini',
+    );
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const content = (payload.candidates?.[0]?.content?.parts ?? [])
+    .map((part) => part.text ?? '')
+    .join('')
+    .trim();
+  if (!content) throw new LlmError('Gemini response did not contain text content', undefined, 'gemini');
+
+  logger.debug({ provider: 'gemini', model }, 'LLM call completed');
   return content;
 }
 
@@ -197,6 +283,28 @@ function collectConverseText(blocks: Array<{ text?: string }>): string | undefin
   return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
+/**
+ * Which provider will ACTUALLY run for a requested one, after fallbacks.
+ *
+ * The pipeline calls this to log "provider X ran for this build" honestly —
+ * asking for Gemini without a key silently becoming Groq is exactly the kind
+ * of thing that must be visible in the build log.
+ */
+export function resolveEffectiveProvider(requested: LlmProvider): {
+  provider: LlmProvider;
+  fallbackFrom?: LlmProvider;
+  reason?: string;
+} {
+  if (requested === 'gemini' && !env.GEMINI_API_KEY) {
+    return {
+      provider: 'groq',
+      fallbackFrom: 'gemini',
+      reason: 'GEMINI_API_KEY is not configured',
+    };
+  }
+  return { provider: requested };
+}
+
 /** Handles bare JSON, fenced JSON, and JSON wrapped in prose. */
 export function extractJson(content: string): unknown {
   const trimmed = content.trim();
@@ -269,7 +377,10 @@ function isBedrockConfigured(): boolean {
 export function isLlmAvailable(provider?: LlmProvider): boolean {
   if (provider === 'groq') return Boolean(env.GROQ_API_KEY);
   if (provider === 'bedrock') return isBedrockConfigured();
-  return Boolean(env.GROQ_API_KEY) || isBedrockConfigured();
+  // Gemini is "available" whenever Gemini OR its Groq fallback is usable —
+  // asking for Gemini without a key degrades, it never dead-ends.
+  if (provider === 'gemini') return Boolean(env.GEMINI_API_KEY) || Boolean(env.GROQ_API_KEY);
+  return Boolean(env.GROQ_API_KEY) || isBedrockConfigured() || Boolean(env.GEMINI_API_KEY);
 }
 
 /** Get available providers. */
@@ -277,5 +388,6 @@ export function getAvailableProviders(): LlmProvider[] {
   const providers: LlmProvider[] = [];
   if (env.GROQ_API_KEY) providers.push('groq');
   if (isBedrockConfigured()) providers.push('bedrock');
+  if (env.GEMINI_API_KEY) providers.push('gemini');
   return providers;
 }

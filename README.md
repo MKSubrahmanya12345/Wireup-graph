@@ -6,7 +6,7 @@ Wireup is an agentic hardware workspace. Three pages, one pipeline:
 
 | Step | Page | What happens |
 | ---- | ---- | ------------ |
-| 01 | **Prompt & Questions** | You describe the parts you own. Wireup reads its device knowledge base (RAG), decides what it can, and asks only what's left. |
+| 01 | **Prompt & Questions** | You describe the parts you own. Wireup reads its device knowledge base (RAG), decides what it can, asks only what's left, and draws one 3D shape per part it identifies — live. **Complete** unlocks only once the graph passes the very same validity check page 02 uses. |
 | 02 | **Architecture Graph** | A validated system graph — components, pins, rails — checked by deterministic engineering rules (power budget, voltage rails, orphans…), with datasheet sources. |
 | 03 | **Agentic Build** | The pipeline generates firmware, **compiles it with g++ in a real terminal**, generates a MERN dashboard, **installs + typechecks + builds it with npm/tsc/vite**, cross-checks the firmware⇄software contract — then hands you **two zips**. |
 
@@ -108,6 +108,113 @@ back to knowledge-base synthesis on any failure.
 - All architecture/build routes require a session; `/api/healthz` and `/api/auth/*` stay open.
 
 Key env vars (all optional, see `backend/.env.example`): `JWT_SECRET`, `MONGO_URI`, `GROQ_API_KEY`, `AGENTIC_MAX_REPAIR_LOOPS`, `AGENTIC_COMMAND_TIMEOUT_MS`, `AGENTIC_TERMINAL_VALIDATION`.
+
+Users carry a `role` (`user` | `admin`). One admin is seeded at boot from
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` (defaults `admin@wireup.local` /
+`wireup-admin-dev` — change them anywhere real, or set `ADMIN_SEED=0`).
+
+## Plans, payments and the admin console
+
+Wireup is **mock-first**: every external vendor sits behind one interface with
+two implementations, and the mock is the default. The entire commercial loop —
+checkout, webhook, plan upgrade, revenue reporting — runs on a laptop with no
+accounts, and going live is an env-var change.
+
+| Dependency | Default (no keys) | Real | Switch |
+| --- | --- | --- | --- |
+| Payments | `MockPaymentProvider` — the fake checkout self-fires its own webhook after `MOCK_PAYMENT_DELAY_MS` | `RazorpayAdapter` (Orders API + HMAC-verified webhooks) | `PAYMENT_MODE=razorpay` + `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` |
+| Hardware simulation | `MockHardwareSimProvider` — a deterministic virtual bench computed from the resolved plan | `VelxioSimProvider` → `POST {VELXIO_URL}/simulate` | `SIM_MODE=velxio` + `VELXIO_URL` |
+| Pro-tier model | Gemini requested → **logged** fallback to Groq | Gemini | `GEMINI_API_KEY` |
+
+The boot log prints exactly which side is live:
+
+```
+Wireup adapters ready — 3/3 running against mocks
+  adapter[payments]     = MockPaymentProvider (mock)
+  adapter[hardware-sim] = MockHardwareSimProvider (mock)
+  adapter[llm]          = MockLLMProvider (mock)
+ALL MOCKS ACTIVE — no external credentials configured.
+```
+
+- **`/billing`** — pick a plan. In mock mode the page waits for the self-fired
+  webhook and flips to *active* in about a second.
+- **`/admin`** (admins only; everyone else gets a 403 from the API and an
+  explicit 403 panel in the UI) — Users, Payments, Revenue, Usage and every
+  webhook Wireup has received, including replays marked `duplicate`.
+- Webhooks are **idempotent on the provider event id** in both modes: replaying
+  an event grants nothing twice.
+- **Pricing is not set yet.** Every plan is a ₹0 placeholder in
+  `backend/src/billing/plans.ts`; see `PROGRESS.md`.
+
+## Readiness gates on page 03
+
+The build ends with two *independent* verdicts:
+
+- **Hardware ready ✔/✘** — from the `HardwareSimProvider` (mock virtual bench
+  or Velxio). A simulator that *errors* is reported as an error, never a skip.
+- **Software ready ✔/✘** — `npm install` → `tsc --noEmit` → `vite build` →
+  runtime boot smoke test → firmware⇄software contract.
+
+**Both must pass before the zips unlock.** Force the failure path with
+`SIM_FORCE_FAIL=1` (circuit fails) or `SIM_FORCE_ERROR=1` (provider errors).
+
+Every build also writes `INSTRUCTIONS-<slug>.md` from that build's resolved
+plan (parts, pins, cadence, verification record) — shipped in the firmware zip
+and rendered on page 03 next to a BOM with per-part purchase links.
+
+## The live bench on page 03
+
+Under the readiness panel, page 03 animates **your** circuit:
+
+- The parts and wires come from the diagram the pipeline generated
+  (`hardware/universal-diagram.json`, falling back to Wokwi's `diagram.json`)
+  and are drawn with the real [`@wokwi/elements`](https://github.com/wokwi/wokwi-elements)
+  web components. A part with no Wokwi model renders as a labelled stub tile —
+  it is never swapped for a lookalike.
+- The heartbeat is **real AVR machine code** executing on
+  [`avr8js`](https://github.com/wokwi/avr8js) in your tab: `src/sim/avrProgram.ts`
+  assembles a PORTB5 blink and `useAvrHeartbeat` steps the core ~16 simulated
+  ms per animation frame. The panel reports cycles retired and simulated time.
+- Sensor values are **replayed** from this build's `HardwareSimProvider` log,
+  not invented in the browser.
+
+Honest caveat, stated in the UI too: avr8js simulates AVR silicon, and Wireup
+targets the ESP32 — your firmware is compiled and simulated **server-side**
+(g++/PlatformIO + Wokwi headless + the virtual bench), and those runs are what
+gate the downloads. The bench is the visual/timing layer over them.
+
+```bash
+cd frontend && npm test   # avr8js heartbeat + diagram-parsing suites
+```
+
+## Page 04 — the simulation ⇄ website swap
+
+`/sim` shows the two halves of one build, flipped by a single swap button
+(the choice lives in `?view=`, so a reload or a shared link lands where you
+left off).
+
+| Half | What it actually is |
+| --- | --- |
+| **⚡ Simulation** | The circuit this build resolved, running. By default it is the Wireup browser bench (avr8js + `@wokwi/elements`, no external service). Set `VELXIO_URL` and the same panel embeds that Velxio instance instead, with a button to switch back. Either way you can download `simulation/<slug>.vlx` and open the circuit in Velxio directly. |
+| **🖥 Website** | The generated MERN dashboard, actually running in an iframe — the *same bundle* the software gate built (the pipeline compiles it with `vite build --base=/api/preview/<id>/`, keeps that `dist/`, and serves it). The device API behind it is a Wireup preview stub replaying your plan's metrics, because a browser tab cannot reach your ESP32 over your LAN. The shipped Express backend in the zip does the real thing. |
+
+Every build now emits a native **Velxio project** — `simulation/<slug>.vlx`,
+`format: "velxio-project"` — with the board, the generated sketch, every part
+and every wire, translated to the pin names the board element really exposes
+(`D4`, `3V3`, `GND.1`, …). Generated by `backend/src/agentic/velxioProject.ts`,
+asserted by `backend/test/velxioProject.test.mjs`.
+
+Velxio itself is vendored as a submodule, not copied:
+
+```bash
+git submodule update --init external/velxio
+docker compose -f external/velxio/docker-compose.yml up -d
+# backend/.env → VELXIO_URL=http://localhost:3000   (embed it on /sim)
+#                SIM_MODE=velxio                    (also use it for the readiness gate)
+```
+
+It is **AGPL-3.0** — read `external/README.md` before shipping a modified copy
+as part of a hosted product.
 
 ## Why it's agentic, not a wrapper
 

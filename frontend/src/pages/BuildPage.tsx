@@ -2,12 +2,135 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import CodeBlock from '../components/CodeBlock';
+import WokwiBench from '../components/WokwiBench';
+import { samplesFromLog } from '../sim/diagram';
 import { downloadZip } from '../lib/zip';
 import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
 import { useGraphStore } from '../store/useGraphStore';
 import { toast } from '../store/useToastStore';
 import type { AgenticBuildResult, ValidationReport } from '../types/build';
+
+/**
+ * Two INDEPENDENT readiness indicators (M4).
+ *
+ * "Hardware ready" comes from the HardwareSimProvider (mock virtual bench, or
+ * Velxio when SIM_MODE=velxio). "Software ready" comes from the npm/tsc/vite
+ * gates, the runtime smoke test and the firmware⇄software contract. Neither
+ * is inferred from the other, and a simulator that ERRORED says so explicitly
+ * instead of quietly passing or being skipped.
+ */
+function ReadinessPanel({ result }: { result: AgenticBuildResult }) {
+  const sim = result.simulation;
+  const hardwareClass = sim.hardware.errored ? 'errored' : sim.hardware.ready ? 'ok' : 'bad';
+  return (
+    <section className="readiness-grid">
+      <div className={`readiness-card ${hardwareClass}`}>
+        <div className="readiness-head">
+          <span className="glyph">{sim.hardware.ready ? '✔' : '✘'}</span>
+          Hardware ready {sim.hardware.ready ? '✔' : '✘'}
+        </div>
+        <p className="muted tiny">
+          simulator: <code>{sim.hardware.provider}</code> · {sim.hardware.checks.length} check(s) ·{' '}
+          {(sim.hardware.durationMs / 1000).toFixed(1)} s
+        </p>
+        {sim.hardware.errored && (
+          <p className="live-fail">
+            The simulation provider ERRORED — hardware readiness could not be proven. This is an
+            error, not a skipped step: fix the provider (or set <code>SIM_MODE=mock</code>) and
+            re-run.
+          </p>
+        )}
+        <div className="check-badge-grid">
+          {sim.hardware.checks.map((check, index) => (
+            <span key={`${check.name}-${index}`} className={`check-badge${check.ok ? ' ok' : ' fail'}`} title={check.detail}>
+              {check.ok ? '✔' : '✘'} {check.name}
+            </span>
+          ))}
+        </div>
+        {sim.hardware.log.length > 0 && <pre className="readiness-log">{sim.hardware.log.join('\n')}</pre>}
+        {sim.hardware.runUrl && (
+          <a className="source-chip" href={sim.hardware.runUrl} target="_blank" rel="noreferrer">
+            open the simulator run
+          </a>
+        )}
+      </div>
+
+      <div className={`readiness-card ${sim.software.ready ? 'ok' : 'bad'}`}>
+        <div className="readiness-head">
+          <span className="glyph">{sim.software.ready ? '✔' : '✘'}</span>
+          Software ready {sim.software.ready ? '✔' : '✘'}
+        </div>
+        <p className="muted tiny">{sim.software.detail}</p>
+        <div className="check-badge-grid">
+          {sim.software.checks.map((check, index) => (
+            <span key={`${check.name}-${index}`} className={`check-badge${check.ok ? ' ok' : ' fail'}`} title={check.detail}>
+              {check.ok ? '✔' : '✘'} {check.name}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** BOM with per-part purchase links (M5 #32). */
+function BomView({ result }: { result: AgenticBuildResult }) {
+  const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
+  return (
+    <section className="admin-panel">
+      <h3>Bill of materials — {result.projectName}</h3>
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <th>Ref</th>
+            <th>Part</th>
+            <th>Qty</th>
+            <th>Wiring</th>
+            <th>Approx</th>
+            <th>Buy</th>
+          </tr>
+        </thead>
+        <tbody>
+          {result.bom.entries.map((entry) => (
+            <tr key={entry.ref}>
+              <td><code>{entry.ref}</code></td>
+              <td>
+                {entry.name}
+                <br />
+                <span className="muted tiny">{entry.partNumber}</span>
+                {entry.datasheet && (
+                  <>
+                    {' '}
+                    <a className="source-chip" href={entry.datasheet} target="_blank" rel="noreferrer">
+                      datasheet
+                    </a>
+                  </>
+                )}
+              </td>
+              <td>{entry.quantity}</td>
+              <td className="muted tiny">{entry.connections}</td>
+              <td>{entry.approxPricePaise ? rupees(entry.approxPricePaise) : '—'}</td>
+              <td className="bom-links">
+                {entry.links.map((link) => (
+                  <a key={link.vendor} href={link.url} target="_blank" rel="noreferrer" title={link.note}>
+                    {link.vendor} ↗
+                  </a>
+                ))}
+                {entry.links.length === 0 && <span className="muted tiny">—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted tiny">
+        Approximate total {rupees(result.bom.totalApproxPaise)}
+        {result.bom.incomplete && ' — some prices unknown'} · vendor links carry the configured
+        affiliate tag when one is set.
+      </p>
+    </section>
+  );
+}
 
 interface ToolchainStatus {
   node: string | null;
@@ -228,14 +351,19 @@ export default function BuildPage() {
 
   const canRun = graph.nodes.length > 0 && !running;
 
+  // Downloads unlock only when BOTH indicators pass (M4 #28).
+  // A build result persisted before M4 has no simulation block — treat the
+  // absence as "unlocked" rather than trapping the user with an old artifact.
+  const unlocked = result?.simulation ? result.simulation.downloadUnlocked : Boolean(result);
+
   const firmwareZip = async () => {
-    if (!result) return;
+    if (!result || !unlocked) return;
     await downloadZip(result.firmware.files, `${result.slug}-firmware.zip`);
     toast('Firmware zip downloaded — flash it with Arduino IDE or PlatformIO.');
   };
 
   const softwareZip = async () => {
-    if (!result) return;
+    if (!result || !unlocked) return;
     await downloadZip(result.software.files, `${result.slug}-software.zip`);
     toast('Software zip downloaded — npm install && npm run dev on your computer.');
   };
@@ -358,6 +486,29 @@ export default function BuildPage() {
 
       {result && (
         <>
+          {/* A result persisted by an older build has no simulation block. */}
+          {result.simulation && <ReadinessPanel result={result} />}
+
+          {/* Live browser bench: the generated diagram, rendered with real
+              Wokwi elements and clocked by an avr8js core running in-tab. */}
+          <WokwiBench
+            files={result.firmware.files}
+            samples={samplesFromLog(result.simulation?.hardware.log)}
+            provider={result.simulation?.hardware.provider}
+            hardwareReady={result.simulation?.hardware.ready}
+          />
+
+          {result.simulation && !unlocked && (
+            <div className="download-locked">
+              🔒 Downloads are locked: {result.simulation.hardware.errored
+                ? 'the hardware simulation provider errored'
+                : !result.simulation.hardware.ready
+                  ? 'hardware simulation failed'
+                  : 'the software gate failed'}
+              . Both indicators must read ✔ before the zips are released.
+            </div>
+          )}
+
           <section className="download-grid">
             <div className="download-card firmware">
               <div className="download-icon">⌘</div>
@@ -370,8 +521,14 @@ export default function BuildPage() {
                   <li key={file.path}>{file.path}</li>
                 ))}
               </ul>
-              <button type="button" className="primary-button wide" onClick={() => void firmwareZip()}>
-                ⬇ Download {result.slug}-firmware.zip
+              <button
+                type="button"
+                className="primary-button wide"
+                disabled={!unlocked}
+                title={unlocked ? '' : 'Locked until hardware AND software both report ready.'}
+                onClick={() => void firmwareZip()}
+              >
+                {unlocked ? '⬇' : '🔒'} Download {result.slug}-firmware.zip
               </button>
             </div>
 
@@ -387,8 +544,14 @@ export default function BuildPage() {
                 ))}
                 <li className="muted">… {result.software.files.length - 6} more in the zip</li>
               </ul>
-              <button type="button" className="primary-button wide" onClick={() => void softwareZip()}>
-                ⬇ Download {result.slug}-software.zip
+              <button
+                type="button"
+                className="primary-button wide"
+                disabled={!unlocked}
+                title={unlocked ? '' : 'Locked until hardware AND software both report ready.'}
+                onClick={() => void softwareZip()}
+              >
+                {unlocked ? '⬇' : '🔒'} Download {result.slug}-software.zip
               </button>
             </div>
           </section>
@@ -401,10 +564,25 @@ export default function BuildPage() {
               ))}
             </ol>
             <div className="engine-note">
-              engine: {result.engine === 'deterministic' ? 'Wireup deterministic synthesis (knowledge base)' : 'LLM draft + terminal gauntlet'}
+              plan: {result.llm.plan} · LLM provider that actually ran: {result.llm.actual}
+              {result.llm.note ? ` (${result.llm.note})` : ''}
+              {' · '}engine: {result.engine === 'deterministic' ? 'Wireup deterministic synthesis (knowledge base)' : 'LLM draft + terminal gauntlet'}
               {' · '}iterations: firmware {result.iterations.firmware}, software {result.iterations.software}
             </div>
           </section>
+
+          {result.instructions && (
+          <section className="admin-panel">
+            <h3>{result.instructions.path}</h3>
+            <p className="muted tiny">
+              Generated from this build's resolved plan — pins, parts, cadence and the verification
+              record for this run. It also ships inside the firmware zip.
+            </p>
+            <CodeBlock path={result.instructions.path} content={result.instructions.content} defaultOpen />
+          </section>
+          )}
+
+          {result.bom && <BomView result={result} />}
 
           <LiveDeviceCheck />
 

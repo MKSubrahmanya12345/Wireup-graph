@@ -247,6 +247,11 @@ export async function validateFirmware(
   // nothing about that JS — extract it from the raw string and node --check
   // it. The backend runs on node, so the checker always exists.
   for (const file of files) {
+    // Source files only. Artifacts that EMBED the sketch as data (the .vlx
+    // Velxio project carries it as a JSON string) contain the marker with
+    // JSON escaping, and matching the raw-string literal there would report a
+    // malformed dashboard that does not exist.
+    if (!/\.(ino|h|hpp|c|cc|cpp)$/i.test(file.path)) continue;
     if (!file.content.includes('WIREUP_HTML')) continue;
     const raw = file.content.match(/R"WIREUP_HTML\(([\s\S]*?)\)WIREUP_HTML"/)?.[1];
     const script = raw?.match(/<script>([\s\S]*?)<\/script>/)?.[1];

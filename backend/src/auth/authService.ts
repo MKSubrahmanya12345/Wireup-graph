@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { env } from '../config/env.js';
 import { ApiError } from '../middleware/errorHandler.js';
-import { getUserStore, type StoredUser } from './userStore.js';
+import { getUserStore, type StoredUser, type UserRole } from './userStore.js';
 
 /**
  * Wireup auth service — signup, login, token issuing and verification.
@@ -31,6 +31,7 @@ export interface PublicUser {
   id: string;
   name: string;
   email: string;
+  role: UserRole;
   createdAt: string;
 }
 
@@ -41,12 +42,18 @@ export interface AuthSession {
 }
 
 function toPublic(user: StoredUser): PublicUser {
-  return { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role ?? 'user',
+    createdAt: user.createdAt,
+  };
 }
 
 function issueToken(user: StoredUser): string {
   return jwt.sign(
-    { sub: user.id, email: user.email, name: user.name },
+    { sub: user.id, email: user.email, name: user.name, role: user.role ?? 'user' },
     env.JWT_SECRET,
     { expiresIn: env.AUTH_TOKEN_TTL_SECONDS },
   );
@@ -88,6 +95,7 @@ export interface TokenPayload {
   sub: string;
   email: string;
   name: string;
+  role?: UserRole;
   guest?: boolean;
 }
 
@@ -95,14 +103,14 @@ export interface TokenPayload {
 export function issueGuestSession(): AuthSession {
   const now = new Date().toISOString();
   const token = jwt.sign(
-    { sub: `guest-${crypto.randomUUID()}`, email: 'guest@wireup.local', name: 'Guest', guest: true },
+    { sub: `guest-${crypto.randomUUID()}`, email: 'guest@wireup.local', name: 'Guest', role: 'user', guest: true },
     env.JWT_SECRET,
     { expiresIn: env.AUTH_TOKEN_TTL_SECONDS },
   );
   return {
     token,
     expiresIn: env.AUTH_TOKEN_TTL_SECONDS,
-    user: { id: 'guest', name: 'Guest', email: 'guest@wireup.local', createdAt: now },
+    user: { id: 'guest', name: 'Guest', email: 'guest@wireup.local', role: 'user', createdAt: now },
   };
 }
 
