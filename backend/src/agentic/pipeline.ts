@@ -6,7 +6,11 @@ import { normaliseGraph } from '../schemas/architecture.js';
 import type { BuildFile, FirmwareResult } from '../schemas/build.js';
 import { generateFirmware as generateFirmwareLlm } from '../services/firmwareGenerator.js';
 import { firmwareResultSchema } from '../schemas/build.js';
-import { isLlmAvailable } from '../services/llmService.js';
+import { isLlmAvailable, resolveEffectiveProvider, type LlmProvider } from '../services/llmService.js';
+import { getHardwareSimProvider } from '../providers/sim/index.js';
+import type { SimResult } from '../providers/sim/types.js';
+import { buildBom } from './bom.js';
+import { buildInstructions } from './instructions.js';
 import { resolveBuildPlan, slugify } from './planResolver.js';
 import { retrievalSources } from './knowledge/retriever.js';
 import { synthesizeFirmware } from './firmwareSynth.js';
@@ -94,7 +98,28 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // ── Stage 2: firmware (generate → compile → repair) ─────────────────────
     emit({ type: 'stage', stage: 'firmware', title: 'Generating firmware' });
 
-    const llmAvailable = isLlmAvailable(input.provider);
+    // ── Tier gating (M2) ────────────────────────────────────────────────────
+    // The provider is chosen by the USER'S PLAN, not by a global env var.
+    // A client-supplied provider is honoured only as far as the plan allows:
+    // free tier can never reach the Gemini tier by asking nicely.
+    const userPlan: 'free' | 'pro' = input.userPlan ?? 'free';
+    const entitled: LlmProvider = userPlan === 'pro' ? 'gemini' : 'groq';
+    const requestedProvider: LlmProvider =
+      input.provider === 'bedrock' ? 'bedrock' : entitled;
+    const effective = resolveEffectiveProvider(requestedProvider);
+    const llmProvider: LlmProvider = effective.provider;
+    const llmNote = effective.fallbackFrom
+      ? `requested ${effective.fallbackFrom}, fell back to ${effective.provider} (${effective.reason})`
+      : undefined;
+    say(
+      'firmware',
+      `plan: ${userPlan} → entitled provider: ${requestedProvider}; provider that will run: ${llmProvider}${llmNote ? ` — ${llmNote}` : ''}`,
+      effective.fallbackFrom ? 'warn' : 'info',
+    );
+
+    const llmAvailable = isLlmAvailable(llmProvider);
+    // What actually generated the artifacts, recorded per build.
+    let actualLlmProvider = 'none (deterministic knowledge-base engine)';
     let firmware: FirmwareResult = synthesizeFirmware(plan);
     let firmwareSource: 'deterministic' | 'llm-assisted' = 'deterministic';
 
@@ -108,15 +133,16 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
 
     if (llmAvailable) {
       try {
-        say('firmware', `${input.provider ?? env.LLM_PROVIDER} available — asking the LLM for a first draft (it still has to survive the compiler).`);
+        say('firmware', `${llmProvider} available — asking the LLM for a first draft (it still has to survive the compiler).`);
         const draft = await generateFirmwareLlm(brief, projectName, graphParsed, {
-          provider: input.provider,
+          provider: llmProvider,
           model: input.model,
           jsonContract: { endpoint: '/api/sensors', fields: expectedJsonFields },
         });
         firmware = firmwareResultSchema.parse(draft);
         firmwareSource = 'llm-assisted';
-        say('firmware', `LLM draft: ${firmware.files.length} file(s) for ${firmware.board}`);
+        actualLlmProvider = llmProvider;
+        say('firmware', `LLM draft came back from ${llmProvider}: ${firmware.files.length} file(s) for ${firmware.board}`, 'ok');
       } catch (error) {
         say('firmware', `LLM draft unavailable (${error instanceof Error ? error.message : String(error)}) — using the knowledge-base synthesiser.`, 'warn');
         firmwareSource = 'deterministic';
@@ -129,11 +155,11 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     const revision = input.revisionInstruction?.trim();
     if (revision) {
       emit({ type: 'stage', stage: 'firmware-revise', title: 'Applying requested change' });
-      if (!isLlmAvailable(input.provider)) {
+      if (!isLlmAvailable(llmProvider)) {
         say('firmware-revise', `Cannot apply change ("${revision.slice(0, 80)}") without an LLM key — building the unmodified plan instead.`, 'warn');
       } else {
         const revised = await reviseFirmwareWithLlm(firmware, revision, plan, {
-          provider: input.provider,
+          provider: llmProvider,
           model: input.model,
         });
         if (revised) {
@@ -200,15 +226,16 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         }
 
         // Layer 2: the model reads the real diagnostics and edits the code.
-        if (!next && isLlmAvailable(input.provider)) {
+        if (!next && isLlmAvailable(llmProvider)) {
           const llmRepair = await repairFirmwareWithLlm(firmware, firmwareReport.findings, plan, {
-            provider: input.provider,
+            provider: llmProvider,
             model: input.model,
             expectedJsonFields,
           });
           if (llmRepair) {
             next = llmRepair.firmware;
             firmwareSource = 'llm-assisted';
+            actualLlmProvider = llmProvider;
             repairNote = `LLM patch from diagnostics — ${llmRepair.summary} (${llmRepair.applied.length} edit(s) applied${llmRepair.skipped.length ? `, ${llmRepair.skipped.length} rejected` : ''})`;
           }
         }
@@ -339,6 +366,92 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       return;
     }
 
+    // ── Stage 5: hardware simulation (M4) ───────────────────────────────────
+    // Two INDEPENDENT verdicts come out of this stage:
+    //   hardware ready — the HardwareSimProvider (mock virtual bench, or
+    //                    Velxio when SIM_MODE=velxio) ran the resolved plan;
+    //   software ready — npm install / tsc / vite / runtime smoke test and
+    //                    the firmware⇄software contract, all already run.
+    // Neither is inferred from the other, and a simulator that ERRORS is
+    // reported as an error — never silently treated as a pass or a skip.
+    emit({ type: 'stage', stage: 'simulate', title: 'Simulating the hardware' });
+    const simProvider = getHardwareSimProvider();
+    say('simulate', `provider: ${simProvider.describe()}`);
+    let hardwareSim: SimResult;
+    try {
+      hardwareSim = await simProvider.runSim(plan);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      hardwareSim = {
+        provider: simProvider.mode,
+        ok: false,
+        errored: true,
+        checks: [{ name: 'simulator invocation', ok: false, detail: message }],
+        log: [`sim provider threw: ${message}`],
+        durationMs: 0,
+      };
+    }
+    for (const line of hardwareSim.log) say('simulate', line, hardwareSim.ok ? 'info' : 'warn');
+    for (const check of hardwareSim.checks) {
+      say('simulate', `  ${check.ok ? '✔' : '✘'} ${check.name} — ${check.detail}`, check.ok ? 'ok' : 'error');
+    }
+    if (hardwareSim.errored) {
+      say(
+        'simulate',
+        `SIMULATOR ERROR (${hardwareSim.provider}) — hardware readiness cannot be proven, downloads stay locked. This is an error, not a skip.`,
+        'error',
+      );
+    } else {
+      say('simulate', `hardware ready: ${hardwareSim.ok ? '✔ pass' : '✘ fail'}`, hardwareSim.ok ? 'ok' : 'error');
+    }
+
+    const softwareReady = softwareReport.ok && consistency.ok;
+    say('simulate', `software ready: ${softwareReady ? '✔ pass' : '✘ fail'} (npm · tsc · vite · runtime smoke · contract)`, softwareReady ? 'ok' : 'error');
+
+    const simulation = {
+      hardware: {
+        provider: hardwareSim.provider,
+        ready: hardwareSim.ok && !hardwareSim.errored,
+        errored: hardwareSim.errored,
+        checks: hardwareSim.checks,
+        log: hardwareSim.log,
+        durationMs: hardwareSim.durationMs,
+        runUrl: hardwareSim.runUrl,
+      },
+      software: {
+        ready: softwareReady,
+        checks: [...softwareReport.checks, ...consistency.checks],
+        detail: softwareReady
+          ? 'npm install, tsc --noEmit, vite build, runtime smoke test and the firmware⇄software contract all passed'
+          : 'the software gate did not pass',
+      },
+      downloadUnlocked: hardwareSim.ok && !hardwareSim.errored && softwareReady,
+    };
+
+    // ── Stage 6: per-build instructions + BOM (M5) ──────────────────────────
+    emit({ type: 'stage', stage: 'package', title: 'Writing per-build instructions and BOM' });
+    const bom = buildBom(plan);
+    const instructionsContent = buildInstructions({
+      plan,
+      firmware,
+      bom,
+      hardwareSim,
+      softwareReady,
+      softwareFileCount: software.files.length,
+    });
+    const instructionsPath = `INSTRUCTIONS-${slug}.md`;
+    // Ship the instructions inside the firmware zip too, so the document
+    // travels with the build rather than living only in the browser.
+    firmware = firmwareResultSchema.parse({
+      ...firmware,
+      files: [
+        ...firmware.files.filter((file) => file.path !== instructionsPath),
+        { path: instructionsPath, content: instructionsContent },
+      ],
+    });
+    say('package', `instructions: ${instructionsPath} (${instructionsContent.length} chars, generated from this build's plan)`, 'ok');
+    say('package', `BOM: ${bom.entries.length} line item(s), ${bom.entries.reduce((n, e) => n + e.links.length, 0)} purchase link(s)`, 'ok');
+
     // ── Done ────────────────────────────────────────────────────────────────
     result = {
       projectName,
@@ -358,7 +471,23 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         software: softwareReport,
         consistency,
       },
+      llm: {
+        plan: userPlan,
+        requested: requestedProvider,
+        actual: actualLlmProvider,
+        note: llmNote,
+      },
+      simulation,
+      instructions: { path: instructionsPath, content: instructionsContent },
+      bom,
     };
+
+    // The single line an operator can grep for: which provider actually ran.
+    say(
+      'done',
+      `LLM provider that actually ran for this build: ${actualLlmProvider} (plan ${userPlan}, entitled ${requestedProvider}${llmNote ? `; ${llmNote}` : ''})`,
+      'ok',
+    );
 
     say('done', `pipeline complete in ${((Date.now() - t0) / 1000).toFixed(1)} s — firmware ⇢ ${firmwareIterations} iteration(s), software ⇢ ${softwareIterations} iteration(s)`, 'ok');
     emit({ type: 'result', result });

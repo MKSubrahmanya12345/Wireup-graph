@@ -283,6 +283,28 @@ function collectConverseText(blocks: Array<{ text?: string }>): string | undefin
   return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
+/**
+ * Which provider will ACTUALLY run for a requested one, after fallbacks.
+ *
+ * The pipeline calls this to log "provider X ran for this build" honestly —
+ * asking for Gemini without a key silently becoming Groq is exactly the kind
+ * of thing that must be visible in the build log.
+ */
+export function resolveEffectiveProvider(requested: LlmProvider): {
+  provider: LlmProvider;
+  fallbackFrom?: LlmProvider;
+  reason?: string;
+} {
+  if (requested === 'gemini' && !env.GEMINI_API_KEY) {
+    return {
+      provider: 'groq',
+      fallbackFrom: 'gemini',
+      reason: 'GEMINI_API_KEY is not configured',
+    };
+  }
+  return { provider: requested };
+}
+
 /** Handles bare JSON, fenced JSON, and JSON wrapped in prose. */
 export function extractJson(content: string): unknown {
   const trimmed = content.trim();

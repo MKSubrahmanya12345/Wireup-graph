@@ -32,6 +32,18 @@ export interface KnowledgePort {
   direction: 'in' | 'out' | 'bidirectional';
 }
 
+/**
+ * A place to buy the part. `url` may carry an affiliate tag — the tag itself
+ * lives in AFFILIATE_TAGS below (env-overridable) so links are never hard
+ * coded per part and can be changed in one place.
+ */
+export interface PurchaseLink {
+  vendor: string;
+  /** Search/product URL, before the affiliate tag is appended. */
+  url: string;
+  note?: string;
+}
+
 export interface DeviceKnowledge {
   id: string;
   name: string;
@@ -51,6 +63,29 @@ export interface DeviceKnowledge {
   libraries: { name: string; source: string }[];
   firmwareNotes: string[];
   wiringNotes: string[];
+  /** Where to buy it (BOM view renders these with the affiliate tag applied). */
+  purchase?: PurchaseLink[];
+  /** Typical street price, in paise, for BOM budgeting. 0 = unknown. */
+  approxPricePaise?: number;
+}
+
+/**
+ * Affiliate tags, per vendor. Override with env vars (AFFILIATE_TAG_AMAZON,
+ * AFFILIATE_TAG_ROBU, AFFILIATE_TAG_DIGIKEY) — no key means the plain
+ * product link is rendered, never a broken one.
+ */
+export const AFFILIATE_TAGS: Record<string, { param: string; value: string | undefined }> = {
+  Amazon: { param: 'tag', value: process.env.AFFILIATE_TAG_AMAZON },
+  Robu: { param: 'ref', value: process.env.AFFILIATE_TAG_ROBU },
+  DigiKey: { param: 'utm_source', value: process.env.AFFILIATE_TAG_DIGIKEY },
+};
+
+/** Append the vendor's affiliate tag when one is configured. */
+export function withAffiliateTag(link: PurchaseLink): string {
+  const tag = AFFILIATE_TAGS[link.vendor];
+  if (!tag?.value) return link.url;
+  const separator = link.url.includes('?') ? '&' : '?';
+  return `${link.url}${separator}${tag.param}=${encodeURIComponent(tag.value)}`;
 }
 
 export const BOARD_PROFILES: BoardProfile[] = [
@@ -134,6 +169,12 @@ export const BOARD_PROFILES: BoardProfile[] = [
 export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   {
     id: 'dht22',
+    approxPricePaise: 39900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=DHT22+AM2302+temperature+humidity+sensor+module', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=DHT22+AM2302+temperature+humidity+sensor+module', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=DHT22+AM2302+temperature+humidity+sensor+module', note: 'authentic parts, worldwide' },
+    ],
     name: 'DHT22 (AM2302) Temperature & Humidity Sensor',
     partNumber: 'AM2302/DHT22',
     manufacturer: 'Aosong Electronics',
@@ -174,6 +215,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'dht11',
+    approxPricePaise: 12900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=DHT11+temperature+humidity+sensor+module', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=DHT11+temperature+humidity+sensor+module', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=DHT11+temperature+humidity+sensor+module', note: 'authentic parts, worldwide' },
+    ],
     name: 'DHT11 Temperature & Humidity Sensor',
     partNumber: 'DHT11',
     manufacturer: 'Aosong Electronics',
@@ -204,6 +251,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'bme280',
+    approxPricePaise: 44900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=BME280+temperature+humidity+pressure+I2C+module', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=BME280+temperature+humidity+pressure+I2C+module', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=BME280+temperature+humidity+pressure+I2C+module', note: 'authentic parts, worldwide' },
+    ],
     name: 'BME280 Pressure, Temperature & Humidity Sensor',
     partNumber: 'BME280',
     manufacturer: 'Bosch Sensortec',
@@ -236,6 +289,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'ds18b20',
+    approxPricePaise: 19900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=DS18B20+waterproof+temperature+probe', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=DS18B20+waterproof+temperature+probe', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=DS18B20+waterproof+temperature+probe', note: 'authentic parts, worldwide' },
+    ],
     name: 'DS18B20 1-Wire Temperature Sensor',
     partNumber: 'DS18B20',
     manufacturer: 'Analog Devices / Maxim',
@@ -262,6 +321,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'soil-moisture',
+    approxPricePaise: 17900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=capacitive+soil+moisture+sensor+v1.2', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=capacitive+soil+moisture+sensor+v1.2', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=capacitive+soil+moisture+sensor+v1.2', note: 'authentic parts, worldwide' },
+    ],
     name: 'Capacitive Soil Moisture Sensor (analog)',
     partNumber: 'CAP-SOIL-V1.2',
     manufacturer: 'Generic',
@@ -285,6 +350,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'relay-1ch',
+    approxPricePaise: 9900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=1+channel+5V+relay+module+optocoupler', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=1+channel+5V+relay+module+optocoupler', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=1+channel+5V+relay+module+optocoupler', note: 'authentic parts, worldwide' },
+    ],
     name: 'Single-Channel Relay Module',
     partNumber: 'RELAY-1CH-5V',
     manufacturer: 'Generic',
@@ -314,6 +385,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'servo-sg90',
+    approxPricePaise: 12900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=SG90+micro+servo+9g', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=SG90+micro+servo+9g', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=SG90+micro+servo+9g', note: 'authentic parts, worldwide' },
+    ],
     name: 'SG90 Micro Servo',
     partNumber: 'SG90',
     manufacturer: 'TowerPro',
@@ -339,6 +416,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'led-indicator',
+    approxPricePaise: 9900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=5mm+LED+assorted+with+220+ohm+resistors', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=5mm+LED+assorted+with+220+ohm+resistors', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=5mm+LED+assorted+with+220+ohm+resistors', note: 'authentic parts, worldwide' },
+    ],
     name: 'Status LED',
     partNumber: 'LED-5MM',
     manufacturer: 'Generic',
@@ -363,6 +446,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'ssd1306',
+    approxPricePaise: 29900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=SSD1306+0.96+inch+OLED+I2C+display', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=SSD1306+0.96+inch+OLED+I2C+display', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=SSD1306+0.96+inch+OLED+I2C+display', note: 'authentic parts, worldwide' },
+    ],
     name: 'SSD1306 0.96" OLED Display (I2C)',
     partNumber: 'SSD1306-128X64-I2C',
     manufacturer: 'Solomon Systech',
@@ -387,6 +476,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'mq2-gas',
+    approxPricePaise: 19900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=MQ-2+gas+smoke+sensor+module', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=MQ-2+gas+smoke+sensor+module', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=MQ-2+gas+smoke+sensor+module', note: 'authentic parts, worldwide' },
+    ],
     name: 'MQ-2 Gas / Smoke Sensor',
     partNumber: 'MQ-2',
     manufacturer: 'Hanwei Electronics',
@@ -410,6 +505,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'hcsr04',
+    approxPricePaise: 9900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=HC-SR04+ultrasonic+distance+sensor', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=HC-SR04+ultrasonic+distance+sensor', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=HC-SR04+ultrasonic+distance+sensor', note: 'authentic parts, worldwide' },
+    ],
     name: 'HC-SR04 Ultrasonic Distance Sensor',
     partNumber: 'HC-SR04',
     manufacturer: 'Generic',
@@ -434,6 +535,12 @@ export const DEVICE_KNOWLEDGE: DeviceKnowledge[] = [
   },
   {
     id: 'pir-hcsr501',
+    approxPricePaise: 11900,
+    purchase: [
+      { vendor: 'Amazon', url: 'https://www.amazon.in/s?k=HC-SR501+PIR+motion+sensor+module', note: 'fastest delivery in India' },
+      { vendor: 'Robu', url: 'https://robu.in/?s=HC-SR501+PIR+motion+sensor+module', note: 'hobby-electronics specialist' },
+      { vendor: 'DigiKey', url: 'https://www.digikey.com/en/products/result?keywords=HC-SR501+PIR+motion+sensor+module', note: 'authentic parts, worldwide' },
+    ],
     name: 'HC-SR501 PIR Motion Sensor',
     partNumber: 'HC-SR501',
     manufacturer: 'Generic',

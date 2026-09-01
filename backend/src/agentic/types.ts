@@ -46,6 +46,27 @@ export type BuildEvent =
   | { type: 'result'; result: AgenticBuildResult }
   | { type: 'error'; message: string };
 
+/** What the two independent readiness indicators on page 03 are built from. */
+export interface BuildSimulationSummary {
+  hardware: {
+    provider: string;
+    ready: boolean;
+    /** True when the SIMULATOR failed, not the circuit. Never silently skipped. */
+    errored: boolean;
+    checks: { name: string; ok: boolean; detail: string }[];
+    log: string[];
+    durationMs: number;
+    runUrl?: string;
+  };
+  software: {
+    ready: boolean;
+    checks: { name: string; ok: boolean; detail: string }[];
+    detail: string;
+  };
+  /** Downloads unlock only when both are true. */
+  downloadUnlocked: boolean;
+}
+
 export interface AgenticBuildResult {
   projectName: string;
   slug: string;
@@ -64,6 +85,13 @@ export interface AgenticBuildResult {
     software: ValidationReport;
     consistency: ValidationReport;
   };
+  /** Which LLM provider actually ran for this build (after any fallback). */
+  llm: { plan: 'free' | 'pro'; requested: string; actual: string; note?: string };
+  simulation: BuildSimulationSummary;
+  /** Per-build instructions, generated from this build's resolved plan. */
+  instructions: { path: string; content: string };
+  /** BOM with purchase links for this exact build. */
+  bom: import('./bom.js').Bom;
 }
 
 /** The resolved, build-ready device model the generators consume. */
@@ -146,6 +174,14 @@ export interface DeviceControlSpec {
 
 export interface PipelineInput {
   brief: string;
+  /**
+   * The paying tier of the human who started this build. The LLM provider is
+   * selected from THIS, not from a global env var: free → Groq, pro → Gemini
+   * (falling back to Groq, loudly, when no Gemini key exists).
+   */
+  userPlan?: 'free' | 'pro';
+  userId?: string;
+  userEmail?: string;
   projectName?: string;
   graph: ArchitectureGraph;
   provider?: 'groq' | 'bedrock' | 'gemini';
