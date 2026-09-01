@@ -53,6 +53,14 @@ export default function TopNav() {
           <i className={`live-dot${stage === 'planning' || stage === 'interpreting' ? ' busy' : ''}`} />
           {nodeCount > 0 ? `${project} · ${nodeCount} nodes` : 'No design yet'}
         </span>
+        <NavLink to="/billing" className="ghost-button small as-link">
+          Plan
+        </NavLink>
+        {user?.role === 'admin' && (
+          <NavLink to="/admin" className="ghost-button small as-link">
+            Admin
+          </NavLink>
+        )}
         {user && (
           <div className="user-chip">
             <span className="user-avatar" aria-hidden="true">

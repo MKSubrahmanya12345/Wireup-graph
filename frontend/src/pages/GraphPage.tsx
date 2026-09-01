@@ -32,6 +32,7 @@ import ValidationDock from '../components/ValidationDock';
 import CodeBlock from '../components/CodeBlock';
 import { exportGraphPng, getViewportElement } from '../lib/exporters';
 import { toFlowNodes } from '../lib/graphAdapter';
+import { evaluateGraphValidity } from '../lib/graphValidity';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import { toast } from '../store/useToastStore';
@@ -48,6 +49,7 @@ export default function GraphPage() {
   const status = useGraphStore((state) => state.status);
   const blocking = useGraphStore((state) => state.blocking);
   const issues = useGraphStore((state) => state.issues);
+  const verification = useGraphStore((state) => state.verification);
   const autoRepair = useGraphStore((state) => state.autoRepair);
   const stage = useDesignSession((state) => state.stage);
   const revise = useDesignSession((state) => state.revise);
@@ -97,8 +99,10 @@ export default function GraphPage() {
   };
 
   const handleAccept = () => {
-    if (blocking) {
-      toast('Blocking engineering issues must be resolved before the build.');
+    // Same check page 01's "Complete" button uses — one implementation.
+    const validity = evaluateGraphValidity({ graph, issues, blocking, verification });
+    if (!validity.valid) {
+      toast(validity.reason);
       return;
     }
     accept();

@@ -972,3 +972,77 @@ button { font-family: inherit; }
 
 /* ── Guest button on the auth page ───────────────────────────────────────── */
 .ghost-button.auth-submit { width: 100%; margin-top: 8px; }
+
+/* ── Admin console / billing / readiness (M1, M3, M4, M5) ─────────────────── */
+.admin-adapters { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.admin-tabs { margin: 8px 0 14px; }
+.admin-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 18px;
+  overflow-x: auto;
+}
+.admin-panel h3 { margin: 4px 0 12px; font-size: 15px; color: var(--ink-soft); }
+.admin-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.admin-metric {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px;
+}
+.admin-metric strong { font-size: 22px; }
+.admin-metric-label { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-table th {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.admin-table td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.admin-table code { font: 500 11px var(--mono); color: var(--cyan); }
+.admin-table + h3 { margin-top: 22px; }
+
+.inline-note {
+  border: 1px solid var(--cyan-dim); background: #22d3ee10; color: var(--ink-soft);
+  border-radius: 12px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
+}
+
+/* Readiness indicators on page 03 */
+.readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 16px 0; }
+.readiness-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); padding: 16px;
+}
+.readiness-card.ok { border-color: #34d39955; }
+.readiness-card.bad { border-color: #f8717155; }
+.readiness-card.errored { border-color: var(--orange); background: #fb923c12; }
+.readiness-head { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+.readiness-head .glyph { font-size: 18px; }
+.readiness-card.ok .glyph { color: var(--green); }
+.readiness-card.bad .glyph, .readiness-card.errored .glyph { color: var(--red); }
+.readiness-log {
+  margin-top: 10px; max-height: 190px; overflow: auto;
+  font: 500 11.5px var(--mono); color: var(--ink-soft);
+  background: var(--bg-raise); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+  white-space: pre-wrap;
+}
+.download-locked {
+  border: 1px dashed var(--orange); color: var(--orange);
+  border-radius: 12px; padding: 12px 14px; margin: 10px 0; font-size: 13px;
+}
+
+/* BOM view */
+.bom-links a { color: var(--cyan); margin-right: 10px; font-size: 12px; }
+
+/* Page 01 — 3D preview + complete gate */
+.intake-3d {
+  margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden;
+}
+.intake-3d-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  font: 600 12px var(--mono); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .06em;
+}
+.complete-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.complete-bar .reason { font-size: 12.5px; color: var(--muted); }

@@ -9,7 +9,19 @@ import type {
   Question,
   RequirementsSpec,
 } from '../types/session';
-import type { AgenticEvent, AuthSession, BuildFile } from '../types/build';
+import type {
+  AdminOverview,
+  AdminUser,
+  AgenticEvent,
+  AuthSession,
+  BuildFile,
+  CheckoutOutcome,
+  PaymentRecord,
+  Plan,
+  Subscription,
+  UsageEvent,
+  WebhookLogEntry,
+} from '../types/build';
 
 /** Vite dev-server proxies /api to the backend, so this stays relative. */
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
@@ -170,6 +182,33 @@ export const api = {
     request<AuthSession>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
 
   me: () => request<{ user: AuthSession['user'] }>('/auth/me'),
+
+  // ── Billing ───────────────────────────────────────────────────────────────
+  plans: () => request<{ plans: Plan[]; provider: string; pricingPending: boolean }>('/billing/plans'),
+
+  checkout: (plan: string) =>
+    request<CheckoutOutcome>('/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ plan }),
+    }),
+
+  subscription: () =>
+    request<{ plan: 'free' | 'pro'; provider: string; subscriptions: Subscription[] }>(
+      '/billing/subscription',
+    ),
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
+  adminOverview: () => request<AdminOverview>('/admin/overview'),
+  adminUsers: () => request<{ users: AdminUser[] }>('/admin/users'),
+  adminSetRole: (id: string, role: 'admin' | 'user') =>
+    request<{ id: string; role: string }>(`/admin/users/${id}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    }),
+  adminPayments: () =>
+    request<{ payments: PaymentRecord[]; subscriptions: Subscription[] }>('/admin/payments'),
+  adminUsage: () => request<{ usage: UsageEvent[] }>('/admin/usage'),
+  adminWebhooks: () => request<{ webhooks: WebhookLogEntry[] }>('/admin/webhooks'),
 };
 /**
  * Stream the agentic build: POST + NDJSON reader, one callback per event.

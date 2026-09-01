@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import IntakeScene from '../three/IntakeScene';
+import { evaluateGraphValidity } from '../lib/graphValidity';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { Question } from '../types/session';
@@ -40,17 +42,23 @@ export default function IntakePage() {
   const revision = useDesignSession((state) => state.revision);
   const setLlmOptions = useDesignSession((state) => state.setLlmOptions);
   const nodeCount = useGraphStore((state) => state.graph.nodes.length);
+  const graph = useGraphStore((state) => state.graph);
+  const issues = useGraphStore((state) => state.issues);
+  const blocking = useGraphStore((state) => state.blocking);
+  const verification = useGraphStore((state) => state.verification);
 
   const busy = stage === 'interpreting' || stage === 'planning';
+
+  // The SAME validity check page 02 gates its build button with (M3 #22).
+  const validity = evaluateGraphValidity({ graph, issues, blocking, verification });
 
   // LLM provider/model selection
   const [provider, setProvider] = useState<LlmProvider>('groq');
   const [model, setModel] = useState<string>(LLM_PROVIDER_OPTIONS[0].models[0]);
 
-  // Planned → land on the graph page.
-  useEffect(() => {
-    if (stage === 'reviewing' && nodeCount > 0) navigate('/graph');
-  }, [stage, nodeCount, navigate]);
+  // The graph used to auto-navigate the moment it existed. It no longer does:
+  // page 01 now owns an explicit "Complete" gate (M3) that only enables once
+  // the graph passes the very same validity check page 02 applies.
 
   const handleProviderChange = (newProvider: LlmProvider) => {
     setProvider(newProvider);
@@ -219,6 +227,31 @@ export default function IntakePage() {
           )}
         </section>
       )}
+
+      {/* ── 3D bench + the Complete gate (M3) ──────────────────────────────── */}
+      <IntakeScene brief={brief} answers={answers} />
+
+      <div className="complete-bar">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={!validity.valid}
+          title={validity.valid ? 'Graph is valid — continue to page 02' : validity.reason}
+          onClick={() => {
+            if (!validity.valid) return;
+            navigate('/graph');
+          }}
+        >
+          Complete →
+        </button>
+        <span className={`verdict-pill ${validity.valid ? 'good' : nodeCount > 0 ? 'bad' : 'neutral'}`}>
+          {validity.valid ? '✔ graph valid' : '⛔ graph invalid'}
+        </span>
+        <span className="reason">
+          {validity.reason}
+          {nodeCount === 0 && ' Run “Analyze my build” to resolve the graph.'}
+        </span>
+      </div>
     </div>
   );
 }
