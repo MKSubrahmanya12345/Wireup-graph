@@ -28,6 +28,8 @@ import WokwiBench from '../components/WokwiBench';
 import { samplesFromLog } from '../sim/diagram';
 import { api, type SimConfig } from '../services/api';
 import { useBuildStore } from '../store/useBuildStore';
+import { useVelxioBridge } from '../lib/velxioBridge';
+import { applyCanvasToArtifacts } from '../lib/vlxSync';
 import {
   chooseEngine,
   previewBlockedReason,
@@ -57,6 +59,23 @@ function downloadText(filename: string, content: string): void {
 
 export default function SimPage() {
   const result = useBuildStore((state) => state.result);
+  const loadResult = useBuildStore((state) => state.loadResult);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
+
+  /** Empty-state escape hatch: pull the pre-baked weather-station demo. */
+  const loadDemo = useCallback(async () => {
+    setDemoBusy(true);
+    setDemoError(null);
+    try {
+      const { result: demoResult } = await api.demoBuild();
+      loadResult(demoResult);
+    } catch (err) {
+      setDemoError(err instanceof Error ? err.message : 'Could not load the demo project.');
+    } finally {
+      setDemoBusy(false);
+    }
+  }, [loadResult]);
   const [params, setParams] = useSearchParams();
   const [config, setConfig] = useState<SimConfig | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -92,6 +111,46 @@ export default function SimPage() {
   const vlx = useMemo(() => velxioArtifact(result), [result]);
   const preview = useMemo(() => previewTarget(result), [result]);
   const samples = useMemo(() => samplesFromLog(result?.simulation?.hardware.log), [result]);
+
+  // ── Bidirectional canvas bridge (embedded Velxio only) ────────────────────
+  // Push: the build's .vlx lands on the canvas the moment the iframe is
+  // ready. Pull: canvas edits are folded back into THIS build's diagram.json
+  // (and .vlx) so the artifacts and the canvas never silently disagree.
+  const applyFileUpdates = useBuildStore((state) => state.applyFileUpdates);
+  const bridge = useVelxioBridge(engine === 'velxio' ? velxioUrl : null, vlx?.content ?? null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+
+  const pullCanvas = useCallback(async () => {
+    if (!result) return;
+    try {
+      const payload = await bridge.pull();
+      const sync = applyCanvasToArtifacts(payload, result.firmware.files);
+      if (!sync) {
+        setSyncNote('This build has no diagram.json/.vlx to sync into.');
+        return;
+      }
+      applyFileUpdates(sync.updates);
+      setSyncNote(`Synced: ${sync.summary}. diagram.json, universal-diagram.json and the .vlx now match the canvas.`);
+    } catch (error) {
+      setSyncNote(error instanceof Error ? error.message : 'Pulling the canvas failed.');
+    }
+  }, [bridge, result, applyFileUpdates]);
+
+  const bridgeLabel = (() => {
+    switch (bridge.status.state) {
+      case 'waiting':
+        return 'canvas: waiting for Velxio… (needs the embed-bridge patch)';
+      case 'ready':
+        return 'canvas: connected';
+      case 'pushed':
+        return `canvas: this build is loaded${bridge.status.name ? ` (“${bridge.status.name}”)` : ''}`;
+      case 'error':
+        return `canvas: ${bridge.status.message}`;
+      default:
+        return null;
+    }
+  })();
+
 
   return (
     <div className="sim-page">
@@ -155,6 +214,16 @@ export default function SimPage() {
                     {engine === 'velxio' ? 'Use the browser bench' : 'Use the Velxio instance'}
                   </button>
                 )}
+                {engine === 'velxio' && vlx && (
+                  <button type="button" onClick={() => bridge.push(vlx.content)}>
+                    ⤒ Push build → canvas
+                  </button>
+                )}
+                {engine === 'velxio' && result && (
+                  <button type="button" onClick={() => void pullCanvas()}>
+                    ⤓ Pull canvas → diagram.json
+                  </button>
+                )}
                 {vlx && (
                   <button type="button" onClick={() => downloadText(vlx.filename, vlx.content)}>
                     ⬇ {vlx.filename}
@@ -174,12 +243,21 @@ export default function SimPage() {
             </div>
 
             {engine === 'velxio' && velxioUrl ? (
-              <iframe
-                className="sim-frame"
-                src={velxioUrl}
-                title="Velxio emulator"
-                allow="clipboard-write; fullscreen; serial; usb"
-              />
+              <>
+                <iframe
+                  ref={bridge.frameRef}
+                  className="sim-frame"
+                  src={`${velxioUrl.replace(/\/$/, '')}/editor`}
+                  title="Velxio emulator"
+                  allow="clipboard-write; fullscreen; serial; usb"
+                />
+                {(bridgeLabel || syncNote) && (
+                  <p className="sim-foot tiny muted">
+                    {bridgeLabel}
+                    {syncNote ? ` · ${syncNote}` : ''}
+                  </p>
+                )}
+              </>
             ) : result ? (
               <WokwiBench
                 files={result.firmware.files}
@@ -200,6 +278,12 @@ export default function SimPage() {
                   build on <Link to="/build">page 03</Link> and come back — the result is kept in
                   this browser.
                 </p>
+                <p>
+                  <button type="button" className="demo-jump-btn" onClick={() => void loadDemo()} disabled={demoBusy}>
+                    {demoBusy ? 'Loading the demo project…' : '⚡ Or load the demo weather station'}
+                  </button>
+                </p>
+                {demoError && <p className="tiny" style={{ color: 'var(--red)' }}>{demoError}</p>}
               </div>
             )}
 

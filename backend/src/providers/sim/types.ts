@@ -21,6 +21,18 @@ export interface SimCheck {
   detail: string;
 }
 
+/**
+ * What the pipeline hands the simulator alongside the plan: the actual
+ * generated firmware artifacts. The real (Velxio) provider compiles and boots
+ * exactly these files — never a re-derivation that could drift from the zip
+ * the user downloads. The mock ignores them.
+ */
+export interface SimContext {
+  /** The firmware artifact set (paths like `firmware/<slug>.ino`, `firmware/config.h`). */
+  firmwareFiles?: { path: string; content: string }[];
+}
+
+
 export interface SimResult {
   provider: SimMode;
   /** True only when the simulated hardware actually behaved. */
@@ -39,5 +51,5 @@ export interface SimResult {
 export interface HardwareSimProvider {
   readonly mode: SimMode;
   describe(): string;
-  runSim(plan: DeviceBuildPlan): Promise<SimResult>;
+  runSim(plan: DeviceBuildPlan, context?: SimContext): Promise<SimResult>;
 }

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 
 import IntakeScene from '../three/IntakeScene';
 import { evaluateGraphValidity } from '../lib/graphValidity';
+import { api } from '../services/api';
+import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { Question } from '../types/session';
@@ -28,6 +30,25 @@ const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[
  */
 export default function IntakePage() {
   const navigate = useNavigate();
+  const loadResult = useBuildStore((state) => state.loadResult);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
+
+  /** One click: fetch the pre-baked weather-station project → land on /sim. */
+  const jumpToDemo = async () => {
+    setDemoBusy(true);
+    setDemoError(null);
+    try {
+      const { result } = await api.demoBuild();
+      loadResult(result);
+      navigate('/sim');
+    } catch (err) {
+      setDemoError(err instanceof Error ? err.message : 'Could not load the demo project.');
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+
   const stage = useDesignSession((state) => state.stage);
   const brief = useDesignSession((state) => state.brief);
   const setBrief = useDesignSession((state) => state.setBrief);
@@ -79,6 +100,16 @@ export default function IntakePage() {
           device knowledge base, asks only what it genuinely can't decide, then takes
           you to the graph.
         </p>
+        <div className="demo-jump">
+          <button type="button" className="demo-jump-btn" onClick={() => void jumpToDemo()} disabled={demoBusy}>
+            {demoBusy ? 'Loading the demo project…' : '⚡ Skip the pipeline — demo weather station → simulator'}
+          </button>
+          <span className="tiny muted">
+            Pre-baked: “esp32 + bme280 weather station logging to a website i can open at home”.
+            Lands you on page 04 with the circuit, the code and the live website.
+          </span>
+          {demoError && <span className="tiny bad">{demoError}</span>}
+        </div>
       </section>
 
       <section className="composer-card">

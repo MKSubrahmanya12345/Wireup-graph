@@ -24,9 +24,13 @@ interface BuildState {
   error: string | null;
   abort: AbortController | null;
 
-  run: () => Promise<void>;
+  run: (options?: { provider?: string; model?: string }) => Promise<void>;
   cancel: () => void;
   clear: () => void;
+  /** Fold canvas edits (pulled from the embedded Velxio) into the artifacts. */
+  applyFileUpdates: (updates: { path: string; content: string }[]) => void;
+  /** Load a ready-made result (the demo project) as if a build had just run. */
+  loadResult: (result: AgenticBuildResult) => void;
 }
 
 let lineId = 0;
@@ -176,6 +180,25 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
   clear: () => {
     clearPersisted(BUILD_PERSIST_KEY);
     set({ lines: [], reports: {}, result: null, error: null });
+  },
+
+  applyFileUpdates: (updates) => {
+    const { result } = get();
+    if (!result || updates.length === 0) return;
+    const byPath = new Map(updates.map((update) => [update.path, update.content]));
+    const files = result.firmware.files.map((file) =>
+      byPath.has(file.path) ? { ...file, content: byPath.get(file.path)! } : file,
+    );
+    // The subscriber below persists this — canvas edits survive a refresh
+    // exactly like the original build result does.
+    set({ result: { ...result, firmware: { ...result.firmware, files } } });
+  },
+
+  loadResult: (result) => {
+    // Same shape a real build produces, so every downstream page (03, 04,
+    // downloads, Velxio push) works unchanged. The persistence subscriber
+    // makes it refresh-proof, exactly like a real result.
+    set({ result, error: null, reports: {} });
   },
 }));
 

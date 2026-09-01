@@ -36,7 +36,7 @@ describe('velxio project export', () => {
     assert.equal(project.boards[0].serialBaudRate, 115_200);
     // The board points at a file group that must exist and hold the sketch.
     const group = project.fileGroups[project.boards[0].activeFileGroupId];
-    assert.ok(Array.isArray(group) && group.length === 1);
+    assert.ok(Array.isArray(group) && group.length >= 1);
     assert.equal(group[0].name, 'sketch.ino');
     assert.match(group[0].content, /void setup\(\)/);
     assert.ok(Date.parse(project.exportedAt) > 0);
@@ -108,6 +108,13 @@ describe('velxio project export', () => {
     const ino = firmware.files.find((entry) => entry.path.endsWith(`${plan.slug}.ino`));
     const group = parsed.fileGroups[parsed.boards[0].activeFileGroupId];
     assert.equal(group[0].content, ino.content);
+    // Every project-local header the sketch #includes must travel with it —
+    // Velxio compiles only the group's files, so a missing config.h means the
+    // emulator cannot produce a runnable firmware at all.
+    const configFile = firmware.files.find((entry) => entry.path === 'firmware/config.h');
+    const shippedHeader = group.find((entry) => entry.name === 'config.h');
+    assert.ok(shippedHeader, 'config.h must ship inside the .vlx file group');
+    assert.equal(shippedHeader.content, configFile.content);
   });
 
   it('differs between two different devices', () => {

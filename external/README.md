@@ -44,19 +44,63 @@ How Wireup stays clear of that today:
   source**. The native simulator is built on `avr8js` and `@wokwi/elements`,
   both MIT, which Velxio also uses — common upstream, not copied code.
 - The submodule is a *reference to* an external work, not a derivative of it.
-- The integration is arm's-length: a file format (`.vlx`) and an iframe/HTTP
-  boundary (`VELXIO_URL`, `POST /simulate`).
+- The integration is arm's-length: a file format (`.vlx`), an iframe +
+  `postMessage` boundary, and Velxio's own public HTTP/WS API
+  (`/api/compile`, `/api/simulation/ws`).
+- `patches/velxio-embed-bridge.patch` is a modification **to Velxio itself**
+  (it adds a postMessage import/export bridge). It is published right here in
+  full, which satisfies AGPL for your own use; if you run the patched Velxio
+  as a public service, you must offer users that source (this repo's copy of
+  the patch + upstream is exactly that).
 
 If you later import Velxio source into Wireup's own bundle, or ship a modified
 Velxio as part of your hosted product, get the commercial licence or release
 under AGPL. That is a decision for a human, not for the build.
 
-### Running it locally
+### Running it locally (two terminals, no Docker)
 
 ```bash
 git submodule update --init external/velxio
-docker compose -f external/velxio/docker-compose.yml up -d   # full emulator + compile backend
-# then point Wireup at it:
-#   backend/.env →  VELXIO_URL=http://localhost:3000
-#                   SIM_MODE=velxio        (optional: also use it for the readiness gate)
+
+# one-time: give Velxio the embed bridge (bidirectional canvas for page 04)
+git -C external/velxio apply ../patches/velxio-embed-bridge.patch
+
+# terminal 1 — Velxio backend (FastAPI + arduino-cli + QEMU) on :8001
+cd external/velxio/backend
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+# terminal 2 — Velxio frontend (vite, proxies /api → :8001) on :5173
+cd external/velxio/frontend
+npm install
+npm run dev
 ```
+
+Then point Wireup at it in `backend/.env`:
+
+```
+VELXIO_URL=http://localhost:8001        # backend — compile + QEMU boot gate
+VELXIO_EMBED_URL=http://localhost:5173  # frontend — page 04 embed + canvas bridge
+SIM_MODE=auto                           # auto already resolves to velxio when VELXIO_URL is set
+```
+
+What you get with that running:
+
+- **Hardware readiness gate becomes real** — every build's firmware is
+  compiled by arduino-cli with the actual ESP32 toolchain and booted in QEMU;
+  the gate passes only when the sketch prints its `listening on port` line.
+  A compile error or boot hang is a red verdict with the real diagnostics in
+  the build terminal; Velxio being unreachable is an explicit provider error
+  that locks downloads.
+- **Page 04 embeds your Velxio** and, with the bridge patch applied, the
+  build's circuit lands on the canvas automatically (no manual .vlx import),
+  and **Pull canvas → diagram.json** folds your canvas edits back into the
+  build's `diagram.json` / `universal-diagram.json` / `.vlx` artifacts.
+
+Docker alternative (single origin, both roles on one URL):
+
+```bash
+docker compose -f external/velxio/docker-compose.yml up -d
+# backend/.env → VELXIO_URL=http://localhost:3080  (VELXIO_EMBED_URL not needed)
+```
+

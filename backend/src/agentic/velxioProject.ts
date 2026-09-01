@@ -117,7 +117,10 @@ const METADATA_BY_WOKWI_TYPE: Record<string, string> = {
   'wokwi-neopixel': 'neopixel',
   'wokwi-resistor': 'resistor',
   'wokwi-bme280': 'bmp280',
-  'wokwi-ds18b20': 'ds18b20-temp',
+  // NOTE deliberately absent: 'wokwi-ds18b20'. The pinned Velxio catalog
+  // (components-metadata.json, 156 parts) has no DS18B20 model — mapping it
+  // to a made-up id would put a dead part on the canvas. It stays in
+  // `unsupported` and is reported instead.
 };
 
 /**
@@ -170,10 +173,17 @@ const PIN_OFFSET = { x: 40, y: 30 };
  *
  * `sketch` is the generated Arduino source; it becomes the board's file group
  * so the project opens ready to compile inside Velxio.
+ *
+ * `extraFiles` are the project-local headers the sketch #includes (config.h
+ * etc.). They MUST ship inside the same file group — Velxio compiles exactly
+ * the group's files, so a sketch whose `#include "config.h"` has no matching
+ * file fails to compile and the emulator reports that no runnable firmware
+ * was produced.
  */
 export function generateVelxioProject(
   plan: DeviceBuildPlan,
   sketch: { name: string; content: string },
+  extraFiles: { name: string; content: string }[] = [],
 ): VelxioProjectResult {
   const wokwi = generateWokwiConfig(plan);
   const diagram = JSON.parse(wokwi.diagramJson) as {
@@ -265,7 +275,9 @@ export function generateVelxioProject(
       },
     ],
     fileGroups: {
-      [fileGroupId]: [{ name: sketch.name, content: sketch.content }],
+      // The sketch first (Velxio's main file), then every local header it
+      // includes — the group must be self-contained for the compile to work.
+      [fileGroupId]: [{ name: sketch.name, content: sketch.content }, ...extraFiles],
     },
     components,
     wires,

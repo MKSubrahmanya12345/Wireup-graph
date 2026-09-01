@@ -105,6 +105,16 @@ export const api = {
   /** What page 04 should run: the native bench, or an embedded Velxio. */
   simConfig: () => request<SimConfig>('/config/sim'),
 
+  /**
+   * The canonical pre-baked demo project (ESP32 + BME280 weather station).
+   * One click from the landing page straight to page 04 — real artifacts
+   * from the real generators, gates honestly labelled as not run.
+   */
+  demoBuild: () =>
+    request<{ demo: true; brief: string; result: import('../types/build').AgenticBuildResult }>(
+      '/demo/build',
+    ),
+
   planArchitecture: (body: {
     request: string;
     graph: ArchitectureGraph;

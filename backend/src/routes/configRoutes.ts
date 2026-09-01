@@ -51,7 +51,7 @@ router.get(
  * external service at all.
  */
 router.get('/config/sim', (_req, res) => {
-  const embedUrl = env.VELXIO_URL;
+  const embedUrl = env.VELXIO_EMBED_URL ?? env.VELXIO_URL;
   res.status(200).json({
     simMode: env.SIM_MODE,
     velxio: {

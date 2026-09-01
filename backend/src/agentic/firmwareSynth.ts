@@ -1011,14 +1011,17 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
 
   const universal = generateUniversalDiagram(plan, { version: 1, author: 'Wireup', parts: JSON.parse(wokwi.diagramJson).parts ?? [], connections: JSON.parse(wokwi.diagramJson).connections ?? [] });
   // Native Velxio project: the same circuit, openable in the emulator with the
-  // generated sketch already loaded (external/velxio, AGPL-3.0).
+  // generated sketch already loaded (external/velxio, AGPL-3.0). config.h must
+  // travel WITH the sketch — Velxio compiles only the .vlx file group, so a
+  // missing local header means "no runnable firmware" inside the emulator.
   const sketch = { name: `${plan.slug}.ino`, content: sketchSource(plan, codes) };
-  const velxio = generateVelxioProject(plan, sketch);
+  const configHeader = { name: 'config.h', content: configSource(plan, codes) };
+  const velxio = generateVelxioProject(plan, sketch, [configHeader]);
 
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },
     { path: `firmware/${plan.slug}.ino`, content: sketch.content },
-    { path: 'firmware/config.h', content: configSource(plan, codes) },
+    { path: 'firmware/config.h', content: configHeader.content },
     { path: 'wokwi.toml', content: wokwi.wokwiToml },
     { path: 'diagram.json', content: JSON.stringify(universal, null, 2) },
     { path: 'hardware/universal-diagram.json', content: JSON.stringify(universal, null, 2) },

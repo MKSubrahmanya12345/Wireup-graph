@@ -6,6 +6,7 @@ import authRoutes from './authRoutes.js';
 import billingRoutes from './billingRoutes.js';
 import buildRoutes from './buildRoutes.js';
 import configRoutes from './configRoutes.js';
+import demoRoutes from './demoRoutes.js';
 import healthRoutes from './healthRoutes.js';
 import projectRoutes from './projectRoutes.js';
 import { previewRouter } from '../agentic/preview.js';
@@ -19,6 +20,10 @@ router.use(authRoutes);
 
 // Config endpoint (available without auth for UI setup).
 router.use(configRoutes);
+
+// The canonical demo project (weather station) — the one-click product tour
+// from the landing page straight to page 04. Deterministic, user-agnostic.
+router.use(demoRoutes);
 
 // Live dashboard previews. Unauthenticated by necessity — an <iframe> cannot
 // send the Bearer token — and guarded instead by a 12-byte random id that

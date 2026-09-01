@@ -121,9 +121,20 @@ const envSchema = z.object({
   // ── Hardware simulation ──────────────────────────────────────────────────
   // 'auto' resolves to velxio when VELXIO_URL is set, mock otherwise.
   SIM_MODE: z.enum(['auto', 'mock', 'velxio']).default('auto'),
+  // Velxio BACKEND origin (FastAPI) — e.g. http://localhost:8001 when running
+  // external/velxio's backend in a separate terminal.
   VELXIO_URL: emptyToUndefined,
+  // Velxio FRONTEND origin for the page-04 embed — e.g. http://localhost:5173
+  // when running external/velxio's vite dev server. Defaults to VELXIO_URL
+  // (correct for the single-origin Docker image).
+  VELXIO_EMBED_URL: emptyToUndefined,
   VELXIO_API_KEY: emptyToUndefined,
+  // Boot-and-watch window for the QEMU run (serial must reach the HTTP-server
+  // line inside it).
   VELXIO_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  // Compile window — the FIRST ESP32 compile on a fresh Velxio install can
+  // take 5–7 minutes (toolchain + core build); cached rebuilds take seconds.
+  VELXIO_COMPILE_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
 
   // Where the live dashboard previews (page 04's "Website" half) are kept.
   // Defaults to a temp directory; each build's bundle lands in <dir>/<id>.
