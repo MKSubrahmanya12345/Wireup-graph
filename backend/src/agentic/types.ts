@@ -148,7 +148,7 @@ export interface PipelineInput {
   brief: string;
   projectName?: string;
   graph: ArchitectureGraph;
-  provider?: 'groq' | 'bedrock';
+  provider?: 'groq' | 'bedrock' | 'gemini';
   model?: string;
   /**
    * The human's answer to page-01's "how often should the device sample?"

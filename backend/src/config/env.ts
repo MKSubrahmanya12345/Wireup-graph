@@ -21,7 +21,16 @@ const envSchema = z.object({
   MONGO_URI: emptyToUndefined,
 
   // ── LLM Provider configuration ───────────────────────────────────────────
-  LLM_PROVIDER: z.enum(['groq', 'bedrock']).default('groq'),
+  LLM_PROVIDER: z.enum(['groq', 'bedrock', 'gemini']).default('groq'),
+
+  // Google Gemini (the Pro-tier model). Without a key the selector logs a
+  // warning and falls back to Groq — it never crashes the build.
+  GEMINI_API_KEY: emptyToUndefined,
+  GEMINI_MODEL: z.string().min(1).default('gemini-2.0-flash'),
+  GEMINI_BASE_URL: z
+    .string()
+    .url()
+    .default('https://generativelanguage.googleapis.com/v1beta'),
   
   // Groq settings
   GROQ_API_KEY: emptyToUndefined,
@@ -95,6 +104,36 @@ const envSchema = z.object({
   AGENTIC_WOKWI: z.string().default('1'),
   // The Wokwi CI token (read from the environment, not the .env defaults).
   WOKWI_CLI_TOKEN: emptyToUndefined,
+
+  // ── Payments ─────────────────────────────────────────────────────────────
+  // 'auto' (default) resolves to razorpay when a key is present, mock when it
+  // is not. Force either side with 'mock' / 'razorpay'.
+  PAYMENT_MODE: z.enum(['auto', 'mock', 'razorpay']).default('auto'),
+  RAZORPAY_KEY_ID: emptyToUndefined,
+  RAZORPAY_KEY_SECRET: emptyToUndefined,
+  RAZORPAY_WEBHOOK_SECRET: emptyToUndefined,
+  // Where the mock checkout self-fires its webhook, and where real Razorpay
+  // callbacks land. Defaults to the local API.
+  APP_BASE_URL: z.string().min(1).default('http://localhost:5000'),
+  // Mock checkout: how long the "hosted page" takes before the webhook fires.
+  MOCK_PAYMENT_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(1_200),
+
+  // ── Hardware simulation ──────────────────────────────────────────────────
+  // 'auto' resolves to velxio when VELXIO_URL is set, mock otherwise.
+  SIM_MODE: z.enum(['auto', 'mock', 'velxio']).default('auto'),
+  VELXIO_URL: emptyToUndefined,
+  VELXIO_API_KEY: emptyToUndefined,
+  VELXIO_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+
+  // ── Billing / admin persistence ──────────────────────────────────────────
+  // File-backed billing store (used when MONGO_URI is not set).
+  BILLING_DB_PATH: z.string().min(1).default('.data/billing.json'),
+  // Seed admin account, created at boot when it does not exist.
+  ADMIN_EMAIL: z.string().min(1).default('admin@wireup.local'),
+  ADMIN_PASSWORD: z.string().min(8).default('wireup-admin-dev'),
+  ADMIN_NAME: z.string().min(1).default('Wireup Admin'),
+  // Set to '0' to skip admin seeding entirely.
+  ADMIN_SEED: z.string().default('1'),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -20,7 +20,7 @@ const bodySchema = z.object({
   brief: z.string().trim().min(1, 'A brief is required.').max(6000),
   projectName: z.string().trim().max(120).optional(),
   graph: z.unknown(),
-  provider: z.enum(['groq', 'bedrock']).optional(),
+  provider: z.enum(['groq', 'bedrock', 'gemini']).optional(),
   model: z.string().optional(),
   // Page-01's sample-interval answer — honored in firmware/config.h.
   sampleIntervalMs: z.coerce.number().int().min(1000).max(600000).optional(),
