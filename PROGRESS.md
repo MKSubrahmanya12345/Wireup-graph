@@ -94,6 +94,19 @@ webhook), `Plan` / `Admin` links in the top nav.
 | 36 | `README.md` + `docs/AGENTIC_ROADMAP.md` updated | ✅ |
 | 37 | Final `PROGRESS.md` | this file |
 
+## M4b — Browser bench closed out ✅ (was the one open item)
+
+| # | Item | Verified |
+| - | ---- | -------- |
+| 38 | `avr8js` + `@wokwi/elements` installed in `frontend/` (they were never actually dependencies) | `frontend/package.json` ✅ |
+| 39 | Real AVR machine code assembled in the browser — `src/sim/avrProgram.ts` (sbi/cbi/ldi/sbiw/dec/brne/rjmp encoders → a PORTB5 heartbeat) | ✅ `cd frontend && npm test` → opcode `0x9A25`/`0x9A2D`/`0x982D` asserted, PORTB5 toggles on a real `CPU`, half-period 100–1000 ms |
+| 40 | `src/sim/useAvrHeartbeat.ts` runs the core on `requestAnimationFrame` (~16 simulated ms/frame) and exposes led/cycles/sim-time/edges | ✅ tsc + build; the UI reads the CPU, it never drives it |
+| 41 | `src/sim/diagram.ts` parses the pipeline's own diagram — Wokwi v1 tuples **and** Wireup universal v2 objects — and maps part types to registered custom elements only | ✅ 7 tests incl. "no lookalike substitution" and "every mapped tag is really registered by @wokwi/elements" |
+| 42 | `src/components/WokwiBench.tsx` on page 03: real Wokwi elements for the generated parts, stub tiles for parts with no model, sensor values replayed from this build's `simulation.hardware.log`, Run/Pause/Reset, connection list | ✅ mounted in `BuildPage.tsx` under the readiness panel; `npx tsc -b` clean, `npm run build` clean (elements lazy-loaded into their own 438 kB chunk) |
+| 43 | Labelled honestly on screen: avr8js is AVR silicon, so the panel states the ESP32 firmware is compiled + simulated **server-side** and this is the visual/timing bench over it | ✅ header copy in `WokwiBench.tsx` |
+
+Not verified: pixel rendering in a real browser — this sandbox has no Chrome/Playwright. Types, bundling, the AVR core and the diagram parsing are all covered by `frontend/npm test`; the visual layer is the standard @wokwi/elements web components.
+
 ---
 
 ## ⛔ Blocked — needs a human, not code
@@ -109,18 +122,25 @@ webhook), `Plan` / `Admin` links in the top nav.
 
 ## Known open item (honest list)
 
-- **Browser-side avr8js / wokwi-elements canvas** (part of M4 #26). The
-  simulation that runs today is server-side: the Wokwi headless gate plus the
-  deterministic virtual bench, both streamed live into page 03's terminal and
-  both feeding the readiness indicators. An in-browser animated circuit would
-  be additive; it is not what gates the download.
+- ~~Browser-side avr8js / wokwi-elements canvas~~ — **closed**, see M4b above.
+  Note what it is and is not: the heartbeat is genuine AVR execution and the
+  circuit is your generated diagram, but the ESP32 firmware itself still runs
+  server-side (Wokwi headless gate + the virtual bench). Those server-side runs
+  are what gate the download; the bench is the visual layer over them.
+- The bench has no automated **visual** regression (no browser in CI here).
+- `frontend/pnpm-lock.yaml` and `frontend/bun.lock` are tracked but predate
+  `avr8js`/`@wokwi/elements` (neither pnpm nor bun is installed in this
+  sandbox). `npm install` — the documented path, and the one the fresh-clone
+  check uses — resolves them from `package.json`; regenerate the other two
+  lockfiles if your team uses pnpm/bun.
 - Mock-mode `/billing/mock-checkout` is a URL the mock returns for realism —
   the mock settles itself, so no page is served there.
 
 ## How to re-run every check
 
 ```bash
-cd backend && npm install && npm test        # 90 tests: gates + billing + providers
+cd backend  && npm install && npm test       # 90 tests: gates + billing + providers
+cd frontend && npm install && npm test       # 12 tests: avr8js heartbeat + bench diagram parsing
 cd backend && npx tsx src/server.ts          # boot banner proves which adapters are live
 # full loop against mocks:
 curl -X POST localhost:5000/api/auth/signup  -d '{"name":"A","email":"a@b.c","password":"password123"}' -H 'content-type: application/json'

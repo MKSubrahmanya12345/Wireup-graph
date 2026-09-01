@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import CodeBlock from '../components/CodeBlock';
+import WokwiBench from '../components/WokwiBench';
 import { downloadZip } from '../lib/zip';
 import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
@@ -486,6 +487,10 @@ export default function BuildPage() {
         <>
           {/* A result persisted by an older build has no simulation block. */}
           {result.simulation && <ReadinessPanel result={result} />}
+
+          {/* Live browser bench: the generated diagram, rendered with real
+              Wokwi elements and clocked by an avr8js core running in-tab. */}
+          <WokwiBench result={result} />
 
           {result.simulation && !unlocked && (
             <div className="download-locked">

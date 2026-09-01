@@ -162,6 +162,31 @@ Every build also writes `INSTRUCTIONS-<slug>.md` from that build's resolved
 plan (parts, pins, cadence, verification record) — shipped in the firmware zip
 and rendered on page 03 next to a BOM with per-part purchase links.
 
+## The live bench on page 03
+
+Under the readiness panel, page 03 animates **your** circuit:
+
+- The parts and wires come from the diagram the pipeline generated
+  (`hardware/universal-diagram.json`, falling back to Wokwi's `diagram.json`)
+  and are drawn with the real [`@wokwi/elements`](https://github.com/wokwi/wokwi-elements)
+  web components. A part with no Wokwi model renders as a labelled stub tile —
+  it is never swapped for a lookalike.
+- The heartbeat is **real AVR machine code** executing on
+  [`avr8js`](https://github.com/wokwi/avr8js) in your tab: `src/sim/avrProgram.ts`
+  assembles a PORTB5 blink and `useAvrHeartbeat` steps the core ~16 simulated
+  ms per animation frame. The panel reports cycles retired and simulated time.
+- Sensor values are **replayed** from this build's `HardwareSimProvider` log,
+  not invented in the browser.
+
+Honest caveat, stated in the UI too: avr8js simulates AVR silicon, and Wireup
+targets the ESP32 — your firmware is compiled and simulated **server-side**
+(g++/PlatformIO + Wokwi headless + the virtual bench), and those runs are what
+gate the downloads. The bench is the visual/timing layer over them.
+
+```bash
+cd frontend && npm test   # avr8js heartbeat + diagram-parsing suites
+```
+
 ## Why it's agentic, not a wrapper
 
 1. **Retrieval first** — parts come from a curated corpus with datasheets, never free-form invention.
