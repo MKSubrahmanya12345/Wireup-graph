@@ -13,7 +13,8 @@ import { describe, it } from 'node:test';
 const { resolveBuildPlan } = await import('../src/agentic/planResolver.ts');
 const { normaliseGraph } = await import('../src/schemas/architecture.ts');
 const { synthesizeFirmware } = await import('../src/agentic/firmwareSynth.ts');
-const { generateVelxioProject, velxioBoardPin } = await import('../src/agentic/velxioProject.ts');
+const { generateVelxioProject, velxioBoardPin, normalizeWifiForEmulator, QEMU_WIFI_SSID } =
+  await import('../src/agentic/velxioProject.ts');
 
 function planFor(brief, name) {
   const { graph } = normaliseGraph({});
@@ -36,10 +37,35 @@ describe('velxio project export', () => {
     assert.equal(project.boards[0].serialBaudRate, 115_200);
     // The board points at a file group that must exist and hold the sketch.
     const group = project.fileGroups[project.boards[0].activeFileGroupId];
-    assert.ok(Array.isArray(group) && group.length === 1);
+    assert.ok(Array.isArray(group) && group.length >= 1);
     assert.equal(group[0].name, 'sketch.ino');
     assert.match(group[0].content, /void setup\(\)/);
     assert.ok(Date.parse(project.exportedAt) > 0);
+  });
+
+  it('normalises Wi-Fi credentials to the QEMU AP — in every file, not just the sketch', () => {
+    // Velxio's own rewrite covers only the entry sketch; Wireup keeps the
+    // credentials in config.h. The emulator has exactly one AP ("Espressif",
+    // open) — a .vlx carrying home credentials would never get an IP, and the
+    // IoT gateway could never reach the board's web server.
+    const plan = planFor('esp32 weather station with a dht22 sensor', 'Weather');
+    const configH = {
+      name: 'config.h',
+      content: '#define WIFI_SSID "MyHomeNetwork"\n#define WIFI_PASSWORD "hunter2"\n#define WEB_SERVER_PORT 80\n',
+    };
+    const { project } = generateVelxioProject(plan, sketch, [configH]);
+    const group = project.fileGroups[project.boards[0].activeFileGroupId];
+    const emitted = group.find((file) => file.name === 'config.h');
+    assert.ok(emitted, 'config.h must ship in the file group');
+    assert.match(emitted.content, new RegExp(`#define\\s+WIFI_SSID\\s+"${QEMU_WIFI_SSID}"`));
+    assert.match(emitted.content, /#define\s+WIFI_PASSWORD\s+""/);
+    assert.doesNotMatch(emitted.content, /MyHomeNetwork|hunter2/);
+    // Untouched defines survive, and non-source files pass through verbatim.
+    assert.match(emitted.content, /#define WEB_SERVER_PORT 80/);
+    const [json] = normalizeWifiForEmulator([
+      { name: 'diagram.json', content: '{"ssid":"MyHomeNetwork"}' },
+    ]);
+    assert.equal(json.content, '{"ssid":"MyHomeNetwork"}');
   });
 
   it('places the plan\u2019s parts and wires them to pins the board really has', () => {
@@ -108,6 +134,18 @@ describe('velxio project export', () => {
     const ino = firmware.files.find((entry) => entry.path.endsWith(`${plan.slug}.ino`));
     const group = parsed.fileGroups[parsed.boards[0].activeFileGroupId];
     assert.equal(group[0].content, ino.content);
+    // Every project-local header the sketch #includes must travel with it —
+    // Velxio compiles only the group's files, so a missing config.h means the
+    // emulator cannot produce a runnable firmware at all. The shipped header
+    // is the firmware config.h with ONE deliberate difference: Wi-Fi
+    // credentials normalised to the QEMU AP so the simulated board actually
+    // gets on the network.
+    const configFile = firmware.files.find((entry) => entry.path === 'firmware/config.h');
+    const shippedHeader = group.find((entry) => entry.name === 'config.h');
+    assert.ok(shippedHeader, 'config.h must ship inside the .vlx file group');
+    const [normalised] = normalizeWifiForEmulator([{ name: 'config.h', content: configFile.content }]);
+    assert.equal(shippedHeader.content, normalised.content);
+    assert.match(shippedHeader.content, new RegExp(`#define\\s+WIFI_SSID\\s+"${QEMU_WIFI_SSID}"`));
   });
 
   it('differs between two different devices', () => {

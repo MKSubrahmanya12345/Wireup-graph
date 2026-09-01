@@ -399,7 +399,9 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     say('simulate', `provider: ${simProvider.describe()}`);
     let hardwareSim: SimResult;
     try {
-      hardwareSim = await simProvider.runSim(plan);
+      // The REAL provider (Velxio) compiles and boots the pipeline's own
+      // firmware artifacts; the mock ignores the context.
+      hardwareSim = await simProvider.runSim(plan, { firmwareFiles: firmware.files });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       hardwareSim = {

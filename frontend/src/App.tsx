@@ -40,6 +40,26 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 /**
+ * Public shell: same workspace chrome, but NO login wall. Used for the
+ * homepage and the simulator so the one-click demo project works without an
+ * account. Everything that truly needs auth (real builds, billing, admin)
+ * stays behind RequireAuth; the API enforces the same split server-side.
+ */
+function PublicShell({ children }: { children: ReactNode }) {
+  const bootstrapped = useAuth((state) => state.bootstrapped);
+
+  if (!bootstrapped) {
+    return (
+      <div className="boot-splash">
+        <div className="boot-mark">⚡</div>
+        <span>Wireup is warming up…</span>
+      </div>
+    );
+  }
+  return <Workspace>{children}</Workspace>;
+}
+
+/**
  * Admin-only gate. A logged-in non-admin sees an explicit 403 panel instead
  * of the console (the API enforces the same rule server-side — this is UX,
  * not security).
@@ -79,9 +99,9 @@ export default function App() {
       <Route
         path="/"
         element={
-          <RequireAuth>
+          <PublicShell>
             <IntakePage />
-          </RequireAuth>
+          </PublicShell>
         }
       />
       <Route
@@ -121,9 +141,9 @@ export default function App() {
       <Route
         path="/sim"
         element={
-          <RequireAuth>
+          <PublicShell>
             <SimPage />
-          </RequireAuth>
+          </PublicShell>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
