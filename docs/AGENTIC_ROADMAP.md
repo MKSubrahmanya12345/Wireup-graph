@@ -70,6 +70,47 @@ Wokwi's port forwarding (today the sim asserts boot + HTTP-server-up via serial)
 
 ---
 
+## ✅ Phase 2.5 — commercial surface, mock-first (done)
+
+Every external vendor is now **one interface with two implementations**: a real
+adapter and a deterministic mock. The default is the mock, so the whole
+commercial loop is provable on a laptop with no accounts. Going live is an
+env-var change, not a rebuild.
+
+| Dependency | Interface | Mock | Real | Selector |
+| --- | --- | --- | --- | --- |
+| Payments | `PaymentProvider` (`checkout`/`verifyWebhook`/`refund`) | `MockPaymentProvider` — the fake checkout **self-fires its own webhook** | `RazorpayAdapter` (Orders REST + HMAC webhook) | `PAYMENT_MODE=auto\|mock\|razorpay` |
+| Hardware sim | `HardwareSimProvider` (`runSim(plan)`) | `MockHardwareSimProvider` — deterministic virtual bench computed from the resolved plan | `VelxioSimProvider` (`POST {VELXIO_URL}/simulate`) | `SIM_MODE=auto\|mock\|velxio` |
+| LLM (Pro tier) | `callLlm` provider selector | Gemini absent → **logged** fallback to Groq | Gemini `generateContent` | user's plan (see below) |
+
+1. **Billing** — `subscriptions`, `payments`, `webhookevents`, `usageevents`
+   (Mongo when `MONGO_URI` is set, a JSON file otherwise).
+   `POST /api/billing/checkout`, `POST /api/billing/webhook` (signature-verified
+   in real mode, accepted-as-is in mock, **idempotent on the provider event id
+   either way**), `GET /api/billing/plans|subscription`.
+2. **Roles + admin** — `role: 'admin' | 'user'` on the user model, a seeded
+   admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`), `requireAdmin` on every
+   `/api/admin/*` route, and a `/admin` console: Users, Payments, Revenue,
+   Usage and the Webhook log.
+3. **Tier gating** — `pipeline.ts` selects the model tier from the **user's
+   plan**, not a global env var: free → Groq, pro → Gemini. The provider that
+   *actually ran* (after any fallback) is logged per build and stored on the
+   usage record.
+4. **Simulation stage** — the hardware simulator runs on every build and
+   produces an independent verdict from the software gate. Two indicators
+   ("Hardware ready ✔/✘", "Software ready ✔/✘"); the downloads unlock only
+   when both pass, and a simulator that *errors* says so explicitly instead of
+   being skipped.
+5. **Per-build instructions + BOM** — `INSTRUCTIONS-<slug>.md` is generated from
+   the resolved plan (parts, pins, cadence, verification record) and shipped
+   inside the firmware zip; the BOM carries per-part purchase links with
+   optional affiliate tags (`AFFILIATE_TAG_*`).
+
+Pricing is **not** set: every plan is a ₹0 placeholder in
+`backend/src/billing/plans.ts` until a human decides. See `PROGRESS.md`.
+
+---
+
 ## ⏳ Phase 3 — hardware intelligence
 
 1. **KiCad netlist + ERC** emitted from the graph; netlist-level checks (shorts,
@@ -93,3 +134,9 @@ Wokwi's port forwarding (today the sim asserts boot + HTTP-server-up via serial)
 | `WOKWI_CLI_TOKEN` | free token from https://wokwi.com/dashboard/ci — enables the sim gate |
 | `AGENTIC_MAX_REPAIR_LOOPS=n` | repair rounds per artifact (default 3) |
 | `GROQ_API_KEY` / Bedrock creds | enables LLM first-draft, **diagnostics-fed repair**, and multi-turn revision |
+| `GEMINI_API_KEY` | the Pro tier's model; absent → logged fallback to Groq |
+| `PAYMENT_MODE=mock\|razorpay\|auto` | which payment adapter is live (default `auto`) |
+| `SIM_MODE=mock\|velxio\|auto` | which hardware simulator is live (default `auto`) |
+| `SIM_FORCE_FAIL=1` / `SIM_FORCE_ERROR=1` | mock-sim test hooks: fail the circuit / error the provider |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_SEED=0` | the seeded admin account |
+| `AFFILIATE_TAG_AMAZON` / `_ROBU` / `_DIGIKEY` | BOM purchase-link tags |
