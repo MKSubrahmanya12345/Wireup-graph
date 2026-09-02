@@ -183,6 +183,19 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // ??$$$ Hardware Spec Graph API methods
+  generateSpecGraph: (body: { prompt: string; answers?: Record<string, string> }) =>
+    request<{ specGraph: any; archGraph: ArchitectureGraph; isReady: boolean }>('/architecture/spec-graph', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  answerSpecGraph: (body: { specGraph: any; answers: Record<string, string> }) =>
+    request<{ specGraph: any; archGraph: ArchitectureGraph; isReady: boolean }>('/architecture/spec-graph/answer', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   // ── Agentic build ───────────────────────────────────────────────────────
   /** The hardcoded MERN scaffold (no LLM call). */
   getScaffold: () =>
@@ -240,6 +253,8 @@ export async function streamAgenticBuild(
     graph: unknown;
     provider?: string;
     model?: string;
+    // ??$$$ Optional user revision instruction for chatbot prompt re-runs
+    revisionInstruction?: string;
     /** Page-01's sample-interval answer — honored in firmware/config.h. */
     sampleIntervalMs?: number;
   },

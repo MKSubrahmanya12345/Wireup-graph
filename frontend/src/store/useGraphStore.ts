@@ -35,6 +35,8 @@ interface GraphState {
   selectedNodeId: string | null;
 
   setStatus: (status: Status) => void;
+  // ??$$$ Set canonical graph state
+  setGraph: (graph: ArchitectureGraph) => void;
   setIssues: (issues: Issue[], blocking: boolean) => void;
   setRequest: (request: string) => void;
   appendToRequest: (text: string) => void;
@@ -89,6 +91,14 @@ export const useGraphStore = create<GraphState>()((set, get) => ({
   selectedNodeId: null,
 
   setStatus: (status) => set({ status }),
+
+  // ??$$$ setGraph implementation
+  setGraph: (graph) =>
+    set({
+      graph,
+      selectedNodeId: graph.nodes[0]?.id ?? null,
+      lastUpdated: new Date().toISOString(),
+    }),
 
   setIssues: (issues, blocking) => set({ issues, blocking }),
 

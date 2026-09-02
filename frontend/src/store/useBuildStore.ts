@@ -24,7 +24,10 @@ interface BuildState {
   error: string | null;
   abort: AbortController | null;
 
-  run: (options?: { provider?: string; model?: string }) => Promise<void>;
+  // Old signature without revisionInstruction commented out per Rule 2:
+  // run: (options?: { provider?: string; model?: string }) => Promise<void>;
+  // ??$$$ Add revisionInstruction parameter for chatbot prompt input
+  run: (options?: { provider?: string; model?: string; revisionInstruction?: string }) => Promise<void>;
   cancel: () => void;
   clear: () => void;
   /** Fold canvas edits (pulled from the embedded Velxio) into the artifacts. */
@@ -57,7 +60,7 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
   error: null,
   abort: null,
 
-  run: async (options?: { provider?: string; model?: string }) => {
+  run: async (options?: { provider?: string; model?: string; revisionInstruction?: string }) => {
     const { graph } = useGraphStore.getState();
     const { brief: rawBrief, llmOptions, answers } = useDesignSession.getState();
     const brief = rawBrief.trim();
@@ -155,6 +158,7 @@ export const useBuildStore = create<BuildState>()((set, get) => ({
           graph,
           provider: options?.provider ?? llmOptions.provider,
           model: options?.model ?? llmOptions.model,
+          revisionInstruction: options?.revisionInstruction,
           sampleIntervalMs:
             Number.isFinite(intervalAnswer) && intervalAnswer > 0 ? intervalAnswer : undefined,
         },

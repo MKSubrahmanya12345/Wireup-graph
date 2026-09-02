@@ -11,6 +11,8 @@ import GraphPage from './pages/GraphPage';
 import IntakePage from './pages/IntakePage';
 import ProjectsPage from './pages/ProjectsPage';
 import SimPage from './pages/SimPage';
+// ??$$$ SpecGraph live document page import
+import SpecGraphPage from './pages/SpecGraphPage';
 import { useAuth } from './store/useAuth';
 
 function Workspace({ children }: { children: ReactNode }) {
@@ -110,6 +112,15 @@ export default function App() {
         element={
           <RequireAuth>
             <IntakePage />
+          </RequireAuth>
+        }
+      />
+      {/* ??$$$ Hardware Spec Graph Live Document Page */}
+      <Route
+        path="/spec-graph"
+        element={
+          <RequireAuth>
+            <SpecGraphPage />
           </RequireAuth>
         }
       />

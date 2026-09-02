@@ -136,10 +136,13 @@ export default function IntakePage() {
             type="button"
             className="primary-button"
             disabled={!brief.trim() || busy}
+            // Old onClick commented out per Rule 2:
+            // onClick={() => { setLlmOptions({ provider: 'bedrock', model }); void startInterpretation({ provider: 'bedrock', model }); }}
+            // ??$$$ Navigates to the live Hardware Spec Graph page with AI Doubt Modal Loop
             onClick={() => {
-                          setLlmOptions({ provider: 'bedrock', model });
-                          void startInterpretation({ provider: 'bedrock', model });
-                        }}
+              setLlmOptions({ provider: 'bedrock', model });
+              navigate('/spec-graph');
+            }}
           >
             {stage === 'interpreting'
               ? 'Reading the brief…'

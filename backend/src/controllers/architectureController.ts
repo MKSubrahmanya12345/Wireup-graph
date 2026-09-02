@@ -25,6 +25,15 @@ import { repairGraph } from '../data/repairGraph.js';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+// ??$$$ SpecGraph engine imports
+import {
+  decomposePromptToSpecGraph,
+  applyUserAnswersToSpecGraph,
+  specGraphToArchitectureGraph,
+  isSpecGraphReadyForHandoff,
+  type SpecGraphProject,
+} from '../agentic/specGraph.js';
+
 /**
  * POST /api/architecture/plan
  *
@@ -258,6 +267,42 @@ export const repairArchitecture = asyncHandler(async (req: Request, res: Respons
     repairs: allRepairs,
     projectId: null,
     revisionId: null,
+  });
+});
+
+// ??$$$ POST /api/architecture/spec-graph — Generate hardware project spec graph from prompt
+export const generateSpecGraph = asyncHandler(async (req: Request, res: Response) => {
+  const { prompt, answers } = req.body ?? {};
+  if (!prompt || typeof prompt !== 'string') {
+    throw ApiError.badRequest('A prompt string is required.');
+  }
+
+  const specGraph = decomposePromptToSpecGraph({ prompt, answers: answers ?? {} });
+  const archGraph = specGraphToArchitectureGraph(specGraph);
+  const isReady = isSpecGraphReadyForHandoff(specGraph);
+
+  res.status(200).json({
+    specGraph,
+    archGraph,
+    isReady,
+  });
+});
+
+// ??$$$ POST /api/architecture/spec-graph/answer — Apply user answers to spec graph with dirty propagation & re-validation
+export const answerSpecGraph = asyncHandler(async (req: Request, res: Response) => {
+  const { specGraph, answers } = req.body ?? {};
+  if (!specGraph || !answers) {
+    throw ApiError.badRequest('Both specGraph project object and answers map are required.');
+  }
+
+  const updatedSpecGraph = applyUserAnswersToSpecGraph(specGraph as SpecGraphProject, answers);
+  const archGraph = specGraphToArchitectureGraph(updatedSpecGraph);
+  const isReady = isSpecGraphReadyForHandoff(updatedSpecGraph);
+
+  res.status(200).json({
+    specGraph: updatedSpecGraph,
+    archGraph,
+    isReady,
   });
 });
 

@@ -25,6 +25,9 @@ interface SessionState {
   /** Human corrections across revisions, oldest first. */
   feedback: string[];
   revision: number;
+  // ??$$$ Spec graph state persistence
+  specGraph: any | null;
+  setSpecGraph: (specGraph: any) => void;
   /** Issue ids the human has consciously accepted. */
   acceptedRisks: string[];
 
@@ -81,6 +84,8 @@ const persistedSession = loadPersisted<{
   requirements: RequirementsSpec | null;
   assumptions: string[];
   revision: number;
+  // ??$$$ Persisted spec graph
+  specGraph?: any | null;
 }>(SESSION_PERSIST_KEY);
 
 export const useDesignSession = create<SessionState>()((set, get) => ({
@@ -92,6 +97,9 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   assumptions: persistedSession?.assumptions ?? [],
   feedback: [],
   revision: persistedSession?.revision ?? 0,
+  // ??$$$ SpecGraph store state
+  specGraph: persistedSession?.specGraph ?? null,
+  setSpecGraph: (specGraph) => set({ specGraph }),
   acceptedRisks: [],
   error: null,
   llmOptions: {},
@@ -389,5 +397,7 @@ useDesignSession.subscribe((state) => {
     requirements: state.requirements,
     assumptions: state.assumptions,
     revision: state.revision,
+    // ??$$$ Persist spec graph state across sessions
+    specGraph: state.specGraph,
   });
 });

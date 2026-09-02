@@ -364,14 +364,22 @@ export default function BuildPage() {
   const [model, setModel] = useState<string>(
     sessionLlmOptions.model ?? BEDROCK_MODELS[0]
   );
+  // ??$$$ Chatbot prompt state for follow-up user instructions
+  const [chatPrompt, setChatPrompt] = useState<string>('');
 
-  const handleRun = () => {
-    void run({ provider: 'bedrock', model });
+  const handleRun = (revisionInstruction?: string) => {
+    void run({ provider: 'bedrock', model, revisionInstruction });
+  };
+
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatPrompt.trim() || running) return;
+    const text = chatPrompt.trim();
+    setChatPrompt('');
+    handleRun(text);
   };
 
   // Downloads unlock only when BOTH indicators pass (M4 #28).
-  // A build result persisted before M4 has no simulation block — treat the
-  // absence as "unlocked" rather than trapping the user with an old artifact.
   const unlocked = result?.simulation ? result.simulation.downloadUnlocked : Boolean(result);
 
   const firmwareZip = async () => {
@@ -403,11 +411,10 @@ export default function BuildPage() {
     <div className="page build-page">
       <section className="build-head">
         <div>
-          <div className="eyebrow">Wireup pipeline · 03 — agentic build</div>
-          <h1>Build, compile, verify, ship</h1>
+          <div className="eyebrow">Wireup pipeline · 03 — agentic build assistant</div>
+          <h1>Build Workspace & AI Chatbot</h1>
           <p className="muted">
-            Deterministic engine + real terminal validation. Watch the log — every
-            command actually runs on the server.
+            Code Explorer on the left, interactive AI Chatbot & build runner on the right.
           </p>
         </div>
         <div className="build-actions">
@@ -422,203 +429,187 @@ export default function BuildPage() {
                   Clear
                 </button>
               )}
-          <Link to="/sim" className="primary-button as-link" style={{ marginLeft: 10 }}>
-            ↳ Simulation
-          </Link>
-          <div className="build-llm-select" style={{ display: 'inline-flex', gap: 8, marginLeft: 10, alignItems: 'center' }}>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={running}
-              title="Model (AWS Bedrock)"
-            >
-              {BEDROCK_MODELS.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <button type="button" className="ghost-button" disabled={!canRun} onClick={handleRun}>
-            {result ? '↻ Re-run agentic build' : '⚡ Run agentic build'}
-          </button>
+              <Link to="/sim" className="primary-button as-link" style={{ marginLeft: 10 }}>
+                ↳ Simulation
+              </Link>
+              <button type="button" className="ghost-button" disabled={!canRun} onClick={() => handleRun()}>
+                {result ? '↻ Re-run agentic build' : '⚡ Run agentic build'}
+              </button>
             </>
           )}
         </div>
       </section>
 
-      <ToolchainBadge />
-
-      <section className="terminal-card">
-        <div className="terminal-chrome">
-          <span className="dot red" />
-          <span className="dot amber" />
-          <span className="dot green" />
-          <span className="terminal-title">wireup@api — agentic pipeline</span>
-          {running && <span className="terminal-live">● LIVE</span>}
-        </div>
-        <div className="terminal" ref={terminalRef}>
-          {lines.length === 0 && (
-            <div className="terminal-empty">
-              Ready. Press <strong>Run agentic build</strong> — retrieval → firmware → g++ → MERN → npm/tsc/vite →
-              contract checks. Nothing here is simulated.
-            </div>
-          )}
-          {lines.map((line) => {
-            if (line.kind === 'stage') {
-              return (
-                <div key={line.id} className="tl tl-stage">
-                  {line.text}
-                  {line.stage === 'firmware-validate' || line.stage === 'software-validate' ? (
-                    <span className="tl-spinner" />
-                  ) : null}
-                </div>
-              );
-            }
-            if (line.kind === 'cmd') {
-              return (
-                <div key={line.id} className={`tl tl-cmd ${line.tone}`}>
-                  <span className="tl-text cmd-text">{line.text}</span>
-                  {line.exitCode !== undefined && (
-                    <span className={`exit-chip${line.exitCode === 0 ? ' ok' : ' bad'}`}>
-                      exit {line.exitCode ?? 'killed'}
-                    </span>
-                  )}
-                </div>
-              );
-            }
-            if (line.kind === 'banner') {
-              return (
-                <div key={line.id} className={`tl tl-banner ${line.tone}`}>
-                  {line.text}
-                </div>
-              );
-            }
-            return (
-              <div key={line.id} className={`tl tl-${line.kind} ${line.tone}`}>
-                {line.kind !== 'out' && <span className={`tl-glyph ${line.tone}`}>{TONE_GLYPH[line.tone]}</span>}
-                <span className="tl-text">{line.text}</span>
+      {/* ??$$$ Split IDE Layout: Left = AI Chatbot Assistant, Right = Code Explorer & Files */}
+      <div className="agentic-ide-container">
+        
+        {/* ── LEFT PANE: Chatbot & Live Agent Terminal ───────────────────── */}
+        <div className="ide-left-pane">
+          <div className="chatbot-card">
+            <div className="chatbot-header">
+              <div className="chatbot-title">
+                <span style={{ fontSize: 16 }}>🤖</span>
+                <span>Wireup Agent</span>
               </div>
-            );
-          })}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <ToolchainBadge />
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={running}
+                  style={{ background: 'var(--bg-raise)', color: 'var(--ink)', border: '1px solid var(--line)', borderRadius: 6, padding: '2px 6px', fontSize: 11 }}
+                >
+                  {BEDROCK_MODELS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <span className="chatbot-status-tag">{running ? 'BUILDING…' : 'READY'}</span>
+              </div>
+            </div>
+
+            {/* Chatbot Message Thread (Log & Agent updates styled as messages) */}
+            <div className="chatbot-body" ref={terminalRef}>
+              <div className="chat-bubble assistant">
+                <span className="chat-sender">AI Build Agent</span>
+                Welcome! I am your Wireup hardware & firmware agent. Ask me any question or tell me what to refine in the build!
+              </div>
+
+              {lines.length === 0 && (
+                <div className="chat-bubble system">
+                  Press <strong>⚡ Run agentic build</strong> or type an instruction below to start synthesizing firmware and web apps.
+                </div>
+              )}
+
+              {lines.map((line) => {
+                if (line.kind === 'stage') {
+                  return (
+                    <div key={line.id} className="chat-bubble assistant">
+                      <span className="chat-sender">Stage Update</span>
+                      <strong>{line.text}</strong>
+                      {line.stage === 'firmware-validate' || line.stage === 'software-validate' ? (
+                        <span className="tl-spinner" />
+                      ) : null}
+                    </div>
+                  );
+                }
+                if (line.kind === 'cmd') {
+                  return (
+                    <div key={line.id} className="chat-bubble system">
+                      <code>{line.text}</code>
+                      {line.exitCode !== undefined && (
+                        <span className={`exit-chip${line.exitCode === 0 ? ' ok' : ' bad'}`}>
+                          exit {line.exitCode ?? 'killed'}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={line.id} className={`chat-bubble assistant`}>
+                    <span className="chat-sender">Agent Execution</span>
+                    <span>{TONE_GLYPH[line.tone]} {line.text}</span>
+                  </div>
+                );
+              })}
+
+              {error && !result && (
+                <div className="chat-bubble assistant" style={{ borderColor: 'var(--red)', color: 'var(--red)' }}>
+                  <span className="chat-sender">Build Error</span>
+                  {error}
+                </div>
+              )}
+            </div>
+
+            {/* Interactive Chatbot Input Bar */}
+            <form className="chat-input-bar" onSubmit={handleChatSubmit}>
+              <input
+                type="text"
+                placeholder={running ? "Building agentic graph..." : "Ask AI to change pins, add Bluetooth, revise build..."}
+                value={chatPrompt}
+                onChange={(e) => setChatPrompt(e.target.value)}
+                disabled={running}
+              />
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={running || !chatPrompt.trim()}
+                style={{ padding: '8px 16px', fontSize: 13 }}
+              >
+                Send ↵
+              </button>
+            </form>
+          </div>
+
+          {(reports.firmware || reports.software || reports.consistency) && (
+            <div className="validation-grid">
+              <CheckBadges report={reports.firmware} title="Firmware (g++)" />
+              <CheckBadges report={reports.software} title="Software (Vite)" />
+              <CheckBadges report={reports.consistency} title="Contract" />
+            </div>
+          )}
         </div>
-      </section>
 
-      {error && !result && (
-        <div className="inline-error">{error} — the log above shows exactly where.</div>
-      )}
+        {/* ── RIGHT PANE: Code Explorer, Files, Bench & BOM ──────────────── */}
+        <div className="ide-right-pane">
+          {result ? (
+            <>
+              {/* Render Readiness indicators in right pane above code */}
+              {result.simulation && <ReadinessPanel result={result} />}
 
-      {(reports.firmware || reports.software || reports.consistency) && (
-        <section className="validation-grid">
-          <CheckBadges report={reports.firmware} title="Firmware validation (g++)" />
-          <CheckBadges report={reports.software} title="Software validation (npm · tsc · vite)" />
-          <CheckBadges report={reports.consistency} title="Firmware ⇄ software contract" />
-        </section>
-      )}
+              <FileBrowser result={result} />
 
-      {result && (
-        <>
-          {/* A result persisted by an older build has no simulation block. */}
-          {result.simulation && <ReadinessPanel result={result} />}
+              {/* Downloads Bar */}
+              <section className="download-grid">
+                <div className="download-card firmware">
+                  <div className="download-icon">⌘</div>
+                  <h3>Firmware Zip</h3>
+                  <p className="muted">{result.firmware.board} · {result.firmware.language}</p>
+                  <button
+                    type="button"
+                    className="primary-button wide"
+                    disabled={!unlocked}
+                    onClick={() => void firmwareZip()}
+                  >
+                    {unlocked ? '⬇' : '🔒'} Download {result.slug}-firmware.zip
+                  </button>
+                </div>
 
-          {/* Live browser bench: the generated diagram, rendered with real
-              Wokwi elements and clocked by an avr8js core running in-tab. */}
-          <WokwiBench
-            files={result.firmware.files}
-            samples={samplesFromLog(result.simulation?.hardware.log)}
-            provider={result.simulation?.hardware.provider}
-            hardwareReady={result.simulation?.hardware.ready}
-          />
+                <div className="download-card software">
+                  <div className="download-icon">❖</div>
+                  <h3>Software Zip (MERN)</h3>
+                  <p className="muted">Express + React Dashboard</p>
+                  <button
+                    type="button"
+                    className="primary-button wide"
+                    disabled={!unlocked}
+                    onClick={() => void softwareZip()}
+                  >
+                    {unlocked ? '⬇' : '🔒'} Download {result.slug}-software.zip
+                  </button>
+                </div>
+              </section>
 
-          {result.simulation && !unlocked && (
-            <div className="download-locked">
-              🔒 Downloads are locked: {result.simulation.hardware.errored
-                ? 'the hardware simulation provider errored'
-                : !result.simulation.hardware.ready
-                  ? 'hardware simulation failed'
-                  : 'the software gate failed'}
-              . Both indicators must read ✔ before the zips are released.
+              {/* Wokwi Hardware Bench */}
+              <WokwiBench
+                files={result.firmware.files}
+                samples={samplesFromLog(result.simulation?.hardware.log)}
+                provider={result.simulation?.hardware.provider}
+                hardwareReady={result.simulation?.hardware.ready}
+              />
+
+              {result.bom && <BomView result={result} />}
+              <LiveDeviceCheck />
+            </>
+          ) : (
+            <div className="file-browser" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📁</div>
+              <h3>Code & File Explorer</h3>
+              <p>Generated firmware (.ino/.h) and web app files (.tsx/.json) will appear here on the right in interactive folder trees once you trigger the agentic build.</p>
             </div>
           )}
+        </div>
 
-          <section className="download-grid">
-            <div className="download-card firmware">
-              <div className="download-icon">⌘</div>
-              <h3>Firmware</h3>
-              <p className="muted">
-                {result.firmware.board} · {result.firmware.language} · {result.firmware.framework}
-              </p>
-              <ul className="download-files">
-                {result.firmware.files.map((file) => (
-                  <li key={file.path}>{file.path}</li>
-                ))}
-              </ul>
-              <button
-                type="button"
-                className="primary-button wide"
-                disabled={!unlocked}
-                title={unlocked ? '' : 'Locked until hardware AND software both report ready.'}
-                onClick={() => void firmwareZip()}
-              >
-                {unlocked ? '⬇' : '🔒'} Download {result.slug}-firmware.zip
-              </button>
-            </div>
-
-            <div className="download-card software">
-              <div className="download-icon">❖</div>
-              <h3>Software (MERN dashboard)</h3>
-              <p className="muted">
-                Mongo-ready Express + React · runs on your computer · talks to the device over Wi-Fi
-              </p>
-              <ul className="download-files compact">
-                {result.software.files.slice(0, 6).map((file) => (
-                  <li key={file.path}>{file.path}</li>
-                ))}
-                <li className="muted">… {result.software.files.length - 6} more in the zip</li>
-              </ul>
-              <button
-                type="button"
-                className="primary-button wide"
-                disabled={!unlocked}
-                title={unlocked ? '' : 'Locked until hardware AND software both report ready.'}
-                onClick={() => void softwareZip()}
-              >
-                {unlocked ? '⬇' : '🔒'} Download {result.slug}-software.zip
-              </button>
-            </div>
-          </section>
-
-          <section className="after-card">
-            <div className="eyebrow">then, on your bench</div>
-            <ol>
-              {result.firmware.buildSteps.map((step, i) => (
-                <li key={i}>{step}</li>
-              ))}
-            </ol>
-            <div className="engine-note">
-              plan: {result.llm?.plan ?? 'unknown'} · LLM provider that actually ran: {result.llm?.actual ?? 'unknown'}
-              {result.llm?.note ? ` (${result.llm.note})` : ''}
-              {' · '}engine: {result.engine === 'deterministic' ? 'Wireup deterministic synthesis (knowledge base)' : 'LLM draft + terminal gauntlet'}
-              {' · '}iterations: firmware {result.iterations.firmware}, software {result.iterations.software}
-            </div>
-          </section>
-
-          {result.instructions && (
-          <section className="admin-panel">
-            <h3>{result.instructions.path}</h3>
-            <p className="muted tiny">
-              Generated from this build's resolved plan — pins, parts, cadence and the verification
-              record for this run. It also ships inside the firmware zip.
-            </p>
-            <CodeBlock path={result.instructions.path} content={result.instructions.content} defaultOpen />
-          </section>
-          )}
-
-          {result.bom && <BomView result={result} />}
-
-          <LiveDeviceCheck />
-
-          <FileBrowser result={result} />
-        </>
-      )}
+      </div>
     </div>
   );
 }

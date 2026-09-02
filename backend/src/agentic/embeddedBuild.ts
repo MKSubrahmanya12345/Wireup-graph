@@ -10,6 +10,8 @@
  */
 
 import path from 'node:path';
+// ??$$$ Import fs promises for sketch directory creation
+import { mkdir, writeFile } from 'node:fs/promises';
 
 import { env } from '../config/env.js';
 import { materialise, runCommand, type CommandResult } from './terminal.js';
@@ -128,21 +130,58 @@ export async function compileFirmware(
   }
 
   // arduino-cli fallback: compile the .ino with the esp32 core index.
-  const core = 'esp32:esp32';
-  const update = await runCommand(['arduino-cli', 'core', 'update-index'], {
-    cwd: projectDir,
-    timeoutMs: 120_000,
-  });
-  commands.push(update);
-  const installCore = await runCommand(['arduino-cli', 'core', 'install', core], {
-    cwd: projectDir,
-    timeoutMs: 600_000,
-  });
-  commands.push(installCore);
+  // Old index update logic commented out per Rule 2:
+  // const core = 'esp32:esp32';
+  // const update = await runCommand(['arduino-cli', 'core', 'update-index'], {
+  //   cwd: projectDir,
+  //   timeoutMs: 120_000,
+  // });
+  // commands.push(update);
+  // const installCore = await runCommand(['arduino-cli', 'core', 'install', core], {
+  //   cwd: projectDir,
+  //   timeoutMs: 600_000,
+  // });
+  // commands.push(installCore);
 
+  // ??$$$ Skip slow network update-index if esp32 core is already installed
+  const core = 'esp32:esp32';
+  const coreList = await runCommand(['arduino-cli', 'core', 'list'], { cwd: projectDir, timeoutMs: 15_000 });
+  commands.push(coreList);
+  if (!coreList.output.includes('esp32:esp32')) {
+    const update = await runCommand(['arduino-cli', 'core', 'update-index'], { cwd: projectDir, timeoutMs: 60_000 });
+    commands.push(update);
+    const installCore = await runCommand(['arduino-cli', 'core', 'install', core], { cwd: projectDir, timeoutMs: 180_000 });
+    commands.push(installCore);
+  }
+
+  // Old sketch compilation logic commented out per Rule 2:
+  // const sketch = files.find((f) => /\.ino$/.test(f.path));
+  // const fqbn = options.plan.board.id === 'esp32-s3-devkit' ? 'esp32:esp32:esp32s3' : 'esp32:esp32:esp32';
+  // const compile = await runCommand(['arduino-cli', 'compile', '--fqbn', fqbn, sketch ? path.join(projectDir, sketch.path) : projectDir], {
+  //   cwd: projectDir,
+  //   timeoutMs: 600_000,
+  // });
+
+  // ??$$$ arduino-cli requires the parent folder name to match the sketch .ino filename.
   const sketch = files.find((f) => /\.ino$/.test(f.path));
   const fqbn = options.plan.board.id === 'esp32-s3-devkit' ? 'esp32:esp32:esp32s3' : 'esp32:esp32:esp32';
-  const compile = await runCommand(['arduino-cli', 'compile', '--fqbn', fqbn, sketch ? path.join(projectDir, sketch.path) : projectDir], {
+  let targetCompilePath = projectDir;
+
+  if (sketch) {
+    const sketchName = path.basename(sketch.path, '.ino'); // e.g. "arduino-uno-web-status-monitor"
+    const sketchDir = path.join(projectDir, 'arduino-cli-sketch', sketchName);
+    await mkdir(sketchDir, { recursive: true });
+    // Copy all firmware files (sketch + config.h, etc.) into sketchDir so folder name matches sketch filename
+    for (const f of files) {
+      if (f.path.startsWith('firmware/')) {
+        const relName = path.basename(f.path);
+        await writeFile(path.join(sketchDir, relName), f.content, 'utf8');
+      }
+    }
+    targetCompilePath = path.join(sketchDir, `${sketchName}.ino`);
+  }
+
+  const compile = await runCommand(['arduino-cli', 'compile', '--fqbn', fqbn, targetCompilePath], {
     cwd: projectDir,
     timeoutMs: 600_000,
   });

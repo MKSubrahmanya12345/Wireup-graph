@@ -5,9 +5,19 @@ import { useAuth } from '../store/useAuth';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 
+// Old STEPS commented out per Rule 2:
+// const STEPS = [
+//   { to: '/', label: 'Projects', step: '00', end: true },
+//   { to: '/design', label: 'Prompt & Questions', step: '01' },
+//   { to: '/graph', label: 'Graph', step: '02' },
+//   { to: '/build', label: 'Agentic Build', step: '03' },
+// ];
+
+// ??$$$ Updated STEPS including Hardware Spec Graph step (01.5)
 const STEPS = [
   { to: '/', label: 'Projects', step: '00', end: true },
   { to: '/design', label: 'Prompt & Questions', step: '01' },
+  { to: '/spec-graph', label: 'Spec Graph', step: '01.5' },
   { to: '/graph', label: 'Graph', step: '02' },
   { to: '/build', label: 'Agentic Build', step: '03' },
 ];

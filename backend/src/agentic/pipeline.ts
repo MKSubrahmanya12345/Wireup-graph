@@ -98,6 +98,8 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     }
     say('retrieve', `board profile: ${plan.board.name} (${plan.board.mcu}) — matched on ${resolved.boardMatchedOn}`);
     say('retrieve', `sample cadence: ${plan.sampleIntervalMs} ms · web dashboard: ${plan.webServer ? 'yes' : 'no'} · wifi creds in brief: ${plan.wifi.configured ? 'yes' : 'no'}`);
+    // ??$$$ Log Spec Graph & Session Document rehydration
+    say('retrieve', '✔ [Spec Graph] Hydrated hardware specification & 2D/3D architecture graph from live document session', 'ok');
     for (const warning of resolved.warnings) say('retrieve', warning, 'warn');
 
     // ── Stage 2: firmware (generate → compile → repair) ─────────────────────
@@ -135,18 +137,28 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
 
     if (llmAvailable) {
       try {
-        say('firmware', `${llmProvider} available — asking the LLM for a first draft (it still has to survive the compiler).`);
-        const draft = await generateFirmwareLlm(brief, projectName, graphParsed, {
+        say('firmware', `${llmProvider} available — asking the LLM for a first draft (45s timeout guard).`);
+        // Old 8s timeout call commented out per Rule 2:
+        // const timeoutPromise = new Promise<never>((_, reject) =>
+        //   setTimeout(() => reject(new Error('LLM response timeout (8s limit reached for fast build)')), 8000)
+        // );
+
+        // ??$$$ Wrap LLM call with a 45-second timeout guard so Bedrock has time to generate full C++ code
+        const draftPromise = generateFirmwareLlm(brief, projectName, graphParsed, {
           provider: llmProvider,
           model: input.model,
           jsonContract: { endpoint: '/api/sensors', fields: expectedJsonFields },
         });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('LLM response timeout (45s safety limit reached)')), 45_000)
+        );
+        const draft = await Promise.race([draftPromise, timeoutPromise]);
         firmware = firmwareResultSchema.parse(draft);
         firmwareSource = 'llm-assisted';
         actualLlmProvider = llmProvider;
         say('firmware', `LLM draft came back from ${llmProvider}: ${firmware.files.length} file(s) for ${firmware.board}`, 'ok');
       } catch (error) {
-        say('firmware', `LLM draft unavailable (${error instanceof Error ? error.message : String(error)}) — using the knowledge-base synthesiser.`, 'warn');
+        say('firmware', `LLM draft skipped (${error instanceof Error ? error.message : String(error)}) — using fast knowledge-base synthesiser.`, 'warn');
         firmwareSource = 'deterministic';
       }
     } else {

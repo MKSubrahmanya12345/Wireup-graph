@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+// Old imports commented out per Rule 2:
+// const {
+//   decomposePromptToSpecGraph,
+//   specGraphToArchitectureGraph,
+//   specGraphProjectSchema,
+// } = await import('../src/agentic/specGraph.ts');
+
+// ??$$$ Updated imports including dirty propagation and handoff contract functions
 const {
   decomposePromptToSpecGraph,
   specGraphToArchitectureGraph,
   specGraphProjectSchema,
+  applyUserAnswersToSpecGraph,
+  isSpecGraphReadyForHandoff,
 } = await import('../src/agentic/specGraph.ts');
 
 describe('SpecGraph Decomposition Engine', () => {
@@ -75,5 +85,44 @@ describe('SpecGraph Decomposition Engine', () => {
 
     const arch = specGraphToArchitectureGraph(specGraph);
     assert.ok(arch.nodes.length >= 4);
+  });
+
+  // ??$$$ Test generic freestyle capability decomposition, Ask/Decide gate, dirty propagation & handoff contract
+  it('decomposes Arduino Uno + LED + external website status + button with gap detection and Ask/Decide gate', () => {
+    const prompt = 'arduino uno + led + external website status + button';
+    const specGraph = decomposePromptToSpecGraph({ prompt });
+
+    // Validate root manifest branches structure (Section 2)
+    assert.ok(Array.isArray(specGraph.branches));
+    assert.ok(specGraph.branches.length >= 4);
+
+    // Verify nodes created
+    const nodeIds = Object.keys(specGraph.nodes);
+    assert.ok(nodeIds.includes('node_board_01'));
+    assert.ok(nodeIds.includes('node_connectivity_01'));
+    assert.ok(nodeIds.includes('node_led_01'));
+    assert.ok(nodeIds.includes('node_button_01'));
+    assert.ok(nodeIds.includes('node_firmware_wifi_01'));
+    // Enclosure not implied -> never spawned
+    assert.equal(nodeIds.includes('node_enclosure_01'), false);
+
+    // Verify Ask/Decide gate: connectivity module question asked because it passes 3 rules
+    const connNode = specGraph.nodes['node_connectivity_01'];
+    assert.equal(connNode.open_questions.length, 1);
+    assert.equal(connNode.open_questions[0].id, 'connectivity_module');
+
+    // Verify Ask/Decide gate: LED resistor failed gate test #2 (safe default exists) -> assumption logged, never asked!
+    const ledNode = specGraph.nodes['node_led_01'];
+    assert.equal(ledNode.open_questions.length, 0);
+    assert.ok(ledNode.assumptions.some((a) => a.claim.includes('220Ω')));
+
+    // Test dirty propagation & answer resolution (Section 5 & 6)
+    const updatedGraph = applyUserAnswersToSpecGraph(specGraph, {
+      connectivity_module: 'ESP8266 (serial bridge)',
+    });
+
+    assert.equal(updatedGraph.question_queue.length, 0);
+    assert.equal(updatedGraph.nodes['node_connectivity_01'].status, 'user_confirmed');
+    assert.equal(isSpecGraphReadyForHandoff(updatedGraph), true);
   });
 });
