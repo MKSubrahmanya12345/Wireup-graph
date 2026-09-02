@@ -393,7 +393,7 @@ export default function BuildPage() {
           <div className="empty-mark">⚡</div>
           <h1>Nothing to build yet</h1>
           <p className="muted">The agentic build consumes the validated graph from page 02.</p>
-          <Link to="/" className="primary-button as-link">← Start with the prompt</Link>
+          <Link to="/design" className="primary-button as-link">← Start with the prompt</Link>
         </div>
       </div>
     );

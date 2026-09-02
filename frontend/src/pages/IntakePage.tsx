@@ -1,11 +1,8 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import IntakeScene from '../three/IntakeScene';
 import { evaluateGraphValidity } from '../lib/graphValidity';
-import { api } from '../services/api';
-import { useAuth } from '../store/useAuth';
-import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { Question } from '../types/session';
@@ -27,29 +24,11 @@ const BEDROCK_MODELS = [
 /**
  * Page 01 — Prompt & questions.
  * Tell Wireup what you own and what you want; the engine decides what it can
- * and asks only what's left.
+ * and asks only what's left. Reached from the homepage prompt box (which
+ * pre-fills the brief and auto-starts) or by opening a saved project.
  */
 export default function IntakePage() {
   const navigate = useNavigate();
-  const authedUser = useAuth((state) => state.user);
-  const loadResult = useBuildStore((state) => state.loadResult);
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [demoError, setDemoError] = useState<string | null>(null);
-
-  /** One click: fetch the pre-baked weather-station project → land on /sim. */
-  const jumpToDemo = async () => {
-    setDemoBusy(true);
-    setDemoError(null);
-    try {
-      const { result } = await api.demoBuild();
-      loadResult(result);
-      navigate('/sim');
-    } catch (err) {
-      setDemoError(err instanceof Error ? err.message : 'Could not load the demo project.');
-    } finally {
-      setDemoBusy(false);
-    }
-  };
 
   const stage = useDesignSession((state) => state.stage);
   const brief = useDesignSession((state) => state.brief);
@@ -65,6 +44,8 @@ export default function IntakePage() {
   const skipQuestions = useDesignSession((state) => state.skipQuestions);
   const revision = useDesignSession((state) => state.revision);
   const setLlmOptions = useDesignSession((state) => state.setLlmOptions);
+  const autoStart = useDesignSession((state) => state.autoStart);
+  const clearAutoStart = useDesignSession((state) => state.clearAutoStart);
   const nodeCount = useGraphStore((state) => state.graph.nodes.length);
   const graph = useGraphStore((state) => state.graph);
   const issues = useGraphStore((state) => state.issues);
@@ -72,6 +53,15 @@ export default function IntakePage() {
   const verification = useGraphStore((state) => state.verification);
 
   const busy = stage === 'interpreting' || stage === 'planning';
+
+  // Homepage prompt box: the brief arrived pre-filled — kick off pass 0
+  // immediately (once; the flag is cleared so a remount never re-fires).
+  useEffect(() => {
+    if (autoStart && brief.trim() && stage === 'idle') {
+      clearAutoStart();
+      void startInterpretation();
+    }
+  }, [autoStart, brief, stage, clearAutoStart, startInterpretation]);
 
   // The SAME validity check page 02 gates its build button with (M3 #22).
   const validity = evaluateGraphValidity({ graph, issues, blocking, verification });
@@ -95,23 +85,6 @@ export default function IntakePage() {
           device knowledge base, asks only what it genuinely can't decide, then takes
           you to the graph.
         </p>
-        <div className="demo-jump">
-          <button type="button" className="demo-jump-btn" onClick={() => void jumpToDemo()} disabled={demoBusy}>
-            {demoBusy ? 'Loading the demo project…' : '⚡ Skip the pipeline — demo weather station → simulator'}
-          </button>
-          <span className="tiny muted">
-            Pre-baked: “esp32 + bme280 weather station logging to a website i can open at home”.
-            Lands you on page 04 with the circuit, the code and the live website.
-            {!authedUser && ' No login needed for this.'}
-          </span>
-          {!authedUser && (
-            <span className="tiny muted">
-              The full pipeline below still needs an account — <Link to="/login">sign in</Link> to
-              run your own brief.
-            </span>
-          )}
-          {demoError && <span className="tiny bad">{demoError}</span>}
-        </div>
       </section>
 
       <section className="composer-card">

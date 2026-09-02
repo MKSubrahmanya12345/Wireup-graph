@@ -295,6 +295,68 @@ button { font-family: inherit; }
 .empty-state .primary-button { margin-top: 8px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   PAGE 00 — PROJECTS (homepage)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.projects-hero { max-width: 760px; display: flex; flex-direction: column; gap: 10px; }
+.projects-hero .muted { line-height: 1.7; }
+
+.projects-page .demo-jump { margin-top: -6px; }
+
+.projects-section { margin-top: 10px; display: flex; flex-direction: column; gap: 16px; }
+.projects-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+}
+.projects-head-note { display: flex; align-items: center; gap: 10px; max-width: 420px; text-align: right; }
+.projects-empty { margin: 4vh auto 0; }
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.project-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+.project-card:hover,
+.project-card:focus-visible {
+  border-color: var(--cyan-dim);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px #22d3ee12;
+  outline: none;
+}
+.project-card h3 { font-size: 15px; color: var(--ink); }
+.pc-summary {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 20px;
+}
+.pc-meta {
+  display: flex; align-items: center; gap: 8px;
+  font: 500 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.pc-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.pc-delete:hover:not(:disabled) { color: var(--red); border-color: var(--red); background: transparent; }
+
+.primary-button.small { padding: 8px 14px; font-size: 13px; border-radius: 9px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    PAGE 01 — INTAKE
    ═══════════════════════════════════════════════════════════════════════════ */
 .intake-hero { max-width: 760px; display: flex; flex-direction: column; gap: 10px; }

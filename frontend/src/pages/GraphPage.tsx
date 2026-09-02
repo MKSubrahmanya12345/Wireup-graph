@@ -147,7 +147,7 @@ export default function GraphPage() {
               : 'Start on page 01: describe the parts you have, then come back here for the validated graph.'}
           </p>
           {!working && (
-            <Link to="/" className="primary-button as-link">
+            <Link to="/design" className="primary-button as-link">
               ← Write the prompt
             </Link>
           )}
