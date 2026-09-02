@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { api } from '../services/api';
 import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useGraphStore } from './useGraphStore';
+import { useProjectsStore } from './useProjectsStore';
+import type { ProjectDetail } from '../types/architecture';
 import type {
   InterpretResponse,
   Question,
@@ -27,14 +29,29 @@ interface SessionState {
   acceptedRisks: string[];
 
   error: string | null;
-  
+
   /** Selected LLM options for this session */
   llmOptions: LlmOptions;
   setLlmOptions: (options: LlmOptions) => void;
 
+  /**
+   * One design session == one project. Set by beginProject/hydrateProject so
+   * every plan of this session files into the SAME project (local-mode key
+   * when there is no Mongo id — see useProjectsStore.recordPlan).
+   */
+  localProjectId: string | null;
+  /** True for one tick: page 01 should kick off interpretation on mount. */
+  autoStart: boolean;
+
   setBrief: (brief: string) => void;
   setAnswer: (id: string, value: string) => void;
   acceptRisk: (id: string) => void;
+
+  /** Homepage prompt box: wipe the bench, start a brand-new project. */
+  beginProject: (brief: string) => void;
+  /** Open a saved project: hydrate graph + brief into the live stores. */
+  hydrateProject: (detail: ProjectDetail) => void;
+  clearAutoStart: () => void;
 
   /** Stage 1 — ask the AI to decide everything it can. */
   startInterpretation: (options?: LlmOptions) => Promise<void>;
@@ -80,6 +97,9 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   llmOptions: {},
   setLlmOptions: (options) => set({ llmOptions: options }),
 
+  localProjectId: null,
+  autoStart: false,
+
   setBrief: (brief) => set({ brief }),
 
   setAnswer: (id, value) =>
@@ -91,6 +111,66 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         ? state
         : { acceptedRisks: [...state.acceptedRisks, id] },
     ),
+
+  beginProject: (brief) => {
+    const trimmed = brief.trim();
+    if (!trimmed) {
+      set({ error: 'Describe what you want to build first.' });
+      return;
+    }
+    // A new prompt from the homepage is a NEW project: clear the previous
+    // design off the bench so nothing from the old session leaks into it.
+    useGraphStore.getState().reset();
+    set({
+      stage: 'idle',
+      brief: trimmed,
+      questions: [],
+      answers: {},
+      requirements: null,
+      assumptions: [],
+      feedback: [],
+      revision: 0,
+      acceptedRisks: [],
+      error: null,
+      localProjectId: `local:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      autoStart: true,
+    });
+  },
+
+  hydrateProject: (detail) => {
+    // Bring a saved project back onto the bench. The graph store carries the
+    // canonical copy; this store carries the brief that produced it.
+    const brief =
+      detail.revisions?.[detail.revisions.length - 1]?.request ?? detail.summary ?? '';
+    useGraphStore.setState({
+      graph: detail.graph,
+      verification: detail.verification,
+      projectId: detail.id.startsWith('local:') ? null : detail.id,
+      selectedNodeId: detail.graph.nodes[0]?.id ?? null,
+      status: 'idle',
+      error: null,
+      lastUpdated: new Date().toISOString(),
+      issues: [],
+      blocking: false,
+      repairs: [],
+    });
+    set({
+      stage: detail.graph.nodes.length > 0 ? 'reviewing' : 'idle',
+      brief,
+      questions: [],
+      answers: {},
+      requirements: null,
+      assumptions: [],
+      feedback: [],
+      revision: detail.graph.nodes.length > 0 ? 1 : 0,
+      acceptedRisks: [],
+      error: null,
+      localProjectId: detail.id,
+      autoStart: false,
+    });
+  },
+
+  clearAutoStart: () => set({ autoStart: false }),
 
   startInterpretation: async (options?: LlmOptions) => {
     const { brief, revision, answers, questions, requirements, feedback } = get();
@@ -231,6 +311,29 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         lastUpdated: new Date().toISOString(),
       }));
 
+      // File this draft into the projects list (server id when the API
+      // persists, the session's local key otherwise) so the homepage shows
+      // every project, not just the last one touched.
+      const prevKey = get().localProjectId;
+      const filedId = useProjectsStore.getState().recordPlan({
+        key: prevKey,
+        projectId: returnedId,
+        name: nextGraph.project,
+        summary: nextGraph.summary,
+        brief: brief.trim(),
+        graph: nextGraph,
+        verification,
+      });
+      if (returnedId) {
+        // This project now lives on the server — retire its local-mode key.
+        if (prevKey && prevKey.startsWith('local:')) {
+          useProjectsStore.getState().forgetLocal(prevKey);
+        }
+        set({ localProjectId: returnedId });
+      } else {
+        set({ localProjectId: filedId });
+      }
+
       set((state) => ({
         stage: 'reviewing',
         revision: state.revision + 1,
@@ -271,6 +374,8 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
       revision: 0,
       acceptedRisks: [],
       error: null,
+      localProjectId: null,
+      autoStart: false,
     });
   },
 }));

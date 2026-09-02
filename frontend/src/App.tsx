@@ -9,6 +9,7 @@ import BillingPage from './pages/BillingPage';
 import BuildPage from './pages/BuildPage';
 import GraphPage from './pages/GraphPage';
 import IntakePage from './pages/IntakePage';
+import ProjectsPage from './pages/ProjectsPage';
 import SimPage from './pages/SimPage';
 import { useAuth } from './store/useAuth';
 
@@ -41,8 +42,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 /**
  * Public shell: same workspace chrome, but NO login wall. Used for the
- * homepage and the simulator so the one-click demo project works without an
- * account. Everything that truly needs auth (real builds, billing, admin)
+ * simulator so the one-click demo project works without an account.
+ * Everything that truly needs auth (projects, real builds, billing, admin)
  * stays behind RequireAuth; the API enforces the same split server-side.
  */
 function PublicShell({ children }: { children: ReactNode }) {
@@ -83,8 +84,8 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 }
 
 /**
- * Wireup — three pages behind a login:
- *   01 prompt & questions · 02 architecture graph · 03 agentic build.
+ * Wireup — a workbench homepage plus the three-page pipeline behind a login:
+ *   00 projects · 01 prompt & questions · 02 architecture graph · 03 agentic build.
  */
 export default function App() {
   const bootstrap = useAuth((state) => state.bootstrap);
@@ -99,9 +100,17 @@ export default function App() {
       <Route
         path="/"
         element={
-          <PublicShell>
+          <RequireAuth>
+            <ProjectsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/design"
+        element={
+          <RequireAuth>
             <IntakePage />
-          </PublicShell>
+          </RequireAuth>
         }
       />
       <Route

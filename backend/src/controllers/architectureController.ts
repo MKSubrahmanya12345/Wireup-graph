@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import { isPersistenceEnabled } from '../config/db.js';
 import { Project } from '../models/Project.js';
+import { claimOwnership } from './projectController.js';
 import { planAndVerify } from '../services/architectureService.js';
 import { interpretBrief as runInterpretation } from '../services/interpretService.js';
 import { extractJson, isLlmAvailable, LlmError, type LlmProvider } from '../services/llmService.js';
@@ -48,8 +49,17 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   let project = null;
   if (isPersistenceEnabled() && projectId) {
     if (!mongoose.isValidObjectId(projectId)) throw ApiError.badRequest('Invalid projectId.');
-    project = await Project.findById(projectId);
-    if (!project) throw ApiError.notFound('Project not found.');
+    // Scoped to the caller: another account's id (or a stale one from a
+    // different browser profile) resolves to null and simply starts a fresh
+    // project below instead of writing into someone else's design.
+    project = await Project.findOne({
+      _id: projectId,
+      $or: [
+        { ownerId: req.user?.sub ?? '' },
+        { ownerId: '' },
+        { ownerId: { $exists: false } },
+      ],
+    });
   }
 
   // An explicitly supplied graph wins; otherwise continue from the saved one.
@@ -96,7 +106,14 @@ export const planArchitecture = asyncHandler(async (req: Request, res: Response)
   }
 
   if (!project) {
-    project = await Project.create({ name: graph.project, summary: graph.summary });
+    project = await Project.create({
+      name: graph.project,
+      summary: graph.summary,
+      ownerId: req.user?.sub ?? '',
+    });
+  } else {
+    // A legacy (pre-account) doc is claimed by the first session that saves to it.
+    claimOwnership(project, req);
   }
 
   const revision = {

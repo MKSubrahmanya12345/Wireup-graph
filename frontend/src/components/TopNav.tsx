@@ -6,14 +6,16 @@ import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 
 const STEPS = [
-  { to: '/', label: 'Prompt & Questions', step: '01', end: true },
+  { to: '/', label: 'Projects', step: '00', end: true },
+  { to: '/design', label: 'Prompt & Questions', step: '01' },
   { to: '/graph', label: 'Graph', step: '02' },
   { to: '/build', label: 'Agentic Build', step: '03' },
 ];
 
 /**
- * Top navigation: brand, the three-step pipeline, API status, and the user.
- * This replaces the old sidebar — the product is a three-page flow.
+ * Top navigation: brand, the workbench + three-step pipeline, API status, and
+ * the user. This replaces the old sidebar — the product is a project list
+ * plus a three-page flow.
  */
 export default function TopNav() {
   const user = useAuth((state) => state.user);

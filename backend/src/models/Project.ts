@@ -16,6 +16,8 @@ export interface RevisionDoc {
 
 export interface ProjectDoc {
   _id: Types.ObjectId;
+  /** Owning account (auth `sub`). Empty on legacy docs created before accounts. */
+  ownerId: string;
   name: string;
   summary: string;
   graph: Record<string, unknown>;
@@ -37,6 +39,9 @@ const revisionSchema = new Schema<RevisionDoc>(
 
 const projectSchema = new Schema<ProjectDoc>(
   {
+    // '' marks pre-account legacy docs — claimable by the first session that
+    // touches them, so old data never becomes unreachable.
+    ownerId: { type: String, default: '', index: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     summary: { type: String, default: '', maxlength: 600 },
     graph: { type: Schema.Types.Mixed, default: {} },
@@ -46,7 +51,7 @@ const projectSchema = new Schema<ProjectDoc>(
   { timestamps: true },
 );
 
-projectSchema.index({ updatedAt: -1 });
+projectSchema.index({ ownerId: 1, updatedAt: -1 });
 
 // Expose `id` instead of `_id` so the frontend never deals in ObjectIds.
 projectSchema.set('toJSON', {

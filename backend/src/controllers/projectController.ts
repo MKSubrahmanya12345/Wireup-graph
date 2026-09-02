@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 
 import { isPersistenceEnabled } from '../config/db.js';
-import { Project } from '../models/Project.js';
+import { Project, type ProjectDoc } from '../models/Project.js';
 import { createProjectBodySchema } from '../schemas/architecture.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
 
@@ -15,11 +15,34 @@ function requirePersistence(): void {
   }
 }
 
-/** GET /api/projects */
-export const listProjects = asyncHandler(async (_req: Request, res: Response) => {
+/**
+ * Projects are per-account: a session only ever sees docs it owns. Legacy docs
+ * created before accounts existed (ownerId '' / missing) remain reachable to
+ * everyone rather than becoming dead data — and are claimed by whoever touches
+ * them next (see claimOwnership).
+ */
+function ownerFilter(req: Request): Record<string, unknown> {
+  const user = req.user;
+  if (!user) return { ownerId: '__nobody__' };
+  if (user.role === 'admin') return {};
+  return { $or: [{ ownerId: user.sub }, { ownerId: '' }, { ownerId: { $exists: false } }] };
+}
+
+/** First touch of an unowned legacy doc claims it for this session. */
+async function claimOwnership(project: ProjectDoc, req: Request): Promise<void> {
+  if (!project.ownerId && req.user) {
+    project.ownerId = req.user.sub;
+  }
+}
+
+/** GET /api/projects — the signed-in user's projects, newest first. */
+export const listProjects = asyncHandler(async (req: Request, res: Response) => {
   requirePersistence();
 
-  const projects = await Project.find()
+  // The home list is strictly "mine" — even for admins. The admin console has
+  // its own views; this page is a personal workbench.
+  const ownerId = req.user?.sub ?? '__nobody__';
+  const projects = await Project.find({ ownerId })
     .sort({ updatedAt: -1 })
     .limit(50)
     .select('name summary graph.nodes updatedAt')
@@ -45,7 +68,10 @@ export const createProject = asyncHandler(async (req: Request, res: Response) =>
   const parsed = createProjectBodySchema.safeParse(req.body ?? {});
   if (!parsed.success) throw ApiError.badRequest('Invalid project payload.', parsed.error.flatten());
 
-  const project = await Project.create(parsed.data);
+  const project = await Project.create({
+    ...parsed.data,
+    ownerId: req.user?.sub ?? '',
+  });
   res.status(201).json({
     id: String(project._id),
     name: project.name,
@@ -55,14 +81,19 @@ export const createProject = asyncHandler(async (req: Request, res: Response) =>
   });
 });
 
+async function findOwnedProject(req: Request, rawId: unknown): Promise<ProjectDoc | null> {
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  if (typeof id !== 'string' || !mongoose.isValidObjectId(id)) {
+    throw ApiError.badRequest('Invalid project id.');
+  }
+  return Project.findOne({ _id: id, ...ownerFilter(req) });
+}
+
 /** GET /api/projects/:id */
 export const getProject = asyncHandler(async (req: Request, res: Response) => {
   requirePersistence();
 
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest('Invalid project id.');
-
-  const project = await Project.findById(id).lean();
+  const project = await findOwnedProject(req, req.params.id);
   if (!project) throw ApiError.notFound('Project not found.');
 
   res.status(200).json({
@@ -87,11 +118,11 @@ export const getProject = asyncHandler(async (req: Request, res: Response) => {
 export const deleteProject = asyncHandler(async (req: Request, res: Response) => {
   requirePersistence();
 
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) throw ApiError.badRequest('Invalid project id.');
+  const project = await findOwnedProject(req, req.params.id);
+  if (!project) throw ApiError.notFound('Project not found.');
 
-  const result = await Project.findByIdAndDelete(id);
-  if (!result) throw ApiError.notFound('Project not found.');
-
+  await Project.deleteOne({ _id: project._id });
   res.status(200).json({ ok: true });
 });
+
+export { claimOwnership };
