@@ -231,7 +231,7 @@ export interface Plan {
   name: string;
   amountPaise: number;
   currency: 'INR';
-  llmTier: 'groq' | 'gemini';
+  llmTier: 'bedrock';
   features: string[];
   pricingPending: boolean;
 }
@@ -279,7 +279,7 @@ export interface AdminOverview {
   adapters: {
     payment: { mode: string; detail: string };
     sim: { mode: string; detail: string };
-    llm: { gemini: boolean; groq: boolean };
+    llm: { bedrock: boolean };
   };
 }
 

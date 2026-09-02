@@ -11,7 +11,6 @@ import { useGraphStore } from '../store/useGraphStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { toast } from '../store/useToastStore';
 import type { AgenticBuildResult, ValidationReport } from '../types/build';
-import type { LlmProvider } from '../types/llm';
 
 /**
  * Two INDEPENDENT readiness indicators (M4).
@@ -334,10 +333,11 @@ function FileBrowser({ result }: { result: AgenticBuildResult }) {
  * The terminal stays open while the engine retrieves, generates, compiles,
  * installs, builds and cross-checks. Two zip files come out.
  */
-const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[] }[] = [
-  { value: 'groq', label: 'Groq', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
-  { value: 'bedrock', label: 'AWS Bedrock', models: ['moonshotai.kimi-k2.5', 'minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
-  { value: 'gemini', label: 'Google Gemini', models: ['gemini-2.5-flash'] },
+const BEDROCK_MODELS = [
+  'moonshotai.kimi-k2.5',
+  'minimax.minimax-m2.5',
+  'amazon.nova-pro-v1:0',
+  'anthropic.claude-3-sonnet-20240229-v1:0',
 ];
 
 export default function BuildPage() {
@@ -360,20 +360,13 @@ export default function BuildPage() {
 
   const canRun = graph.nodes.length > 0 && !running;
 
-  // LLM provider/model selection for agentic build
-  const [provider, setProvider] = useState<LlmProvider>(sessionLlmOptions.provider ?? 'groq');
+  // LLM model selection for the agentic build (AWS Bedrock is the only provider)
   const [model, setModel] = useState<string>(
-    sessionLlmOptions.model ?? LLM_PROVIDER_OPTIONS[0].models[0]
+    sessionLlmOptions.model ?? BEDROCK_MODELS[0]
   );
 
-  const handleProviderChange = (newProvider: LlmProvider) => {
-    setProvider(newProvider);
-    const models = LLM_PROVIDER_OPTIONS.find((p) => p.value === newProvider)?.models ?? [];
-    setModel(models[0] ?? '');
-  };
-
   const handleRun = () => {
-    void run({ provider, model });
+    void run({ provider: 'bedrock', model });
   };
 
   // Downloads unlock only when BOTH indicators pass (M4 #28).
@@ -434,22 +427,12 @@ export default function BuildPage() {
           </Link>
           <div className="build-llm-select" style={{ display: 'inline-flex', gap: 8, marginLeft: 10, alignItems: 'center' }}>
             <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
-              disabled={running}
-              title="LLM Provider"
-            >
-              {LLM_PROVIDER_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-            <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={running}
-              title="Model"
+              title="Model (AWS Bedrock)"
             >
-              {LLM_PROVIDER_OPTIONS.find((p) => p.value === provider)?.models.map((m) => (
+              {BEDROCK_MODELS.map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>

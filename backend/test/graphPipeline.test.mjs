@@ -283,34 +283,22 @@ describe('planAndVerify (end to end, stubbed LLM)', () => {
     sources: [{ title: 'Stub source', url: 'https://example.com', usedFor: 'test' }],
   };
 
-  let server;
-  let port;
+  let stub;
   let plannerCalls = 0;
   let verifierCalls = 0;
 
   before(async () => {
-    server = http.createServer((req, res) => {
-      let body = '';
-      req.on('data', (chunk) => { body += chunk; });
-      req.on('end', () => {
-        const system = JSON.parse(body).messages?.[0]?.content ?? '';
-        const isPlanner = system.includes('senior systems engineer');
-        if (isPlanner) plannerCalls += 1; else verifierCalls += 1;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(isPlanner ? PLANNER : VERIFIER) } }],
-        }));
-      });
+    const { startBedrockStub, applyBedrockStubEnv } = await import('./bedrockStub.mjs');
+    stub = await startBedrockStub((system) => {
+      const isPlanner = system.includes('senior systems engineer');
+      if (isPlanner) plannerCalls += 1; else verifierCalls += 1;
+      return JSON.stringify(isPlanner ? PLANNER : VERIFIER);
     });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    port = server.address().port;
-
-    process.env.GROQ_API_KEY = 'stub-key';
-    process.env.GROQ_BASE_URL = `http://127.0.0.1:${port}/openai/v1`;
+    applyBedrockStubEnv(stub.port);
     process.env.LOG_LEVEL = 'silent';
   });
 
-  after(() => server.close());
+  after(() => stub.close());
 
   it('returns a renderable graph plus its repairs and validation', async () => {
     const { planAndVerify } = await import('../src/services/architectureService.ts');

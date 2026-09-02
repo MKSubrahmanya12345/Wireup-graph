@@ -81,7 +81,7 @@ env-var change, not a rebuild.
 | --- | --- | --- | --- | --- |
 | Payments | `PaymentProvider` (`checkout`/`verifyWebhook`/`refund`) | `MockPaymentProvider` — the fake checkout **self-fires its own webhook** | `RazorpayAdapter` (Orders REST + HMAC webhook) | `PAYMENT_MODE=auto\|mock\|razorpay` |
 | Hardware sim | `HardwareSimProvider` (`runSim(plan)`) | `MockHardwareSimProvider` — deterministic virtual bench computed from the resolved plan | `VelxioSimProvider` (`POST {VELXIO_URL}/simulate`) | `SIM_MODE=auto\|mock\|velxio` |
-| LLM (Pro tier) | `callLlm` provider selector | Gemini absent → **logged** fallback to Groq | Gemini `generateContent` | user's plan (see below) |
+| LLM | `callLlm` (AWS Bedrock) | no credentials → deterministic knowledge-base engine | Bedrock Converse API | AWS credentials + `AWS_REGION` |
 
 1. **Billing** — `subscriptions`, `payments`, `webhookevents`, `usageevents`
    (Mongo when `MONGO_URI` is set, a JSON file otherwise).
@@ -92,10 +92,8 @@ env-var change, not a rebuild.
    admin (`ADMIN_EMAIL`/`ADMIN_PASSWORD`), `requireAdmin` on every
    `/api/admin/*` route, and a `/admin` console: Users, Payments, Revenue,
    Usage and the Webhook log.
-3. **Tier gating** — `pipeline.ts` selects the model tier from the **user's
-   plan**, not a global env var: free → Groq, pro → Gemini. The provider that
-   *actually ran* (after any fallback) is logged per build and stored on the
-   usage record.
+3. **Provider accounting** — every build runs on AWS Bedrock. The provider
+   that *actually ran* is logged per build and stored on the usage record.
 4. **Simulation stage** — the hardware simulator runs on every build and
    produces an independent verdict from the software gate. Two indicators
    ("Hardware ready ✔/✘", "Software ready ✔/✘"); the downloads unlock only
@@ -133,8 +131,7 @@ Pricing is **not** set: every plan is a ₹0 placeholder in
 | `AGENTIC_WOKWI=0` | skip the Wokwi headless simulation gate (default on; auto-skips without `wokwi-cli`/token) |
 | `WOKWI_CLI_TOKEN` | free token from https://wokwi.com/dashboard/ci — enables the sim gate |
 | `AGENTIC_MAX_REPAIR_LOOPS=n` | repair rounds per artifact (default 3) |
-| `GROQ_API_KEY` / Bedrock creds | enables LLM first-draft, **diagnostics-fed repair**, and multi-turn revision |
-| `GEMINI_API_KEY` | the Pro tier's model; absent → logged fallback to Groq |
+| AWS Bedrock credentials (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` + `AWS_REGION`) | enables LLM first-draft, **diagnostics-fed repair**, and multi-turn revision |
 | `PAYMENT_MODE=mock\|razorpay\|auto` | which payment adapter is live (default `auto`) |
 | `SIM_MODE=mock\|velxio\|auto` | which hardware simulator is live (default `auto`) |
 | `SIM_FORCE_FAIL=1` / `SIM_FORCE_ERROR=1` | mock-sim test hooks: fail the circuit / error the provider |

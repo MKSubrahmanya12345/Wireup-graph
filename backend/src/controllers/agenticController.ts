@@ -11,8 +11,7 @@ import { logger } from '../config/logger.js';
 
 /**
  * Per-build accounting: which user ran it, on which plan, with which LLM
- * provider ACTUALLY running (after any Gemini→Groq fallback). Feeds the
- * admin panel's Usage view.
+ * provider ACTUALLY running. Feeds the admin panel's Usage view.
  */
 async function recordBuildUsage(
   user: { sub: string; email: string } | undefined,
@@ -52,7 +51,7 @@ const bodySchema = z.object({
   brief: z.string().trim().min(1, 'A brief is required.').max(6000),
   projectName: z.string().trim().max(120).optional(),
   graph: z.unknown(),
-  provider: z.enum(['groq', 'bedrock', 'gemini']).optional(),
+  provider: z.enum(['bedrock']).optional(),
   model: z.string().optional(),
   // Page-01's sample-interval answer — honored in firmware/config.h.
   sampleIntervalMs: z.coerce.number().int().min(1000).max(600000).optional(),

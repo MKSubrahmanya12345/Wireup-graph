@@ -9,7 +9,6 @@ import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { Question } from '../types/session';
-import type { LlmProvider } from '../types/llm';
 
 const SUGGESTIONS = [
   'a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer',
@@ -18,10 +17,11 @@ const SUGGESTIONS = [
   'esp32 cam-free security: pir motion sensor + buzzer + led, web dashboard on my laptop',
 ];
 
-const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string; models: string[] }[] = [
-  { value: 'groq', label: 'Groq', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
-  { value: 'bedrock', label: 'AWS Bedrock', models: ['moonshotai.kimi-k2.5', 'minimax.minimax-m2.5', 'amazon.nova-pro-v1:0', 'anthropic.claude-3-sonnet-20240229-v1:0'] },
-  { value: 'gemini', label: 'Google Gemini', models: ['gemini-2.5-flash'] },
+const BEDROCK_MODELS = [
+  'moonshotai.kimi-k2.5',
+  'minimax.minimax-m2.5',
+  'amazon.nova-pro-v1:0',
+  'anthropic.claude-3-sonnet-20240229-v1:0',
 ];
 
 /**
@@ -76,19 +76,12 @@ export default function IntakePage() {
   // The SAME validity check page 02 gates its build button with (M3 #22).
   const validity = evaluateGraphValidity({ graph, issues, blocking, verification });
 
-  // LLM provider/model selection
-  const [provider, setProvider] = useState<LlmProvider>('groq');
-  const [model, setModel] = useState<string>(LLM_PROVIDER_OPTIONS[0].models[0]);
+  // LLM model selection (AWS Bedrock is the only provider)
+  const [model, setModel] = useState<string>(BEDROCK_MODELS[0]);
 
   // The graph used to auto-navigate the moment it existed. It no longer does:
   // page 01 now owns an explicit "Complete" gate (M3) that only enables once
   // the graph passes the very same validity check page 02 applies.
-
-  const handleProviderChange = (newProvider: LlmProvider) => {
-    setProvider(newProvider);
-    const models = LLM_PROVIDER_OPTIONS.find((p) => p.value === newProvider)?.models ?? [];
-    setModel(models[0] ?? '');
-  };
 
   return (
     <div className="page intake-page">
@@ -131,32 +124,17 @@ export default function IntakePage() {
           disabled={busy}
         />
         
-        {/* LLM Provider Selector */}
+        {/* LLM Model Selector (AWS Bedrock) */}
         <div className="llm-selector-row">
           <div className="llm-field">
-            <label htmlFor="provider">AI Provider</label>
-            <select
-              id="provider"
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as LlmProvider)}
-              disabled={busy}
-            >
-              {LLM_PROVIDER_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="llm-field">
-            <label htmlFor="model">Model</label>
+            <label htmlFor="model">Model (AWS Bedrock)</label>
             <select
               id="model"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={busy}
             >
-              {LLM_PROVIDER_OPTIONS.find((p) => p.value === provider)?.models.map((m) => (
+              {BEDROCK_MODELS.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
@@ -186,8 +164,8 @@ export default function IntakePage() {
             className="primary-button"
             disabled={!brief.trim() || busy}
             onClick={() => {
-                          setLlmOptions({ provider, model });
-                          void startInterpretation({ provider, model });
+                          setLlmOptions({ provider: 'bedrock', model });
+                          void startInterpretation({ provider: 'bedrock', model });
                         }}
           >
             {stage === 'interpreting'

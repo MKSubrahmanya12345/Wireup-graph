@@ -15,16 +15,6 @@ router.get(
     res.status(200).json({
       defaultProvider: env.LLM_PROVIDER,
       providers: {
-        groq: {
-          available: providers.includes('groq'),
-          defaultModel: env.GROQ_MODEL,
-          baseUrl: env.GROQ_BASE_URL,
-          models: [
-            'openai/gpt-oss-120b',
-            'llama-3.3-70b-versatile',
-            'mixtral-8x7b-32768',
-          ],
-        },
         bedrock: {
           available: providers.includes('bedrock'),
           defaultModel: env.BEDROCK_MODEL,

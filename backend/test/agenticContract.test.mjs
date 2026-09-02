@@ -18,10 +18,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-// Force the deterministic path — no LLM keys may leak in from the host env.
-process.env.GROQ_API_KEY = '';
-process.env.AWS_ACCESS_KEY_ID = '';
-process.env.AWS_SECRET_ACCESS_KEY = '';
+import { disableBedrockEnv } from './bedrockStub.mjs';
+
+// Force the deterministic path — no LLM credentials may leak in from the host env.
+disableBedrockEnv();
 process.env.AGENTIC_TERMINAL_VALIDATION = '1';
 
 const { extractPublishedJsonFields, mapMetricFieldsToFirmware } = await import(

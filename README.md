@@ -10,7 +10,7 @@ Wireup is an agentic hardware workspace. Three pages, one pipeline:
 | 02 | **Architecture Graph** | A validated system graph — components, pins, rails — checked by deterministic engineering rules (power budget, voltage rails, orphans…), with datasheet sources. |
 | 03 | **Agentic Build** | The pipeline generates firmware, **compiles it with g++ in a real terminal**, generates a MERN dashboard, **installs + typechecks + builds it with npm/tsc/vite**, cross-checks the firmware⇄software contract — then hands you **two zips**. |
 
-Not an AI wrapper: the core engine is a curated knowledge base + engineering rules + terminal validation. An LLM (Groq) is an *optional assistant* whose drafts must survive the exact same terminal gauntlet — and are discarded if they don't.
+Not an AI wrapper: the core engine is a curated knowledge base + engineering rules + terminal validation. An LLM (AWS Bedrock) is an *optional assistant* whose drafts must survive the exact same terminal gauntlet — and are discarded if they don't.
 
 ## Hosting it
 
@@ -96,7 +96,7 @@ Adding a part? Append an entry to `backend/src/agentic/knowledge/devices.ts` (fa
 
 ### Optional LLM assist
 
-Set `GROQ_API_KEY` in `backend/.env` to let an LLM draft plans/firmware for
+Set AWS Bedrock credentials in `backend/.env` to let an LLM draft plans/firmware for
 parts outside the knowledge base. Every draft still goes through the same
 deterministic repair + terminal validation before it ships; the engine falls
 back to knowledge-base synthesis on any failure.
@@ -107,7 +107,7 @@ back to knowledge-base synthesis on any failure.
 - Users persist to MongoDB when `MONGO_URI` is set; otherwise to a local file store (`backend/.data/users.json`, git-ignored) so a fresh clone just works.
 - All architecture/build routes require a session; `/api/healthz` and `/api/auth/*` stay open.
 
-Key env vars (all optional, see `backend/.env.example`): `JWT_SECRET`, `MONGO_URI`, `GROQ_API_KEY`, `AGENTIC_MAX_REPAIR_LOOPS`, `AGENTIC_COMMAND_TIMEOUT_MS`, `AGENTIC_TERMINAL_VALIDATION`.
+Key env vars (all optional, see `backend/.env.example`): `JWT_SECRET`, `MONGO_URI`, AWS Bedrock credentials, `AGENTIC_MAX_REPAIR_LOOPS`, `AGENTIC_COMMAND_TIMEOUT_MS`, `AGENTIC_TERMINAL_VALIDATION`.
 
 Users carry a `role` (`user` | `admin`). One admin is seeded at boot from
 `ADMIN_EMAIL` / `ADMIN_PASSWORD` (defaults `admin@wireup.local` /
@@ -124,7 +124,7 @@ accounts, and going live is an env-var change.
 | --- | --- | --- | --- |
 | Payments | `MockPaymentProvider` — the fake checkout self-fires its own webhook after `MOCK_PAYMENT_DELAY_MS` | `RazorpayAdapter` (Orders API + HMAC-verified webhooks) | `PAYMENT_MODE=razorpay` + `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` |
 | Hardware simulation | `MockHardwareSimProvider` — a deterministic virtual bench computed from the resolved plan | `VelxioSimProvider` → `POST {VELXIO_URL}/simulate` | `SIM_MODE=velxio` + `VELXIO_URL` |
-| Pro-tier model | Gemini requested → **logged** fallback to Groq | Gemini | `GEMINI_API_KEY` |
+| LLM | deterministic knowledge-base engine | AWS Bedrock (Converse API) | AWS credentials + `AWS_REGION` (optionally `BEDROCK_MODEL`) |
 
 The boot log prints exactly which side is live:
 
@@ -231,7 +231,7 @@ as part of a hosted product.
 second turn, pass it alongside the same brief/graph and Wireup edits the existing
 firmware to satisfy the request, then re-runs the full compile → build → boot
 gauntlet. With no LLM key the unmodified deterministic plan is built (a warning
-is logged); with `GROQ_API_KEY`/Bedrock set, the model applies the change.
+is logged); with AWS Bedrock credentials set, the model applies the change.
 
 ### Roadmap status
 

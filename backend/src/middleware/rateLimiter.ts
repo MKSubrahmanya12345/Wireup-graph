@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 
 /**
  * Guards the paid LLM endpoint. Without this, /api/architecture/plan is an
- * open proxy to your Groq credits — anyone who finds the URL can burn them.
+ * open proxy to your LLM credits — anyone who finds the URL can burn them.
  */
 export const planRateLimiter = rateLimit({
   windowMs: env.PLAN_RATE_LIMIT_WINDOW_MS,

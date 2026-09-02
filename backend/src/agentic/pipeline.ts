@@ -42,8 +42,8 @@ import type {
  *     → repair loop → generate MERN software → build in terminal → repair loop
  *     → cross-artifact consistency → ship.
  *
- * Generation is deterministic-first (knowledge base templates). When
- * GROQ_API_KEY is configured the LLM is offered the first draft, but every
+ * Generation is deterministic-first (knowledge base templates). When AWS
+ * Bedrock is configured the LLM is offered the first draft, but every
  * artifact — LLM or template — must pass the same terminal gauntlet, and any
  * LLM failure falls back to the deterministic path. Nothing ships unvalidated.
  */
@@ -103,14 +103,11 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // ── Stage 2: firmware (generate → compile → repair) ─────────────────────
     emit({ type: 'stage', stage: 'firmware', title: 'Generating firmware' });
 
-    // ── Tier gating (M2) ────────────────────────────────────────────────────
-    // The provider is chosen by the USER'S PLAN, not by a global env var.
-    // A client-supplied provider is honoured only as far as the plan allows:
-    // free tier can never reach the Gemini tier by asking nicely.
+    // ── Provider selection (M2) ─────────────────────────────────────────────
+    // AWS Bedrock is the only LLM provider. Which plan the user is on still
+    // gets logged per build so usage reporting stays honest.
     const userPlan: 'free' | 'pro' = input.userPlan ?? 'free';
-    const entitled: LlmProvider = userPlan === 'pro' ? 'gemini' : 'groq';
-    const requestedProvider: LlmProvider =
-      input.provider === 'bedrock' ? 'bedrock' : entitled;
+    const requestedProvider: LlmProvider = 'bedrock';
     const effective = resolveEffectiveProvider(requestedProvider);
     const llmProvider: LlmProvider = effective.provider;
     const llmNote = effective.fallbackFrom
@@ -118,7 +115,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       : undefined;
     say(
       'firmware',
-      `plan: ${userPlan} → entitled provider: ${requestedProvider}; provider that will run: ${llmProvider}${llmNote ? ` — ${llmNote}` : ''}`,
+      `plan: ${userPlan} → provider: ${llmProvider} (AWS Bedrock)${llmNote ? ` — ${llmNote}` : ''}`,
       effective.fallbackFrom ? 'warn' : 'info',
     );
 
@@ -508,7 +505,7 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // The single line an operator can grep for: which provider actually ran.
     say(
       'done',
-      `LLM provider that actually ran for this build: ${actualLlmProvider} (plan ${userPlan}, entitled ${requestedProvider}${llmNote ? `; ${llmNote}` : ''})`,
+      `LLM provider that actually ran for this build: ${actualLlmProvider} (plan ${userPlan}, provider ${requestedProvider}${llmNote ? `; ${llmNote}` : ''})`,
       'ok',
     );
 

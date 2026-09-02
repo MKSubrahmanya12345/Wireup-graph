@@ -1,4 +1,12 @@
-import http from 'node:http';
+/**
+ * Standalone Bedrock Converse stub for manual local dev (no AWS account).
+ *
+ * Run:  node test/stubBedrockServer.mjs
+ * Then: LLM_PROVIDER=bedrock AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+ *       AWS_REGION=us-east-1 BEDROCK_ENDPOINT=http://127.0.0.1:8899 npm run dev
+ */
+import { startBedrockStub } from './bedrockStub.mjs';
+
 const PLANNER = {
   project: 'Soil monitor', summary: 's',
   nodes: [
@@ -21,11 +29,14 @@ const INTERPRET = {
   assumptions: ['Chose capacitive probe'], ready: false,
 };
 const VERIFIER = { status: 'review', score: 70, summary: 'ok', checks: [], sources: [] };
-http.createServer((req, res) => {
-  let b = ''; req.on('data', c => b += c); req.on('end', () => {
-    const sys = JSON.parse(b).messages?.[0]?.content ?? '';
-    const f = sys.includes('senior systems engineer') ? PLANNER : sys.includes('intake engineer') ? INTERPRET : VERIFIER;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(f) } }] }));
-  });
-}).listen(8899, '127.0.0.1', () => console.log('stub groq on 8899'));
+
+const stub = await startBedrockStub((system) => {
+  const fixture = system.includes('senior systems engineer')
+    ? PLANNER
+    : system.includes('intake engineer')
+      ? INTERPRET
+      : VERIFIER;
+  return JSON.stringify(fixture);
+}, { port: 8899 });
+
+console.log(`stub bedrock (Converse, h2c) on ${stub.port}`);

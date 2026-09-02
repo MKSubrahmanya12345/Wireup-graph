@@ -1,18 +1,16 @@
 /**
- * Provider-layer regressions: the hardware simulator and the LLM tier
- * selector. Both are pure mock-mode checks — no keys, no network.
+ * Provider-layer regressions: the hardware simulator and the LLM provider
+ * surface. Both are pure mock-mode checks — no keys, no network.
  *
  * Covers:
  *   M0 #2/#4 — mock sim is selected by default and produces a real verdict
  *   M4 #28/#29 — a failing (or erroring) simulator keeps downloads locked
- *   M2 #19 — free tier resolves to Groq, pro tier resolves to Gemini and
- *            falls back to Groq (loudly) when no key is configured
+ *   M2 #19 — every tier resolves to AWS Bedrock, the only provider
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 delete process.env.VELXIO_URL;
-delete process.env.GEMINI_API_KEY;
 process.env.SIM_MODE = 'auto';
 
 const { getHardwareSimProvider } = await import('../src/providers/sim/index.ts');
@@ -62,35 +60,12 @@ describe('hardware sim provider', () => {
   });
 });
 
-describe('LLM tier selection', () => {
-  it('CHECK 19 — free tier runs Groq, pro tier asks for Gemini', () => {
-    assert.equal(resolveEffectiveProvider('groq').provider, 'groq');
-    const pro = resolveEffectiveProvider('gemini');
-    // No GEMINI_API_KEY in this environment → documented, logged fallback.
-    assert.equal(pro.provider, 'groq');
-    assert.equal(pro.fallbackFrom, 'gemini');
-    assert.match(pro.reason, /GEMINI_API_KEY/);
-  });
-
-  it('uses Gemini for real when a key is present', async () => {
-    // env.ts snapshots process.env at import time, so this has to be a fresh
-    // process — which is also the honest way to prove the real-key path.
-    const { execFileSync } = await import('node:child_process');
-    const script = `
-      const { resolveEffectiveProvider } = await import('./src/services/llmService.ts');
-      const resolved = resolveEffectiveProvider('gemini');
-      if (resolved.provider !== 'gemini' || resolved.fallbackFrom) {
-        console.error('unexpected: ' + JSON.stringify(resolved));
-        process.exit(1);
-      }
-      console.log('gemini-selected');
-    `;
-    const out = execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
-      cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, GEMINI_API_KEY: 'test-key' },
-      encoding: 'utf8',
-    });
-    assert.match(out, /gemini-selected/);
+describe('LLM provider selection', () => {
+  it('CHECK 19 — every plan resolves to AWS Bedrock, with no fallback chain', () => {
+    const resolved = resolveEffectiveProvider('bedrock');
+    assert.equal(resolved.provider, 'bedrock');
+    assert.equal(resolved.fallbackFrom, undefined);
+    assert.equal(resolved.reason, undefined);
   });
 });
 

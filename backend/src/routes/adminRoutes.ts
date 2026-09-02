@@ -9,6 +9,7 @@ import { env } from '../config/env.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
 import { getPaymentProvider } from '../providers/payment/index.js';
 import { getHardwareSimProvider } from '../providers/sim/index.js';
+import { isBedrockConfigured } from '../services/llmService.js';
 
 /**
  * Admin API — everything under /api/admin/* is behind requireAuth +
@@ -69,7 +70,7 @@ router.get(
       adapters: {
         payment: { mode: getPaymentProvider().mode, detail: getPaymentProvider().describe() },
         sim: { mode: getHardwareSimProvider().mode, detail: getHardwareSimProvider().describe() },
-        llm: { gemini: Boolean(env.GEMINI_API_KEY), groq: Boolean(env.GROQ_API_KEY) },
+        llm: { bedrock: isBedrockConfigured() },
       },
     });
   }),

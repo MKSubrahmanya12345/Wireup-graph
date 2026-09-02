@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 
 import { env } from '../config/env.js';
 import { isPersistenceEnabled } from '../config/db.js';
+import { isBedrockConfigured } from '../services/llmService.js';
 
 /** GET /api/healthz */
 export function healthCheck(_req: Request, res: Response): void {
@@ -10,8 +11,8 @@ export function healthCheck(_req: Request, res: Response): void {
     status: 'ok',
     service: 'wireup-backend',
     persistence: isPersistenceEnabled() ? 'mongodb' : 'disabled',
-    model: env.GROQ_MODEL,
-    groqConfigured: Boolean(env.GROQ_API_KEY),
+    model: env.BEDROCK_MODEL,
+    bedrockConfigured: isBedrockConfigured(),
   });
 }
 

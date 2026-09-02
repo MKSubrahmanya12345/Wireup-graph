@@ -21,22 +21,9 @@ const envSchema = z.object({
   MONGO_URI: emptyToUndefined,
 
   // ── LLM Provider configuration ───────────────────────────────────────────
-  LLM_PROVIDER: z.enum(['groq', 'bedrock', 'gemini']).default('groq'),
+  // AWS Bedrock is the only supported LLM provider.
+  LLM_PROVIDER: z.enum(['bedrock']).default('bedrock'),
 
-  // Google Gemini (the Pro-tier model). Without a key the selector logs a
-  // warning and falls back to Groq — it never crashes the build.
-  GEMINI_API_KEY: emptyToUndefined,
-  GEMINI_MODEL: z.string().min(1).default('gemini-2.0-flash'),
-  GEMINI_BASE_URL: z
-    .string()
-    .url()
-    .default('https://generativelanguage.googleapis.com/v1beta'),
-  
-  // Groq settings
-  GROQ_API_KEY: emptyToUndefined,
-  GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-120b'),
-  GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
-  
   // AWS Bedrock settings. Leave the keys blank to use the normal AWS credential
   // chain (AWS_PROFILE, ~/.aws/credentials, IAM role, ECS/EC2 metadata, etc.).
   AWS_ACCESS_KEY_ID: emptyToUndefined,

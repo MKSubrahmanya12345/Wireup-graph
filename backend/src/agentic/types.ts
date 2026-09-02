@@ -187,16 +187,15 @@ export interface DeviceControlSpec {
 export interface PipelineInput {
   brief: string;
   /**
-   * The paying tier of the human who started this build. The LLM provider is
-   * selected from THIS, not from a global env var: free → Groq, pro → Gemini
-   * (falling back to Groq, loudly, when no Gemini key exists).
+   * The paying tier of the human who started this build. Recorded per build
+   * for usage accounting; every tier runs on AWS Bedrock.
    */
   userPlan?: 'free' | 'pro';
   userId?: string;
   userEmail?: string;
   projectName?: string;
   graph: ArchitectureGraph;
-  provider?: 'groq' | 'bedrock' | 'gemini';
+  provider?: 'bedrock';
   model?: string;
   /**
    * The human's answer to page-01's "how often should the device sample?"
