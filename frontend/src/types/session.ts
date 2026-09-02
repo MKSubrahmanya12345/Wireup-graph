@@ -1,5 +1,7 @@
 /** Frontend mirror of the backend intent contract + issue model. */
 
+import type { SpecGraphProject } from './specGraph';
+
 export type QuestionKind = 'single' | 'multi' | 'number' | 'boolean';
 
 export interface QuestionOption {
@@ -52,7 +54,16 @@ export interface InterpretResponse {
   questions: Question[];
   assumptions: string[];
   ready: boolean;
+  /**
+   * The spec graph behind this interpretation: one node per capability the
+   * brief implied, every assumption the engine made, and the gate verdict on
+   * each question. Present on the deterministic path and on the stream.
+   */
+  specGraph?: SpecGraphProject | null;
 }
+
+/** Re-exported so callers can import graph types from one place. */
+export type { SpecGraphProject, SpecNode, SpecNodeQuestion } from './specGraph';
 
 export type IssueSeverity = 'error' | 'warning' | 'notice';
 

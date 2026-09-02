@@ -94,6 +94,7 @@ function wiringForDevice(
           ['DQ', espPin(pin('data') ?? 'GPIO4')],
         ],
       };
+    case 'hcsr04':       // knowledge-base id (the hyphenated spelling is kept as an alias)
     case 'hc-sr04':
       return {
         partType: 'wokwi-hc-sr04',
@@ -105,6 +106,7 @@ function wiringForDevice(
           ['ECHO', espPin(pin('echo') ?? 'GPIO14')],
         ],
       };
+    case 'pir-hcsr501':  // knowledge-base id
     case 'hc-sr501':
       return {
         partType: 'wokwi-pir-motion-sensor',

@@ -7,13 +7,19 @@ import { planAndVerify } from '../services/architectureService.js';
 import { interpretBrief as runInterpretation } from '../services/interpretService.js';
 import { extractJson, isLlmAvailable, LlmError, type LlmProvider } from '../services/llmService.js';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import {
   normaliseGraph,
   planArchitectureBodySchema,
 } from '../schemas/architecture.js';
-import { interpretBodySchema } from '../schemas/requirements.js';
+import { interpretBodySchema, type InterpretResponse } from '../schemas/requirements.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
-import { deterministicPlan, interpretDeterministically } from '../agentic/architect.js';
+import {
+  deterministicPlan,
+  interpretDeterministically,
+  specGraphToInterpretResponse,
+} from '../agentic/architect.js';
+import { decomposePromptToSpecGraph } from '../agentic/specGraph.js';
 import {
   catalogMatches,
   catalogSources,
@@ -186,13 +192,152 @@ export const interpretBrief = asyncHandler(async (req: Request, res: Response) =
       model,
     });
     res.status(200).json(result);
+    return;
   } catch (error) {
-    if (error instanceof LlmError) {
-      throw ApiError.upstream(`Could not interpret the brief: ${error.message}`);
-    }
-    throw error;
+    // A model that is unreachable, slow, or returns nonsense must not cost the
+    // human their session. Fall back to the knowledge base and say so in the
+    // assumption log — a degraded answer beats a 502 and a dead end.
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn({ provider, model, message }, 'interpret: LLM unavailable, using knowledge base');
+    const fallback = interpretDeterministically({ brief, answers, priorQuestions });
+    res.status(200).json({
+      ...fallback,
+      assumptions: [
+        `The model could not be reached (${message}). Everything below was decided by the Wireup knowledge base instead.`,
+        ...fallback.assumptions,
+      ],
+    });
   }
 });
+
+/**
+ * POST /api/architecture/interpret/stream
+ *
+ * Same contract as /interpret, delivered as NDJSON so the graph the engine is
+ * building is visible WHILE it is being built:
+ *
+ *   {type:'stage',      stage, title, detail}
+ *   {type:'node',       node}            // one spec-graph node, as spawned
+ *   {type:'assumption', node_id, claim, why}
+ *   {type:'question',   question}        // survived the ask/assume gate
+ *   {type:'refined',    questions}       // the model rewrote the question set
+ *   {type:'warn',       message}
+ *   {type:'done',       requirements, questions, assumptions, ready, specGraph}
+ *   {type:'error',      error}
+ *
+ * The deterministic pass always runs and always streams first — it is
+ * instantaneous and needs no credentials — so the human sees a graph
+ * immediately. If Bedrock is configured, the model's questions then replace
+ * the deterministic ones via `refined`; if the model is slow or fails, the
+ * human still has a complete, honest result instead of a spinner.
+ */
+export async function interpretBriefStream(req: Request, res: Response): Promise<void> {
+  const parsed = interpretBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'A non-empty brief is required.' });
+    return;
+  }
+
+  const { brief, answers, priorRequirements, priorQuestions, feedback, graph } = parsed.data;
+  const provider = (req.body.provider as LlmProvider | undefined) ?? env.LLM_PROVIDER;
+  const model = req.body.model as string | undefined;
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  // Defeat proxy buffering — nginx/Fly will otherwise hold the whole stream.
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event: Record<string, unknown>): void => {
+    if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
+  };
+
+  try {
+    send({
+      type: 'stage',
+      stage: 'extract',
+      title: 'Reading the brief',
+      detail: 'Matching what you named against the Wireup device knowledge base.',
+    });
+
+    // ── Deterministic pass: streamed node by node, as each is spawned ───────
+    const spec = decomposePromptToSpecGraph(
+      { prompt: brief, answers },
+      (node) => send({ type: 'node', node }),
+    );
+
+    send({
+      type: 'stage',
+      stage: 'validate',
+      title: 'Checking the graph',
+      detail: `${Object.keys(spec.nodes).length} node(s) — validating dependencies and propagating changes.`,
+    });
+
+    for (const entry of spec.assumption_log) {
+      send({ type: 'assumption', ...entry });
+    }
+    for (const question of spec.question_queue) {
+      send({ type: 'question', question });
+    }
+
+    let result: InterpretResponse = specGraphToInterpretResponse(spec, answers);
+
+    // ── Optional model refinement ───────────────────────────────────────────
+    if (isLlmAvailable(provider)) {
+      send({
+        type: 'stage',
+        stage: 'llm',
+        title: 'Refining with the model',
+        detail: `${provider}${model ? ` · ${model}` : ''} is re-reading the brief for anything the knowledge base missed.`,
+      });
+      try {
+        const llm = await runInterpretation({
+          brief,
+          answers,
+          priorRequirements,
+          priorQuestions,
+          feedback,
+          graph,
+          provider,
+          model,
+        });
+        result = {
+          requirements: llm.requirements,
+          questions: llm.questions,
+          assumptions: llm.assumptions,
+          ready: llm.ready,
+          // Keep the deterministic graph: the model refines the questions, it
+          // does not get to rewrite the wiring the rules engine validated.
+          specGraph: spec,
+        };
+        send({ type: 'refined', questions: llm.questions });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        send({
+          type: 'warn',
+          message: `The model could not be reached (${message}). Keeping the knowledge-base result — you can still build from it.`,
+        });
+      }
+    } else {
+      send({
+        type: 'stage',
+        stage: 'llm',
+        title: 'No model configured',
+        detail: 'Running on the Wireup knowledge base — deterministic, no API key needed.',
+      });
+    }
+
+    send({ type: 'done', ...result });
+  } catch (error) {
+    send({
+      type: 'error',
+      error: error instanceof Error ? error.message : 'Could not interpret the brief.',
+    });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+}
 
 /**
  * POST /api/architecture/repair

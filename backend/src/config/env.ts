@@ -34,6 +34,16 @@ const envSchema = z.object({
   BEDROCK_ENDPOINT: emptyToUndefined,
   BEDROCK_MODEL: z.string().min(1).default('moonshotai.kimi-k2.5'),
 
+  /**
+   * Hard wall-clock ceiling on any single LLM round trip.
+   *
+   * Without it an unresolvable credential chain (the SDK walking IMDS on a
+   * laptop with no AWS config) hangs the request for minutes with no feedback.
+   * With it, the call fails fast and the caller falls back to the
+   * deterministic engine and says so.
+   */
+  LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
+
   // Comma separated allow-list. Never '*' in production.
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 

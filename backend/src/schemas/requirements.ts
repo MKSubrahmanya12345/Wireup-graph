@@ -197,6 +197,12 @@ export const interpretResponseSchema = z.object({
   assumptions: stringList,
   /** True when no blocking questions remain and planning can start. */
   ready: z.boolean().catch(false),
+  /**
+   * The spec graph behind this interpretation — every node, the assumption
+   * log, and the gate verdict on each question. Opaque to the schema on
+   * purpose: it is the engine's artifact, rendered by the UI as a live graph.
+   */
+  specGraph: z.unknown().optional(),
 });
 
 export type Question = z.infer<typeof questionSchema>;

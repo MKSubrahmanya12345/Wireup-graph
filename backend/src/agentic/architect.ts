@@ -32,6 +32,7 @@ import { resolveBuildPlan, slugify } from './planResolver.js';
 import {
   decomposePromptToSpecGraph,
   specGraphToArchitectureGraph,
+  type SpecGraphProject,
 } from './specGraph.js';
 
 // ── Interpret ───────────────────────────────────────────────────────────────
@@ -59,170 +60,119 @@ function domainFor(brief: string, hits: RetrievalHit[]): string {
   return 'general';
 }
 
-/** Only ask what genuinely changes the design. */
-function questionsFor(
-  brief: string,
-  hits: RetrievalHit[],
-  boardName: string,
-  webIntent: boolean,
-): Question[] {
-  const questions: Question[] = [];
-  const text = brief.toLowerCase();
-
-  if (!/esp32|esp32-s3/i.test(brief)) {
-    questions.push({
-      id: 'board',
-      prompt: 'Which controller board are you using?',
-      why: 'Pin map, Wi-Fi capability and the firmware template all depend on the board. The brief does not name one.',
-      impact: 'Changes every GPIO assignment and the platformio.ini target.',
-      kind: 'single',
-      options: [
-        { value: 'esp32', label: 'ESP32 DevKit', hint: 'Most common — Wi-Fi + BT, 3.3 V logic' },
-        { value: 'esp32-s3', label: 'ESP32-S3 DevKitC', hint: 'Newer core, native USB' },
-      ],
-      default: 'esp32',
-    });
-  }
-
-  if (webIntent && !/ssid|password/i.test(text)) {
-    questions.push({
-      id: 'wifi',
-      prompt: 'How should the device join your network?',
-      why: 'The dashboard reaches the device over Wi-Fi — credentials are flashed into firmware/config.h, and they are yours, not something to invent.',
-      impact: 'Determines whether a fallback hotspot is the primary way in.',
-      kind: 'single',
-      options: [
-        { value: 'later', label: "I'll set SSID/password in config.h", hint: 'Device joins your Wi-Fi once flashed' },
-        { value: 'fallback-ap', label: 'Use the device hotspot', hint: 'Connect your laptop to the board’s own network' },
-      ],
-      default: 'later',
-    });
-  }
-
-  if (webIntent && hits.length > 0 && !/every\s+\d+/.test(text)) {
-    questions.push({
-      id: 'sample-interval',
-      prompt: 'How often should the device sample its sensors?',
-      why: 'The DHT family cannot be read faster than once per 2 s; faster polling just returns stale values.',
-      impact: 'Sets SAMPLE_INTERVAL_MS in firmware and the dashboard refresh rate.',
-      kind: 'number',
-      options: [],
-      default: '2000',
-      unit: 'ms',
-      min: 2000,
-      max: 600000,
-    });
-  }
-
-  void boardName;
-  return questions.slice(0, 4);
-}
-
 export interface DeterministicInterpretInput {
   brief: string;
   answers?: Record<string, string>;
   priorQuestions?: Question[];
 }
 
-export function interpretDeterministically(input: DeterministicInterpretInput): InterpretResponse {
-  const brief = input.brief.trim();
+/**
+ * Pass 0 without an LLM — and the path most builds actually take.
+ *
+ * EVERY brief goes through the spec-graph engine now: extract explicit parts,
+ * infer the implied capabilities, spawn a node per gap, and put each candidate
+ * question through the ask/assume gate. There is no separate "simple project"
+ * branch armed with a canned list of three questions — the questions that come
+ * back are the ones this brief actually failed the gate on.
+ */
+/**
+ * Pass 0 without an LLM — and the path most builds actually take.
+ *
+ * EVERY brief goes through the spec-graph engine now: extract explicit parts,
+ * infer the implied capabilities, spawn a node per gap, and put each candidate
+ * question through the ask/assume gate. There is no separate "simple project"
+ * branch armed with a canned list of three questions — the questions that come
+ * back are the ones this brief actually failed the gate on.
+ */
+export function specGraphToInterpretResponse(
+  spec: SpecGraphProject,
+  answers: Record<string, string> = {},
+): InterpretResponse {
+  const brief = spec.project.raw_prompt;
+  const nodes = Object.values(spec.nodes);
+  const domains = [...new Set(nodes.map((node) => node.domain))];
 
-  // If the brief is a complex robotics/drone/autonomous system, use the SpecGraph decomposition
-  const isComplexSystem = /\bdrone|uav|quadcopter|multirotor|fly|flight|robot|rover|hexapod\b/i.test(brief);
-  if (isComplexSystem) {
-    const spec = decomposePromptToSpecGraph({ prompt: brief, answers: input.answers });
-    const questions: Question[] = spec.question_queue.map((q) => {
-      const fallbackDefault = q.options && q.options.length > 0 ? (q.options[0] ?? '') : '';
-      return {
-        id: q.id || 'question',
-        prompt: q.q,
-        why: q.why_blocking,
-        impact: 'Drives hardware and autonomy subsystem sizing.',
-        kind: (q.options && q.options.length > 0 ? 'single' : 'number') as Question['kind'],
-        options: (q.options ?? []).map((opt) => ({ value: opt, label: opt })),
-        default: q.default ?? fallbackDefault,
-      };
-    });
-
-    const freshQuestions = questions.filter((q) => !input.answers?.[q.id]);
-
+  const questions: Question[] = spec.question_queue.map((q, index) => {
+    const fallbackDefault = q.options && q.options.length > 0 ? (q.options[0] ?? '') : '';
     return {
-      requirements: {
-        project: spec.project.title,
-        intent: `Build an ${spec.project.title} (${spec.project.domain}) satisfying: ${brief}`,
-        domain: spec.project.domain,
-        mechanical: {
-          mobility: isComplexSystem ? 'flying' : 'static',
-        },
-        power: {
-          source: 'battery',
-          rechargeable: true,
-          targetRuntimeMinutes: Number(input.answers?.['target_flight_time']?.match(/\d+/)?.[0] ?? 18),
-        },
-        constraints: {
-          domain: spec.project.domain,
-          specGraph: true,
-        },
-        assumptions: spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim} (${a.why})`),
-        confidence: 0.9,
-      },
-      questions: freshQuestions,
-      assumptions: spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim}`),
-      ready: freshQuestions.length === 0,
+      id: q.id || `question-${index + 1}`,
+      prompt: q.q,
+      // `why` is the gate's own audit trail — which legs passed, which failed,
+      // and what that means. This is what makes a question trustworthy.
+      why: q.gate?.reason ?? q.why_blocking,
+      impact: q.why_blocking,
+      kind: (q.options && q.options.length > 0 ? 'single' : 'number') as Question['kind'],
+      options: (q.options ?? []).map((opt) => ({ value: opt, label: opt })),
+      default: q.default ?? fallbackDefault,
     };
-  }
+  });
 
-  const hits = retrieveFromBrief(brief);
-  const { board } = detectBoard(brief);
-  const webIntent = /website|web\s*app|dashboard|browser|local computer|http|access this/i.test(brief);
-  const project = projectNameFor(brief, hits);
+  // A question the human already answered never comes back.
+  const freshQuestions = questions.filter((question) => !answers?.[question.id]);
 
-  const assumptions: string[] = [];
-  const modules = hits.map((hit) => hit.device.id);
-  assumptions.push(`Controller: ${board.name} (${board.mcu}) — ${board.wifi ? 'Wi-Fi built in' : 'no radio'}.`);
-  if (modules.length > 0) {
-    assumptions.push(
-      `Detected ${hits.length} supported module(s): ${hits.map((h) => h.device.name).join('; ')}.`,
-    );
-  } else {
-    assumptions.push('No supported sensor/actuator named yet — the knowledge base covers DHT11/22, BME280, DS18B20, soil moisture, MQ-2, HC-SR04, PIR, relay, servo, LED, OLED.');
-  }
-  if (webIntent) assumptions.push('Web access: local-network HTTP — the firmware serves JSON, a MERN dashboard talks to it. No cloud.');
-  if (/battery|rechargeable|solar/.test(brief.toLowerCase())) {
-    assumptions.push('Power: battery operation noted — sleep cadence and rail budget are enforced by the engineering rules.');
-  }
+  const assumptions = spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim}`);
+
+  const parts = nodes
+    .filter((node) => node.domain === 'sensor' || node.domain === 'actuator' || node.domain === 'display')
+    .map((node) => node.title);
+
+  const intent =
+    parts.length > 0
+      ? `Build ${spec.project.title} — ${parts.join(', ')} driven by the ${String(
+          nodes.find((n) => n.domain === 'controller')?.spec.board ?? 'controller',
+        )}. ${spec.question_queue.length} decision(s) could not be made on your behalf; everything else was resolved from the knowledge base and logged as an assumption.`
+      : `Build ${spec.project.title}. The brief names no parts in the Wireup knowledge base yet — ${spec.question_queue.length} decision(s) need you; the rest is assumed and logged.`;
 
   const requirements: RequirementsSpec = {
-    project,
-    intent: `Build a ${domainFor(brief, hits)} system around an ${board.name}${hits.length ? ` reading ${hits.map((h) => h.device.name).join(', ')}` : ''}${webIntent ? ' and serve the data to a local web dashboard.' : '.'}`,
-    domain: domainFor(brief, hits),
+    project: spec.project.title,
+    intent,
+    domain: spec.project.domain,
     mechanical: {},
     power: {
-      source: /battery/.test(brief.toLowerCase()) ? 'battery' : /usb/.test(brief.toLowerCase()) ? 'usb' : 'usb',
-      rechargeable: /rechargeable/.test(brief.toLowerCase()) || undefined,
+      source: /battery/.test(brief.toLowerCase()) ? 'battery' : 'usb',
+      rechargeable: /rechargeable|lipo|li-ion/i.test(brief) || undefined,
     },
     constraints: {
-      board: board.id,
-      web: webIntent,
-      sampleIntervalMs: Number(input.answers?.['sample-interval']) || 2000,
-      modules,
+      board: String(nodes.find((n) => n.domain === 'controller')?.spec.board_id ?? 'esp32-devkit'),
+      web: nodes.some((n) => n.domain === 'connectivity' || n.domain === 'software'),
+      domains,
+      nodeCount: nodes.length,
+      specGraph: true,
+      // `sample-interval` is no longer a question (a 2 s default is inert if
+      // wrong, so the gate classifies it as assumable). Keep the contract
+      // field for any older client that still sends it.
+      sampleIntervalMs: Number(answers?.["sample-interval"]) || 2000,
     },
-    assumptions,
-    confidence: hits.length > 0 ? 0.9 : 0.55,
+    assumptions: spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim} — ${a.why}`),
+    confidence: parts.length > 0 ? 0.9 : 0.55,
   };
-
-  // Questions already answered in a previous round stay answered.
-  const freshQuestions = questionsFor(brief, hits, board.name, webIntent).filter(
-    (question) => !input.answers?.[question.id],
-  );
 
   return {
     requirements,
     questions: freshQuestions,
     assumptions,
     ready: freshQuestions.length === 0,
+    specGraph: spec,
   };
 }
+
+/**
+ * Pass 0 without an LLM — and the path most builds actually take.
+ *
+ * EVERY brief goes through the spec-graph engine: extract explicit parts,
+ * infer the implied capabilities, spawn a node per gap, and put each candidate
+ * question through the ask/assume gate. There is no separate "simple project"
+ * branch armed with a canned list of three questions — the questions that come
+ * back are the ones this brief actually failed the gate on.
+ */
+export function interpretDeterministically(input: DeterministicInterpretInput): InterpretResponse {
+  const spec = decomposePromptToSpecGraph({
+    prompt: input.brief.trim(),
+    answers: input.answers,
+  });
+  return specGraphToInterpretResponse(spec, input.answers);
+}
+
 
 // ── Plan ────────────────────────────────────────────────────────────────────
 

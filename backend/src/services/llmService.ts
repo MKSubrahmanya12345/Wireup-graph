@@ -17,6 +17,12 @@ export interface LlmCallOptions {
   maxTokens: number;
   jsonResponse?: boolean;
   /**
+   * Wall-clock ceiling for this call. Defaults to `LLM_TIMEOUT_MS`.
+   * Never remove: an unresolvable AWS credential chain hangs for minutes
+   * otherwise, and the UI has nothing to show while it does.
+   */
+  timeoutMs?: number;
+  /**
    * Called with the provider/model that actually ran.
    * The pipeline uses it to log "which provider actually ran per build".
    */
@@ -57,6 +63,35 @@ export async function callLlm(
   return callBedrock(messages, model, options);
 }
 
+/**
+ * Reject if `promise` has not settled within `ms`.
+ *
+ * This is the difference between "the app is slow" and "the app is stuck".
+ * Every provider call goes through it, so no LLM failure mode can hold a
+ * request open indefinitely.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    const humanMs = ms >= 1000 ? `${(ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1)}s` : `${ms}ms`;
+    timer = setTimeout(() => {
+      reject(
+        new LlmError(
+          `${label} did not respond within ${humanMs} — check the AWS region, credentials and network path.`,
+          504,
+          'bedrock',
+        ),
+      );
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 
 async function callBedrock(
   messages: ChatMessage[],
@@ -82,7 +117,13 @@ async function callBedrock(
     // Let the AWS SDK resolve credentials via its usual chain (env vars,
     // AWS_PROFILE, ~/.aws/credentials, IAM role, ECS/EC2 metadata, etc.).
     // Passing no credentials object also picks up AWS_SESSION_TOKEN.
-    const clientConfig: Record<string, unknown> = { region: env.AWS_REGION };
+    const clientConfig: Record<string, unknown> = {
+      region: env.AWS_REGION,
+      // The SDK's own retry/backoff multiplies a slow failure into a very long
+      // one. Two attempts is plenty for a transient 5xx; anything more is
+      // better spent falling back to the deterministic engine.
+      maxAttempts: 2,
+    };
     if (env.BEDROCK_ENDPOINT) clientConfig.endpoint = env.BEDROCK_ENDPOINT;
     const client = new BedrockRuntimeClient(clientConfig);
 
@@ -112,7 +153,11 @@ async function callBedrock(
     }
 
     const command = new ConverseCommand(commandInput);
-    const response = await client.send(command);
+    const response = (await withTimeout(
+      client.send(command),
+      options.timeoutMs ?? env.LLM_TIMEOUT_MS,
+      'AWS Bedrock',
+    )) as { output?: { message?: { content?: Array<{ text?: string }> } } };
 
     // Reasoning models return a reasoningContent block before the final text.
     const blocks = response?.output?.message?.content ?? [];

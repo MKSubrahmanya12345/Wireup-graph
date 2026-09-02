@@ -1018,7 +1018,12 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
   const sketch = { name: `${plan.slug}.ino`, content: sketchSource(plan, codes) };
   const configHeader = { name: 'config.h', content: configSource(plan, codes) };
   const velxio = generateVelxioProject(plan, sketch, [configHeader]);
-  const specGraph = decomposePromptToSpecGraph({ prompt: plan.projectName });
+  // Decompose from the BRIEF, not the project name: the spec graph shipped in
+  // the zip is supposed to record the requirements this build came from, and
+  // "DHT22 Weather Station" carries none of them.
+  const specGraph = decomposePromptToSpecGraph({
+    prompt: plan.brief || plan.projectName,
+  });
 
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },

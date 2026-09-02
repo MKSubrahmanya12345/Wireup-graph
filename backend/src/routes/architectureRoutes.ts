@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import {
   interpretBrief,
+  interpretBriefStream,
   planArchitecture,
   repairArchitecture,
 } from '../controllers/architectureController.js';
@@ -12,6 +13,8 @@ const router = Router();
 
 // Rate limited: every call here spends real Bedrock credits.
 router.post('/architecture/interpret', planRateLimiter, interpretBrief);
+// Same contract, streamed: the graph is rendered as it is built.
+router.post('/architecture/interpret/stream', planRateLimiter, interpretBriefStream);
 router.post('/architecture/plan', planRateLimiter, planArchitecture);
 
 // Deterministic graph repair — no LLM spend, so no credit rate limit.

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import { api } from '../services/api';
+import { api, streamInterpretation } from '../services/api';
 import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useGraphStore } from './useGraphStore';
 import { useProjectsStore } from './useProjectsStore';
@@ -11,7 +11,27 @@ import type {
   RequirementsSpec,
   Stage,
 } from '../types/session';
+import type {
+  ProgressStep,
+  SpecGraphProject,
+  SpecNode,
+  SpecNodeQuestion,
+} from '../types/specGraph';
 import type { LlmOptions } from '../types/llm';
+
+/**
+ * Hard ceiling on pass 0.
+ *
+ * The backend bounds its own LLM call, but the network between the two is not
+ * ours to guarantee. Whatever happens, the human gets an error they can act on
+ * within this many seconds — never a button that spins forever.
+ */
+const INTERPRET_TIMEOUT_MS = 60_000;
+
+/** Marks a deliberate cancel so it is never mistaken for a failure. */
+const CANCELLED = Symbol('wireup.interpret.cancelled');
+
+let interpretController: AbortController | null = null;
 
 interface SessionState {
   stage: Stage;
@@ -29,6 +49,17 @@ interface SessionState {
   acceptedRisks: string[];
 
   error: string | null;
+
+  /**
+   * Live pass-0 state. These are what make the page feel alive: the engine's
+   * progress trail, the spec-graph nodes as they are spawned, the questions as
+   * they survive the gate, and any warnings (e.g. "model unreachable").
+   */
+  progress: ProgressStep[];
+  liveNodes: SpecNode[];
+  liveQuestions: SpecNodeQuestion[];
+  specGraph: SpecGraphProject | null;
+  warnings: string[];
 
   /** Selected LLM options for this session */
   llmOptions: LlmOptions;
@@ -55,6 +86,8 @@ interface SessionState {
 
   /** Stage 1 — ask the AI to decide everything it can. */
   startInterpretation: (options?: LlmOptions) => Promise<void>;
+  /** Abort an in-flight interpretation (the button becomes Cancel while busy). */
+  cancelInterpretation: () => void;
   /** Stage 2 — send answers, re-interpret, then plan. */
   submitAnswers: () => Promise<void>;
   /** Skip the questions entirely and let the AI's defaults stand. */
@@ -67,6 +100,18 @@ interface SessionState {
   revise: (note: string) => Promise<void>;
 
   reset: () => void;
+
+  /** Shared pass-0 runner — streams, so the graph draws as it is built. */
+  interpretStream: (payload: {
+    brief: string;
+    answers?: Record<string, string>;
+    priorRequirements?: RequirementsSpec;
+    priorQuestions?: Question[];
+    feedback?: string[];
+    graph?: unknown;
+    provider?: string;
+    model?: string;
+  }) => Promise<InterpretResponse>;
 }
 
 const STARTER_BRIEF = '';
@@ -94,6 +139,13 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
   revision: persistedSession?.revision ?? 0,
   acceptedRisks: [],
   error: null,
+
+  progress: [],
+  liveNodes: [],
+  liveQuestions: [],
+  specGraph: null,
+  warnings: [],
+
   llmOptions: {},
   setLlmOptions: (options) => set({ llmOptions: options }),
 
@@ -120,6 +172,8 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
     }
     // A new prompt from the homepage is a NEW project: clear the previous
     // design off the bench so nothing from the old session leaks into it.
+    interpretController?.abort();
+    interpretController = null;
     useGraphStore.getState().reset();
     set({
       stage: 'idle',
@@ -132,6 +186,11 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
       revision: 0,
       acceptedRisks: [],
       error: null,
+      progress: [],
+      liveNodes: [],
+      liveQuestions: [],
+      specGraph: null,
+      warnings: [],
       localProjectId: `local:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       autoStart: true,
     });
@@ -165,12 +224,157 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
       revision: detail.graph.nodes.length > 0 ? 1 : 0,
       acceptedRisks: [],
       error: null,
+      progress: [],
+      liveNodes: [],
+      liveQuestions: [],
+      specGraph: null,
+      warnings: [],
       localProjectId: detail.id,
       autoStart: false,
     });
   },
 
   clearAutoStart: () => set({ autoStart: false }),
+
+  cancelInterpretation: () => {
+    interpretController?.abort();
+    interpretController = null;
+    set({ stage: 'idle', error: null, progress: [] });
+  },
+
+  /**
+   * Run pass 0 over the stream.
+   *
+   * Every `stage`, `node`, `question` and `warn` event is pushed into the
+   * store as it arrives, which is what lets the page render the spec graph
+   * while it is still being built instead of blocking on one atomic POST.
+   */
+  interpretStream: async (payload) => {
+    // Two clicks must never race — cancel anything still in flight.
+    interpretController?.abort();
+    const controller = new AbortController();
+    interpretController = controller;
+
+    let timedOut = false;
+    const guard = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, INTERPRET_TIMEOUT_MS);
+
+    set({
+      stage: 'interpreting',
+      error: null,
+      progress: [],
+      liveNodes: [],
+      liveQuestions: [],
+      specGraph: null,
+      warnings: [],
+    });
+
+    let done: InterpretResponse | null = null;
+
+    try {
+      await streamInterpretation(
+        payload,
+        (event) => {
+          switch (event.type) {
+            case 'stage':
+              set((state) => ({
+                progress: [
+                  ...state.progress,
+                  { stage: event.stage, title: event.title, detail: event.detail, at: Date.now() },
+                ],
+              }));
+              break;
+
+            case 'node':
+              // A node the engine already emitted can be re-emitted when its
+              // `produces` edges are back-filled — replace, never duplicate.
+              set((state) => ({
+                liveNodes: state.liveNodes.some((n) => n.id === event.node.id)
+                  ? state.liveNodes.map((n) => (n.id === event.node.id ? event.node : n))
+                  : [...state.liveNodes, event.node],
+              }));
+              break;
+
+            case 'question':
+              set((state) => ({
+                liveQuestions: state.liveQuestions.some((q) => q.id === event.question.id)
+                  ? state.liveQuestions
+                  : [...state.liveQuestions, event.question],
+              }));
+              break;
+
+            case 'assumption':
+              // Already carried on the node itself; nothing extra to store.
+              break;
+
+            case 'refined':
+              set((state) => ({
+                progress: [
+                  ...state.progress,
+                  {
+                    stage: 'refined',
+                    title: 'Model revised the question set',
+                    detail: `${event.questions.length} question(s) after re-reading the brief.`,
+                    at: Date.now(),
+                  },
+                ],
+              }));
+              break;
+
+            case 'warn':
+              set((state) => ({ warnings: [...state.warnings, event.message] }));
+              break;
+
+            case 'done': {
+              done = {
+                requirements: event.requirements,
+                questions: event.questions ?? [],
+                assumptions: event.assumptions ?? [],
+                ready: Boolean(event.ready),
+                specGraph: event.specGraph,
+              };
+              // Nodes are streamed as they are spawned, i.e. before the
+              // validation pass has run. Swap in the validated copies so a node
+              // that is waiting on an answer says so instead of claiming to be
+              // decided.
+              const validated = event.specGraph?.nodes;
+              if (validated) {
+                set((state) => ({
+                  liveNodes: Object.values(validated).length
+                    ? Object.values(validated)
+                    : state.liveNodes,
+                }));
+              }
+              break;
+            }
+
+            case 'error':
+              throw new Error(event.error);
+          }
+        },
+        controller.signal,
+      );
+    } catch (error) {
+      if (done) {
+        // A transport hiccup AFTER `done` is not a failure — we have the result.
+      } else {
+        const aborted = (error as Error)?.name === 'AbortError';
+        if (aborted && !timedOut) throw CANCELLED;
+        const message = timedOut
+          ? `The engine took longer than ${Math.round(INTERPRET_TIMEOUT_MS / 1000)}s to answer. Nothing was lost — check that the backend is running and try again.`
+          : (error as Error)?.message || 'Could not interpret the brief.';
+        throw new Error(message);
+      }
+    } finally {
+      clearTimeout(guard);
+      if (interpretController === controller) interpretController = null;
+    }
+
+    if (!done) throw new Error('The engine finished without returning a result.');
+    return done;
+  },
 
   startInterpretation: async (options?: LlmOptions) => {
     const { brief, revision, answers, questions, requirements, feedback } = get();
@@ -179,14 +383,11 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
       return;
     }
 
-    set({ stage: 'interpreting', error: null });
     try {
       const isReanalyze = revision > 0;
       // Re-analyze is a CONTINUATION, not a cold start: send the same payload
-      // shape submitAnswers() builds so the backend sees prior state and its
-      // single-round guarantee kicks in. Only the very first analyze of a
-      // session sends truly-empty state.
-      const payload = {
+      // shape submitAnswers() builds so the backend sees prior state.
+      const result = await get().interpretStream({
         brief: brief.trim(),
         answers: isReanalyze ? answers : {},
         priorRequirements: isReanalyze ? (requirements ?? undefined) : undefined,
@@ -195,13 +396,13 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         graph: isReanalyze ? useGraphStore.getState().graph : undefined,
         provider: options?.provider ?? get().llmOptions.provider,
         model: options?.model ?? get().llmOptions.model,
-      };
-      const result = (await api.interpretBrief(payload)) as InterpretResponse;
+      });
 
       set({
         requirements: result.requirements,
         questions: result.questions,
         assumptions: result.assumptions,
+        specGraph: result.specGraph ?? null,
         // Pre-fill every answer with the AI's recommendation so the human can
         // accept the whole form in one click.
         answers: Object.fromEntries(result.questions.map((q) => [q.id, q.default])),
@@ -210,6 +411,7 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
 
       if (get().stage === 'planning') await get().runPlan();
     } catch (error) {
+      if (error === CANCELLED) return;
       set({
         stage: 'idle',
         error: error instanceof Error ? error.message : 'Could not interpret the brief.',
@@ -219,16 +421,15 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
 
   submitAnswers: async () => {
     const { brief, answers, questions, requirements, feedback } = get();
-    set({ stage: 'interpreting', error: null });
     try {
-      const result = (await api.interpretBrief({
+      const result = await get().interpretStream({
         brief: brief.trim(),
         answers,
         priorRequirements: requirements ?? undefined,
         priorQuestions: questions,
         feedback,
         graph: useGraphStore.getState().graph,
-      })) as InterpretResponse;
+      });
 
       // The backend guarantees a second-pass /interpret never returns
       // questions. If one shows up here, a prompt/server regression slipped
@@ -244,11 +445,13 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         requirements: result.requirements,
         questions: result.questions,
         assumptions: result.assumptions,
+        specGraph: result.specGraph ?? null,
         answers: Object.fromEntries(result.questions.map((q) => [q.id, q.default])),
       });
 
       await get().runPlan();
     } catch (error) {
+      if (error === CANCELLED) return;
       set({
         stage: 'questioning',
         error: error instanceof Error ? error.message : 'Could not apply those answers.',
@@ -374,6 +577,11 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
       revision: 0,
       acceptedRisks: [],
       error: null,
+      progress: [],
+      liveNodes: [],
+      liveQuestions: [],
+      specGraph: null,
+      warnings: [],
       localProjectId: null,
       autoStart: false,
     });

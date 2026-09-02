@@ -20,6 +20,14 @@ import type {
 } from '../schemas/architecture.js';
 import type { Question, RequirementsSpec } from '../schemas/requirements.js';
 import { slugify } from './planResolver.js';
+import {
+  decomposeGenericProject,
+  evaluateAskGate,
+  type DecomposeContext,
+} from './capabilityEngine.js';
+
+export { evaluateAskGate } from './capabilityEngine.js';
+export type { AskGateVerdict } from './capabilityEngine.js';
 
 // ── Zod Schemas ─────────────────────────────────────────────────────────────
 
@@ -28,12 +36,27 @@ export const specNodeAssumptionSchema = z.object({
   why: z.string(),
 });
 
+/**
+ * The audit trail for a question: which legs of the gate it passed, and why.
+ * Carried on every question — including the ones that were NOT asked, so a
+ * human can later see what was decided on their behalf and why.
+ */
+export const specNodeGateSchema = z.object({
+  ask: z.boolean(),
+  blocking: z.boolean(),
+  multi_valued_no_safe_default: z.boolean(),
+  not_inferable: z.boolean(),
+  verdict: z.enum(['ask', 'assume']),
+  reason: z.string(),
+});
+
 export const specNodeQuestionSchema = z.object({
   id: z.string().optional(),
   q: z.string(),
   why_blocking: z.string(),
   options: z.array(z.string()).optional(),
   default: z.string().optional(),
+  gate: specNodeGateSchema.optional(),
 });
 
 export const specNodeValidationIssueSchema = z.object({
@@ -92,7 +115,84 @@ export interface DecomposeInput {
   priorProject?: SpecGraphProject;
 }
 
-export function decomposePromptToSpecGraph(input: DecomposeInput): SpecGraphProject {
+/**
+ * A human-readable project title straight out of the brief, so the graph is
+ * never labelled "Embedded IoT System" regardless of what was asked for.
+ */
+/** Tokens that are acronyms, not words — "dht22" must never become "Dht22". */
+const ACRONYMS: { pattern: RegExp; fix: string }[] = [
+  { pattern: /^dht(\d{2})$/i, fix: 'DHT$1' },
+  { pattern: /^bme(\d{3})$/i, fix: 'BME$1' },
+  { pattern: /^ds(\d{4})$/i, fix: 'DS$1' },
+  { pattern: /^esp32[\s-]*s3$/i, fix: 'ESP32-S3' },
+  { pattern: /^esp32$/i, fix: 'ESP32' },
+  { pattern: /^esp8266$/i, fix: 'ESP8266' },
+  { pattern: /^ssd(\d{4})$/i, fix: 'SSD$1' },
+  { pattern: /^hc[\s-]*sr(\d{2,4})$/i, fix: 'HC-SR$1' },
+  { pattern: /^mq(\d)$/i, fix: 'MQ-$1' },
+  { pattern: /^mqtt$/i, fix: 'MQTT' },
+  { pattern: /^led(s)?$/i, fix: 'LED$1' },
+  { pattern: /^lcd$/i, fix: 'LCD' },
+  { pattern: /^oled$/i, fix: 'OLED' },
+  { pattern: /^tft$/i, fix: 'TFT' },
+  { pattern: /^usb$/i, fix: 'USB' },
+  { pattern: /^i2c$/i, fix: 'I2C' },
+  { pattern: /^spi$/i, fix: 'SPI' },
+  { pattern: /^uart$/i, fix: 'UART' },
+  { pattern: /^gpio(\d+)?$/i, fix: 'GPIO$1' },
+  { pattern: /^pwm$/i, fix: 'PWM' },
+  { pattern: /^arduino$/i, fix: 'Arduino' },
+  { pattern: /^raspberry$/i, fix: 'Raspberry' },
+  { pattern: /^pi$/i, fix: 'Pi' },
+  { pattern: /^pico$/i, fix: 'Pico' },
+  { pattern: /^uno$/i, fix: 'Uno' },
+  { pattern: /^nano$/i, fix: 'Nano' },
+  { pattern: /^wifi$/i, fix: 'Wi-Fi' },
+  { pattern: /^wi[\s-]?fi$/i, fix: 'Wi-Fi' },
+];
+
+/** Words that stay lowercase inside a title. */
+const TITLE_STOPWORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'but', 'for', 'on', 'in', 'at', 'to', 'of',
+  'with', 'my', 'me', 'i', 'that', 'this', 'then', 'when', 'from', 'into', 'is',
+]);
+
+function titleWord(word: string, index: number): string {
+  for (const { pattern, fix } of ACRONYMS) {
+    if (pattern.test(word)) return word.replace(pattern, fix);
+  }
+  if (index > 0 && TITLE_STOPWORDS.has(word.toLowerCase())) return word.toLowerCase();
+  return word[0]!.toUpperCase() + word.slice(1);
+}
+
+function titleFromBrief(prompt: string): string {
+  const cleaned = prompt
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/^[-–—*\s]+/, '');
+
+  // Take the first meaningful clause — the rest is almost always "and then I
+  // want codes and a website", which is outcome, not subject.
+  const firstClause =
+    cleaned.split(/[.,;—]|\bthen\b|\band i want\b|\bi want\b|\bthat\b/i)[0]?.trim() ?? '';
+  const candidate = firstClause.length >= 4 ? firstClause : cleaned;
+
+  const titled = candidate
+    .split(' ')
+    .slice(0, 8)
+    .map(titleWord)
+    .join(' ')
+    // Never end on a dangling article or connector from a mid-clause cut.
+    .replace(/[\s,;:]+(a|an|the|and|or|for|with|to|of|my|that|this|then|when|on|in|at)$/i, '')
+    .replace(/[\s+—–,;:-]+$/, '');
+
+  return titled.length > 60 ? `${titled.slice(0, 57).trimEnd()}…` : titled || 'Untitled build';
+}
+
+export function decomposePromptToSpecGraph(
+  input: DecomposeInput,
+  onNode?: (node: SpecNode) => void,
+): SpecGraphProject {
   const text = input.prompt.toLowerCase();
   const answers = input.answers ?? {};
   const isDrone = /\bdrone|uav|quadcopter|multirotor|fly|flight\b/.test(text);
@@ -103,7 +203,7 @@ export function decomposePromptToSpecGraph(input: DecomposeInput): SpecGraphProj
     ? 'Autonomous Follow-Me Drone'
     : isRobot
       ? 'Autonomous Robotic System'
-      : 'Embedded IoT System';
+      : titleFromBrief(input.prompt);
 
   const nodes: Record<string, SpecNode> = {};
   const questionQueue: z.infer<typeof specNodeQuestionSchema>[] = [];
@@ -114,7 +214,18 @@ export function decomposePromptToSpecGraph(input: DecomposeInput): SpecGraphProj
   } else if (isRobot) {
     decomposeRobotProject({ text, answers, nodes, questionQueue, assumptionLog });
   } else {
-    decomposeStandardIotProject({ text, answers, nodes, questionQueue, assumptionLog });
+    // The generic engine: capability decomposition + the ask/assume gate.
+    // No canned question list, no domain whitelist.
+    const ctx: DecomposeContext = {
+      text,
+      raw: input.prompt,
+      answers,
+      nodes,
+      questionQueue,
+      assumptionLog,
+      onNode,
+    };
+    decomposeGenericProject(ctx);
   }
 
   // Auto-spawn cardinality meta-nodes
@@ -161,6 +272,14 @@ function decomposeDroneProject(ctx: {
     why_blocking: 'Airframe geometry, motor count, and flight stabilization firmware depend on this.',
     options: ['multirotor', 'fixed-wing', 'vtol'],
     default: 'multirotor',
+    gate: evaluateAskGate({
+      blocking: true,
+      multiValued: true,
+      inferable: false,
+      blockingReason: 'airframe geometry, motor count and the stabilisation firmware all follow from it',
+      multiValuedReason: 'a multirotor, a fixed-wing and a VTOL are three different airframes and three different control laws',
+      inferableReason: 'the brief asks for a flying machine without naming a configuration',
+    }),
   };
   if (!answers['mobility_type']) questionQueue.push(mobilityQ);
 
@@ -241,6 +360,14 @@ function decomposeDroneProject(ctx: {
     why_blocking: 'BOM and vision driver pipelines differ between stereo depth vs discrete sonar/lidar.',
     options: ['stereo_depth', 'camera_plus_rangefinders'],
     default: 'stereo_depth',
+    gate: evaluateAskGate({
+      blocking: true,
+      multiValued: true,
+      inferable: false,
+      blockingReason: 'the BOM, the driver stack and the perception pipeline all differ between the two packages',
+      multiValuedReason: 'a depth camera and a discrete rangefinder array cost differently and need different drivers',
+      inferableReason: 'the brief asks for tracking and avoidance without naming a sensor package',
+    }),
   };
   if (!answers['perception_type']) questionQueue.push(perceptionQ);
 
@@ -339,6 +466,14 @@ function decomposeDroneProject(ctx: {
     why_blocking: 'Sizes LiPo battery capacity, total weight, and motor thrust-to-weight ratio.',
     options: ['10-12 mins (agile/light)', '18-22 mins (standard)', '28+ mins (endurance)'],
     default: '18-22 mins (standard)',
+    gate: evaluateAskGate({
+      blocking: true,
+      multiValued: true,
+      inferable: false,
+      blockingReason: 'battery capacity, all-up weight and the thrust-to-weight ratio are all sized from it',
+      multiValuedReason: 'a 10-minute and a 30-minute airframe differ by kilos of battery',
+      inferableReason: 'the brief asks for autonomous flight without saying how long it must stay up',
+    }),
   };
   if (!answers['target_flight_time']) questionQueue.push(flightTimeQ);
 
@@ -473,112 +608,6 @@ function decomposeRobotProject(ctx: {
   };
 }
 
-// ── Standard IoT Decomposition ──────────────────────────────────────────────
-
-function decomposeStandardIotProject(ctx: {
-  text: string;
-  answers: Record<string, string>;
-  nodes: Record<string, SpecNode>;
-  questionQueue: z.infer<typeof specNodeQuestionSchema>[];
-  assumptionLog: { node_id: string; claim: string; why: string }[];
-}) {
-  const { text, answers, nodes, questionQueue, assumptionLog } = ctx;
-
-  const hasOled = /\boled|screen|display|ssd1306\b/.test(text);
-  const hasTemp = /\bdht22|dht11|bme280|temp|temperature|humidity\b/.test(text);
-  const hasRelay = /\brelay|water|switch|pump\b/.test(text);
-
-  nodes['node_mcu'] = {
-    id: 'node_mcu',
-    domain: 'controller',
-    title: 'ESP32 DevKit V1 Microcontroller',
-    status: 'validated',
-    spec: {
-      board: 'ESP32 DevKit V1',
-      voltage: 3.3,
-      wifi: true,
-    },
-    requires: ['node_power_usb_5v'],
-    produces: ['node_software_dashboard'],
-    assumptions: [{ claim: 'ESP32 DevKit V1', why: 'Wi-Fi connectivity and telemetry support' }],
-    open_questions: [],
-    validation: { checked: true, issues: [] },
-  };
-
-  if (hasTemp) {
-    nodes['node_temp_sensor'] = {
-      id: 'node_temp_sensor',
-      domain: 'sensor',
-      title: 'DHT22 Temperature & Humidity Sensor',
-      status: 'validated',
-      spec: {
-        part: 'DHT22 / AM2302',
-        pin: 'GPIO4',
-        pullup: '10k',
-      },
-      requires: ['node_mcu'],
-      produces: [],
-      assumptions: [{ claim: 'DHT22 on GPIO4 with 10k pullup', why: 'High precision temperature sensing' }],
-      open_questions: [],
-      validation: { checked: true, issues: [] },
-    };
-  }
-
-  if (hasRelay) {
-    nodes['node_relay'] = {
-      id: 'node_relay',
-      domain: 'actuator',
-      title: '1-Channel 5V Relay Module',
-      status: 'validated',
-      spec: {
-        part: 'RELAY-1CH-5V',
-        control_pin: 'GPIO13',
-      },
-      requires: ['node_mcu'],
-      produces: [],
-      assumptions: [{ claim: '5V Optoisolated Relay on GPIO13', why: 'Switch external loads' }],
-      open_questions: [],
-      validation: { checked: true, issues: [] },
-    };
-  }
-
-  if (hasOled) {
-    nodes['node_display'] = {
-      id: 'node_display',
-      domain: 'display',
-      title: 'SSD1306 0.96" OLED Display (I2C)',
-      status: 'validated',
-      spec: {
-        part: 'SSD1306',
-        i2c_address: '0x3C',
-        sda: 'GPIO21',
-        scl: 'GPIO22',
-      },
-      requires: ['node_mcu'],
-      produces: [],
-      assumptions: [{ claim: 'SSD1306 I2C OLED at 0x3C', why: 'Local visual metrics display' }],
-      open_questions: [],
-      validation: { checked: true, issues: [] },
-    };
-  }
-
-  nodes['node_software_dashboard'] = {
-    id: 'node_software_dashboard',
-    domain: 'software',
-    title: 'Local Web Dashboard',
-    status: 'validated',
-    spec: {
-      framework: 'React / Vite MERN Stack',
-      telemetry_endpoints: ['/api/sensors', '/api/history', '/api/wifi'],
-    },
-    requires: ['node_mcu'],
-    produces: [],
-    assumptions: [{ claim: 'Self-hosted web dashboard', why: 'View metrics from phone or PC on same Wi-Fi' }],
-    open_questions: [],
-    validation: { checked: true, issues: [] },
-  };
-}
-
 // ── Cardinality-Triggered Meta-Nodes ────────────────────────────────────────
 
 function autoSpawnCardinalityMetaNodes(ctx: {
@@ -685,22 +714,68 @@ function autoSpawnCardinalityMetaNodes(ctx: {
 
 // ── Graph Validation Pass ───────────────────────────────────────────────────
 
+/**
+ * Validation + dirty propagation.
+ *
+ * A node is only `validated` when it passes its own checks AND nothing it
+ * depends on is still unresolved. When a node's spec changes (a human answer,
+ * or a later branch surfacing new information), everything downstream of its
+ * `produces` edges is marked `needs_revalidation` and re-checked.
+ */
 function runGraphValidationPass(nodes: Record<string, SpecNode>) {
-  for (const node of Object.values(nodes)) {
+  const all = Object.values(nodes);
+
+  // ── Pass 1: local checks ──────────────────────────────────────────────────
+  for (const node of all) {
     const issues: z.infer<typeof specNodeValidationIssueSchema>[] = [];
 
-    // Check upstream dependencies exist
     for (const req of node.requires) {
       if (!nodes[req]) {
         issues.push({ severity: 'error', message: `Missing required upstream node: ${req}` });
       }
     }
 
-    node.validation = {
-      checked: true,
-      issues,
-    };
-    node.status = issues.some((i) => i.severity === 'error') ? 'needs_revalidation' : 'validated';
+    if (node.open_questions.length > 0) {
+      issues.push({
+        severity: 'info',
+        message: `${node.open_questions.length} question(s) awaiting the human — unresolved until answered.`,
+      });
+    }
+
+    node.validation = { checked: true, issues };
+  }
+
+  // ── Pass 2: dirty propagation along `produces` edges, to a fixed point ────
+  const dirty = new Set<string>();
+  const seed = all.filter((node) => node.open_questions.length > 0);
+  for (const node of seed) for (const id of node.produces) dirty.add(id);
+
+  // Bounded: at most |nodes| rounds, and it stops as soon as nothing grows.
+  for (let round = 0; round < all.length; round += 1) {
+    let grew = false;
+    for (const id of [...dirty]) {
+      for (const next of nodes[id]?.produces ?? []) {
+        if (!dirty.has(next)) {
+          dirty.add(next);
+          grew = true;
+        }
+      }
+    }
+    if (!grew) break;
+  }
+
+  // ── Pass 3: final statuses ────────────────────────────────────────────────
+  for (const node of all) {
+    const hasError = node.validation.issues.some((issue) => issue.severity === 'error');
+    if (hasError || dirty.has(node.id)) {
+      node.status = 'needs_revalidation';
+    } else if (node.open_questions.length > 0) {
+      node.status = 'unresolved';
+    } else if (node.assumptions.length > 0) {
+      node.status = 'assumed';
+    } else {
+      node.status = 'validated';
+    }
   }
 }
 
@@ -732,9 +807,13 @@ export function specGraphToArchitectureGraph(specGraph: SpecGraphProject): Archi
       type = 'power';
     } else if (specNode.domain === 'software' || specNode.domain === 'autonomy_software' || specNode.domain === 'ground_station_app') {
       type = 'software';
-    } else if (specNode.domain === 'comms_link' || specNode.domain === 'inter_compute_bridge') {
+    } else if (
+      specNode.domain === 'comms_link' ||
+      specNode.domain === 'inter_compute_bridge' ||
+      specNode.domain === 'connectivity'
+    ) {
       type = 'communication';
-    } else if (specNode.domain === 'airframe') {
+    } else if (specNode.domain === 'airframe' || specNode.domain === 'mechanical') {
       type = 'mechanical';
     }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import SpecGraphBoard from '../components/SpecGraphBoard';
 import IntakeScene from '../three/IntakeScene';
 import { evaluateGraphValidity } from '../lib/graphValidity';
 import { useDesignSession } from '../store/useDesignSession';
@@ -9,9 +10,9 @@ import type { Question } from '../types/session';
 
 const SUGGESTIONS = [
   'a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer',
+  'arduino uno with a relay and a button, and I want to see the status on a website',
   'esp32 with a soil moisture sensor and a relay to water my plant when dry — dashboard on my pc',
   'esp32 + bme280 weather station logging to a website i can open at home',
-  'esp32 cam-free security: pir motion sensor + buzzer + led, web dashboard on my laptop',
 ];
 
 const BEDROCK_MODELS = [
@@ -22,10 +23,13 @@ const BEDROCK_MODELS = [
 ];
 
 /**
- * Page 01 — Prompt & questions.
- * Tell Wireup what you own and what you want; the engine decides what it can
- * and asks only what's left. Reached from the homepage prompt box (which
- * pre-fills the brief and auto-starts) or by opening a saved project.
+ * Page 01 — prompt → live spec graph → only the questions that survived the
+ * ask/assume gate → architecture graph.
+ *
+ * Everything happens HERE, on /design. The page never navigates away to ask a
+ * question: the graph fills in as the engine resolves each capability, and the
+ * questions appear over that graph once the decomposition has run to the
+ * deepest safe point. Nothing is a modal over a different page.
  */
 export default function IntakePage() {
   const navigate = useNavigate();
@@ -40,12 +44,18 @@ export default function IntakePage() {
   const assumptions = useDesignSession((state) => state.assumptions);
   const error = useDesignSession((state) => state.error);
   const startInterpretation = useDesignSession((state) => state.startInterpretation);
+  const cancelInterpretation = useDesignSession((state) => state.cancelInterpretation);
   const submitAnswers = useDesignSession((state) => state.submitAnswers);
   const skipQuestions = useDesignSession((state) => state.skipQuestions);
   const revision = useDesignSession((state) => state.revision);
   const setLlmOptions = useDesignSession((state) => state.setLlmOptions);
   const autoStart = useDesignSession((state) => state.autoStart);
   const clearAutoStart = useDesignSession((state) => state.clearAutoStart);
+
+  const progress = useDesignSession((state) => state.progress);
+  const liveNodes = useDesignSession((state) => state.liveNodes);
+  const warnings = useDesignSession((state) => state.warnings);
+
   const nodeCount = useGraphStore((state) => state.graph.nodes.length);
   const graph = useGraphStore((state) => state.graph);
   const issues = useGraphStore((state) => state.issues);
@@ -53,6 +63,7 @@ export default function IntakePage() {
   const verification = useGraphStore((state) => state.verification);
 
   const busy = stage === 'interpreting' || stage === 'planning';
+  const streaming = stage === 'interpreting';
 
   // Homepage prompt box: the brief arrived pre-filled — kick off pass 0
   // immediately (once; the flag is cleared so a remount never re-fires).
@@ -68,10 +79,14 @@ export default function IntakePage() {
 
   // LLM model selection (AWS Bedrock is the only provider)
   const [model, setModel] = useState<string>(BEDROCK_MODELS[0]);
+  const [showProgress, setShowProgress] = useState(true);
 
-  // The graph used to auto-navigate the moment it existed. It no longer does:
-  // page 01 now owns an explicit "Complete" gate (M3) that only enables once
-  // the graph passes the very same validity check page 02 applies.
+  // Once there is a real architecture graph, the progress trail has served its
+  // purpose — collapse it so the graph owns the page.
+  useEffect(() => {
+    if (nodeCount > 0) setShowProgress(false);
+    if (stage === 'interpreting') setShowProgress(true);
+  }, [nodeCount, stage]);
 
   return (
     <div className="page intake-page">
@@ -81,9 +96,9 @@ export default function IntakePage() {
           What are we <span className="accent-text">wiring up</span>?
         </h1>
         <p className="muted">
-          Name the parts on your bench and what you want them to do. Wireup checks its
-          device knowledge base, asks only what it genuinely can't decide, then takes
-          you to the graph.
+          Name the parts on your bench and what you want them to do. Wireup decomposes the
+          brief into capabilities, decides everything it can from its device knowledge base,
+          and asks only about what would otherwise produce a wrong build.
         </p>
       </section>
 
@@ -96,8 +111,7 @@ export default function IntakePage() {
           placeholder="e.g. a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer"
           disabled={busy}
         />
-        
-        {/* LLM Model Selector (AWS Bedrock) */}
+
         <div className="llm-selector-row">
           <div className="llm-field">
             <label htmlFor="model">Model (AWS Bedrock)</label>
@@ -115,7 +129,7 @@ export default function IntakePage() {
             </select>
           </div>
         </div>
-        
+
         <div className="composer-foot">
           <div className="suggestion-row">
             {SUGGESTIONS.map((suggestion, i) => (
@@ -132,36 +146,58 @@ export default function IntakePage() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={!brief.trim() || busy}
-            onClick={() => {
-                          setLlmOptions({ provider: 'bedrock', model });
-                          void startInterpretation({ provider: 'bedrock', model });
-                        }}
-          >
-            {stage === 'interpreting'
-              ? 'Reading the brief…'
-              : stage === 'planning'
-                ? 'Building the plan…'
-                : revision > 0
-                  ? 'Re-analyze →'
-                  : 'Analyze my build →'}
-          </button>
+
+          {busy ? (
+            <button type="button" className="ghost-button cancel-button" onClick={cancelInterpretation}>
+              Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!brief.trim()}
+              onClick={() => {
+                setLlmOptions({ provider: 'bedrock', model });
+                void startInterpretation({ provider: 'bedrock', model });
+              }}
+            >
+              {revision > 0 ? 'Re-analyze →' : 'Analyze my build →'}
+            </button>
+          )}
         </div>
+
+        {/* Progress is shown while working — a real trail of what the engine is
+            doing, not a spinner that says "please wait". */}
+        {progress.length > 0 && showProgress && (
+          <ProgressTrail progress={progress} busy={streaming} />
+        )}
+
         {error && <div className="inline-error">{error}</div>}
+        {warnings.map((warning) => (
+          <div key={warning} className="inline-warning">
+            {warning}
+          </div>
+        ))}
       </section>
 
+      {/* ── The live spec graph — fills in as each capability resolves ────── */}
+      {(liveNodes.length > 0 || streaming) && stage !== 'reviewing' && (
+        <SpecGraphBoard nodes={liveNodes} streaming={streaming} />
+      )}
+
+      {/* ── Questions that survived the gate, over the graph ──────────────── */}
       {stage === 'questioning' && questions.length > 0 && (
         <section className="questions-card">
           <div className="card-head">
             <div>
-              <div className="eyebrow">agent questions</div>
-              <h2>Only what it can't decide</h2>
+              <div className="eyebrow">only what it couldn't decide</div>
+              <h2>
+                {questions.length} question{questions.length > 1 ? 's' : ''} before it can build
+              </h2>
               <p className="muted">
-                Everything else was decided from the knowledge base. Defaults are pre-filled —
-                change what matters, skip the rest.
+                Each one below is blocking, has no safe default, and isn't derivable from your
+                brief — that's the test every candidate question has to pass. Everything else was
+                decided for you and is listed in the graph above.
               </p>
             </div>
           </div>
@@ -179,7 +215,7 @@ export default function IntakePage() {
 
           <div className="question-actions">
             <button type="button" className="primary-button" onClick={() => void submitAnswers()}>
-              Generate with my answers →
+              Build with my answers →
             </button>
             <button type="button" className="ghost-button" onClick={() => void skipQuestions()}>
               Skip — use the defaults
@@ -188,7 +224,7 @@ export default function IntakePage() {
         </section>
       )}
 
-      {requirements && (
+      {requirements && stage !== 'idle' && (
         <section className="rag-card">
           <div className="eyebrow">engine read-out</div>
           <div className="rag-grid">
@@ -211,11 +247,16 @@ export default function IntakePage() {
           </div>
           <p className="intent-line">{requirements.intent}</p>
           {assumptions.length > 0 && (
-            <ul className="assumption-list">
-              {assumptions.map((assumption) => (
-                <li key={assumption}>{assumption}</li>
-              ))}
-            </ul>
+            <details className="assumption-details">
+              <summary>
+                {assumptions.length} decision{assumptions.length > 1 ? 's' : ''} made for you
+              </summary>
+              <ul className="assumption-list">
+                {assumptions.map((assumption) => (
+                  <li key={assumption}>{assumption}</li>
+                ))}
+              </ul>
+            </details>
           )}
         </section>
       )}
@@ -248,6 +289,34 @@ export default function IntakePage() {
   );
 }
 
+/** What the engine is doing right now, in order, with the last line live. */
+function ProgressTrail({
+  progress,
+  busy,
+}: {
+  progress: { stage: string; title: string; detail?: string }[];
+  busy: boolean;
+}) {
+  return (
+    <ol className="progress-trail">
+      {progress.map((step, index) => {
+        const isLast = index === progress.length - 1;
+        return (
+          <li key={`${step.stage}-${index}`} className={isLast && busy ? 'live' : 'done'}>
+            <span className="progress-dot" aria-hidden>
+              {isLast && busy ? <span className="progress-pulse" /> : '✓'}
+            </span>
+            <span className="progress-text">
+              <strong>{step.title}</strong>
+              {step.detail && <span>{step.detail}</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function QuestionCard({
   question,
   value,
@@ -263,11 +332,10 @@ function QuestionCard({
         {question.prompt}
         {question.unit && <span className="unit-badge">{question.unit}</span>}
       </div>
-      {(question.why || question.impact) && (
-        <p className="question-meta">
-          {[question.why, question.impact].filter(Boolean).join(' — ')}
-        </p>
-      )}
+
+      {/* `why` is the gate's own audit trail — shown so the human can judge
+          whether the question is worth their attention before answering. */}
+      {question.why && <p className="question-meta">{question.why}</p>}
 
       {question.kind === 'single' && (
         <div className="option-grid">
@@ -279,7 +347,6 @@ function QuestionCard({
               onClick={() => onChange(option.value)}
             >
               <strong>{option.label}</strong>
-              {option.hint && <span>{option.hint}</span>}
             </button>
           ))}
         </div>
@@ -330,7 +397,6 @@ function QuestionCard({
                 }}
               >
                 <strong>{option.label}</strong>
-                {option.hint && <span>{option.hint}</span>}
               </button>
             );
           })}

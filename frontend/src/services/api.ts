@@ -230,6 +230,87 @@ export const api = {
   adminWebhooks: () => request<{ webhooks: WebhookLogEntry[] }>('/admin/webhooks'),
 };
 /**
+ * Stream pass 0 (interpretation) as NDJSON.
+ *
+ * One callback per event, so the graph the engine is building can be drawn
+ * while it is still being built instead of appearing all at once at the end.
+ */
+export async function streamInterpretation(
+  body: {
+    brief: string;
+    answers?: Record<string, string>;
+    priorRequirements?: RequirementsSpec;
+    priorQuestions?: Question[];
+    feedback?: string[];
+    graph?: unknown;
+    provider?: string;
+    model?: string;
+  },
+  onEvent: (event: import('../types/specGraph').InterpretStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/architecture/interpret/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return;
+    throw new ApiError('Cannot reach the Wireup API. Is the backend running?', 0);
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      setAuthToken(null);
+      onUnauthorized?.();
+    }
+    const text = await response.text().catch(() => '');
+    let message = `Interpretation failed (${response.status})`;
+    try {
+      message = (JSON.parse(text) as { error?: string }).error ?? message;
+    } catch {
+      /* html error page — keep default */
+    }
+    throw new ApiError(message, response.status);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new ApiError('Streaming not supported by this browser.', 0);
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) {
+        try {
+          onEvent(JSON.parse(line) as import('../types/specGraph').InterpretStreamEvent);
+        } catch {
+          // A malformed line must not kill the whole stream — the engine's
+          // own `error` event is the authoritative failure signal.
+        }
+      }
+      newline = buffer.indexOf('\n');
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      onEvent(JSON.parse(buffer) as import('../types/specGraph').InterpretStreamEvent);
+    } catch {
+      /* ignore trailing partial line */
+    }
+  }
+}
+
+/**
  * Stream the agentic build: POST + NDJSON reader, one callback per event.
  * Resolves when the stream closes; rejects on transport/parse failures.
  */

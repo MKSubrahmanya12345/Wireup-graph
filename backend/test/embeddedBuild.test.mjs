@@ -142,12 +142,38 @@ describe('wokwi diagram generation', () => {
   });
 
   it('reports parts Wokwi cannot model instead of faking them', () => {
-    const plan = planFor('mq-2 gas sensor and soil moisture sensor with esp32', 'Gas Soil');
+    // soil-moisture and led-indicator are the two parts the knowledge base
+    // carries that Wokwi has no model for. (mq2-gas and ssd1306 used to be
+    // listed here; both now map to real Wokwi parts, so they are supported.)
+    const plan = planFor('soil moisture sensor and an led with esp32', 'Soil LED');
     const config = generateWokwiConfig(plan);
-    assert.deepEqual(config.unsupported.sort(), ['mq2-gas', 'soil-moisture'].sort());
+    assert.deepEqual(config.unsupported.sort(), ['led-indicator', 'soil-moisture']);
     // No simulated part emitted for those.
     const types = JSON.parse(config.diagramJson).parts.map((p) => p.type);
-    assert.ok(!types.some((t) => /mq|soil|gas/i.test(t)));
+    assert.ok(
+      !types.some((t) => /soil|led/i.test(t)),
+      `no fake part emitted for unmodelled devices, got: ${JSON.stringify(types)}`,
+    );
+    // The board it CAN model is still wired up.
+    assert.ok(types.some((t) => t.startsWith('board-esp32')), 'board still present');
+  });
+
+  it('models every part Wokwi actually supports — no silent drops', () => {
+    // Regression: the HC-SR04 and PIR cases were keyed on the hyphenated
+    // spellings ('hc-sr04', 'hc-sr501') which never matched the knowledge-base
+    // ids ('hcsr04', 'pir-hcsr501'), so both were silently reported as
+    // unmodelled despite Wokwi having parts for them.
+    for (const [brief, expected] of [
+      ['hc-sr04 ultrasonic sensor with esp32', 'wokwi-hc-sr04'],
+      ['pir motion sensor with esp32', 'wokwi-pir-motion-sensor'],
+      ['mq2 gas sensor with esp32', 'wokwi-gas-sensor'],
+      ['ssd1306 oled display with esp32', 'wokwi-ssd1306'],
+    ]) {
+      const config = generateWokwiConfig(planFor(brief, 'T'));
+      assert.deepEqual(config.unsupported, [], `${brief} should be fully modelled`);
+      const types = JSON.parse(config.diagramJson).parts.map((p) => p.type);
+      assert.ok(types.includes(expected), `${brief} → expected ${expected}, got ${JSON.stringify(types)}`);
+    }
   });
 
   it('uses the S3 board type for the S3 profile', () => {
