@@ -2,6 +2,7 @@ import { env } from './env.js';
 import { logger } from './logger.js';
 import { getPaymentProvider } from '../providers/payment/index.js';
 import { getHardwareSimProvider } from '../providers/sim/index.js';
+import { isBedrockConfigured } from '../services/llmService.js';
 
 /**
  * One loud, greppable line per external dependency at boot.
@@ -15,14 +16,17 @@ export function logAdapterBanner(): void {
   const payment = getPaymentProvider();
   const sim = getHardwareSimProvider();
 
-  const llm = env.GEMINI_API_KEY
-    ? { adapter: 'GeminiAdapter', mode: 'real' as const, detail: `model ${env.GEMINI_MODEL}` }
+  const llm = isBedrockConfigured()
+    ? {
+        adapter: 'BedrockAdapter',
+        mode: 'real' as const,
+        detail: `model ${env.BEDROCK_MODEL} (${env.AWS_REGION})`,
+      }
     : {
         adapter: 'MockLLMProvider',
         mode: 'mock' as const,
-        detail: env.GROQ_API_KEY
-          ? 'no GEMINI_API_KEY — Pro tier falls back to Groq (logged per build)'
-          : 'no GEMINI_API_KEY and no GROQ_API_KEY — builds run the deterministic knowledge-base engine',
+        detail:
+          'no AWS Bedrock credentials — builds run the deterministic knowledge-base engine',
       };
 
   const rows = [

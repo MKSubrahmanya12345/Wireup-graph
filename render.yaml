@@ -1,6 +1,6 @@
 # Render blueprint — one Docker web service serving frontend + API same-origin.
 # In the Render dashboard: New > Blueprint, point at this repo. Set the secret
-# env vars (JWT_SECRET, MONGO_URI, GROQ_API_KEY) in the service settings.
+# env vars (JWT_SECRET, MONGO_URI, AWS Bedrock credentials) in the service settings.
 #
 # NOTE: agentic builds stream for minutes and need no request timeout — use a
 # paid/always-on instance (the free tier sleeps and caps long requests).
@@ -33,5 +33,9 @@ services:
       # Set these in the dashboard (do not commit secrets):
       - key: MONGO_URI
         sync: false
-      - key: GROQ_API_KEY
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
         sync: false

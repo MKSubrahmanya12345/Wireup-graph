@@ -16,7 +16,7 @@ export interface Plan {
   amountPaise: number;
   currency: 'INR';
   /** Which LLM tier a build on this plan is entitled to. */
-  llmTier: 'groq' | 'gemini';
+  llmTier: 'bedrock';
   features: string[];
   /** True while the price is still a placeholder. Surfaced in the UI. */
   pricingPending: boolean;
@@ -28,10 +28,10 @@ export const PLANS: Record<PlanId, Plan> = {
     name: 'Free',
     amountPaise: 0,
     currency: 'INR',
-    llmTier: 'groq',
+    llmTier: 'bedrock',
     features: [
       'Deterministic knowledge-base engine',
-      'Groq-assisted firmware drafts',
+      'Bedrock-assisted firmware drafts',
       'g++ / npm / tsc / vite validation gates',
       'Mock hardware simulation',
     ],
@@ -43,10 +43,10 @@ export const PLANS: Record<PlanId, Plan> = {
     // [BLOCKED — NEEDS HUMAN: pricing]
     amountPaise: 0,
     currency: 'INR',
-    llmTier: 'gemini',
+    llmTier: 'bedrock',
     features: [
       'Everything in Free',
-      'Gemini-tier model on every build (falls back to Groq if the key is absent)',
+      'AWS Bedrock model on every build',
       'Priority build queue',
       'Per-build instructions + BOM with purchase links',
     ],

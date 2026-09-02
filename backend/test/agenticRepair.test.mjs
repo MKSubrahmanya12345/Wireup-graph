@@ -8,7 +8,7 @@
  *   2. Diagnostics-fed repair — compiler/validator findings become real,
  *      surgical edits (deterministic layer + the search/replace applicator),
  *      and a broken sketch is repaired to a g++-clean compile.
- *   3. LLM repair + multi-turn revision — a stub OpenAI-compatible server
+ *   3. LLM repair + multi-turn revision — a stub Bedrock Converse server
  *      returns edits; the pipeline applies them deterministically and only
  *      ships firmware that passes the gate.
  *
@@ -16,15 +16,14 @@
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import http from 'node:http';
+
+import { applyBedrockStubEnv, startBedrockStub } from './bedrockStub.mjs';
 
 // Deterministic tests never invoke the LLM (repair agent is only called when
 // an LLM is available); the two LLM suites talk to a local stub server below.
 // env.ts reads these at import time, so they must be set before the imports.
-process.env.GROQ_API_KEY = 'stub-key';
-process.env.GROQ_BASE_URL = 'http://127.0.0.1:8911';
-process.env.AWS_ACCESS_KEY_ID = '';
-process.env.AWS_SECRET_ACCESS_KEY = '';
+const repairStub = await startBedrockStub((_system, request) => stubReply(request));
+applyBedrockStubEnv(repairStub.port);
 process.env.AGENTIC_TERMINAL_VALIDATION = '1';
 process.env.AGENTIC_SMOKE_TEST = '0';
 
@@ -206,11 +205,8 @@ describe('repair → compile gate', () => {
 
 // ── 4. LLM repair + revision via a stub model ───────────────────────────────
 
-const STUB_PORT = 8911;
-let server;
-
-before(async () => {
-  // Route on the system prompt: repair vs revise both return edits JSON.
+// Route on the system prompt: repair vs revise both return edits JSON.
+function stubReply(request) {
   const repairEdits = {
     summary: 'declared the missing ledPin constant',
     edits: [
@@ -223,21 +219,12 @@ before(async () => {
       { path: 'firmware/config.h', search: '#define SAMPLE_INTERVAL_MS 2000', replace: '#define SAMPLE_INTERVAL_MS 2000\n// active-low relay module', reason: 'note polarity' },
     ],
   };
-  server = http.createServer((req, res) => {
-    let b = '';
-    req.on('data', (c) => (b += c));
-    req.on('end', () => {
-      const body = JSON.parse(b);
-      const sys = body.messages?.[0]?.content ?? '';
-      const payload = sys.includes('iterating on an already-built') ? reviseEdits : repairEdits;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(payload) } }] }));
-    });
-  });
-  await new Promise((resolve) => server.listen(STUB_PORT, '127.0.0.1', resolve));
-});
+  const sys = (request.system ?? []).map((entry) => entry.text ?? '').join('\n');
+  const payload = sys.includes('iterating on an already-built') ? reviseEdits : repairEdits;
+  return JSON.stringify(payload);
+}
 
-after(() => server?.close());
+after(() => repairStub.close());
 
 describe('LLM repair (stub model)', () => {
   it('applies model-returned edits to fix an undefined symbol', async () => {
@@ -247,7 +234,7 @@ describe('LLM repair (stub model)', () => {
       files: [{ path: 'firmware/main.ino', content: 'void setup(){\n  pinMode(ledPin, OUTPUT);\n}\nvoid loop(){}\n' }],
     };
     const findings = [{ severity: 'error', code: 'GPP-SYNTAX', file: 'firmware/main.ino', line: 2, message: "'ledPin' was not declared in this scope" }];
-    const result = await repairFirmwareWithLlm(fw, findings, p, { provider: 'groq' });
+    const result = await repairFirmwareWithLlm(fw, findings, p, { provider: 'bedrock' });
     assert.ok(result, 'LLM repair returned a result');
     assert.match(result.firmware.files[0].content, /const int ledPin = 13;/);
     assert.ok(result.applied.length >= 1);
@@ -263,7 +250,7 @@ describe('multi-turn revision (stub model)', () => {
         brief: BRIEF,
         projectName: PROJECT,
         graph: normaliseGraph({}).graph,
-        provider: 'groq',
+        provider: 'bedrock',
         revisionInstruction: 'make the relay active-low',
       },
       (e) => {

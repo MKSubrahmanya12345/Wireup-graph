@@ -17,7 +17,7 @@ import type { RequirementsSpec } from '../schemas/requirements.js';
 import {
   PLANNER_SYSTEM_PROMPT,
   VERIFIER_SYSTEM_PROMPT,
-} from './groqService.js';
+} from './plannerPrompts.js';
 import { callLlm, extractJson, LlmError, parseLlmJson, type LlmProvider } from './llmService.js';
 
 export interface PlanResult {

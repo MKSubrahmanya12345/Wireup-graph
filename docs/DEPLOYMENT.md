@@ -27,7 +27,7 @@ multi-stage `Dockerfile`.
 fly launch --no-deploy          # pick a name/region; it detects the Dockerfile
 fly secrets set JWT_SECRET="$(openssl rand -hex 32)"
 fly secrets set MONGO_URI="mongodb+srv://..."   # optional but recommended
-fly secrets set GROQ_API_KEY="..."              # optional (LLM draft/repair/revision)
+fly secrets set AWS_ACCESS_KEY_ID="..." AWS_SECRET_ACCESS_KEY="..." AWS_REGION="us-east-1"  # optional (Bedrock LLM draft/repair/revision)
 fly deploy
 fly status                       # health check is /api/healthz
 ```
@@ -51,7 +51,7 @@ backend; the runtime image includes `g++`. Set the service to at least ~1 GB.
 | `PORT` | *(host injects)* | defaults to 5000 locally |
 | `JWT_SECRET` | `openssl rand -hex 32` | **required** in prod (signs sessions) |
 | `MONGO_URI` | MongoDB Atlas SRV URI | without it, accounts/projects use a local file that resets on redeploy |
-| `GROQ_API_KEY` | Groq key | optional — enables LLM first-draft, diagnostics repair, multi-turn revision |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | AWS Bedrock credentials | optional — enables LLM first-draft, diagnostics repair, multi-turn revision |
 | `CORS_ORIGIN` | public URL | only needed if you host the frontend separately |
 | `AGENTIC_TERMINAL_VALIDATION` | `1` | firmware + MERN gates |
 | `AGENTIC_SMOKE_TEST` | `1` | boot the generated MERN app in the build; set `0` for faster builds |

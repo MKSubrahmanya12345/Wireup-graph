@@ -19,7 +19,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-process.env.GROQ_API_KEY = '';
+import { disableBedrockEnv } from './bedrockStub.mjs';
+
+// Force the deterministic path — no LLM credentials may leak in from the host env.
+disableBedrockEnv();
 process.env.AGENTIC_TERMINAL_VALIDATION = '0';
 process.env.AGENTIC_SMOKE_TEST = '0';
 // Embedded gates are enabled by default but must skip (tools absent here).

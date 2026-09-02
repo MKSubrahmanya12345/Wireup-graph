@@ -116,8 +116,8 @@ export default function AdminPage() {
           <span className={`verdict-pill ${overview.adapters.sim.mode === 'mock' ? 'warn' : 'good'}`}>
             hardware sim: {overview.adapters.sim.mode}
           </span>
-          <span className={`verdict-pill ${overview.adapters.llm.gemini ? 'good' : 'warn'}`}>
-            gemini: {overview.adapters.llm.gemini ? 'live' : 'absent → Groq fallback'}
+          <span className={`verdict-pill ${overview.adapters.llm.bedrock ? 'good' : 'warn'}`}>
+            bedrock: {overview.adapters.llm.bedrock ? 'live' : 'absent → deterministic engine'}
           </span>
           {overview.revenue.pricingPending && (
             <span className="verdict-pill bad">pricing pending — plans are ₹0 placeholders</span>

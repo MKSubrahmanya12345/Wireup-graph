@@ -1,14 +1,8 @@
-export type LlmProvider = 'groq' | 'bedrock' | 'gemini';
+export type LlmProvider = 'bedrock';
 
 export interface LlmConfig {
   defaultProvider: LlmProvider;
   providers: {
-    groq: {
-      available: boolean;
-      defaultModel: string;
-      baseUrl: string;
-      models: string[];
-    };
     bedrock: {
       available: boolean;
       defaultModel: string;

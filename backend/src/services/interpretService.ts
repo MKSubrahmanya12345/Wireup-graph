@@ -140,7 +140,7 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
         .map((issue) => `${issue.path.join('.') || 'response'}: ${issue.message}`)
         .join('; ')}`,
       502,
-      input.provider ?? 'groq',
+      input.provider ?? 'bedrock',
     );
   }
 

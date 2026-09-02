@@ -1,22 +1,7 @@
 /**
- * @deprecated Use llmService.ts instead. This file is kept for backward compatibility.
- * Import from './llmService' for new code.
+ * System prompts for the architecture planner and verifier passes.
+ * The LLM transport itself lives in llmService.ts (AWS Bedrock).
  */
-import { env } from '../config/env.js';
-import { callLlm, extractJson as extractJsonFromLlm, LlmError } from './llmService.js';
-
-export type ChatMessage = { role: 'system' | 'user'; content: string };
-
-/** @deprecated Use LlmError from llmService */
-export class GroqError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'GroqError';
-  }
-}
 
 export const PLANNER_SYSTEM_PROMPT = `You are the senior systems engineer inside a hardware architecture design tool.
 Reason about the user's request and the existing architecture, then return a complete updated architecture as JSON.
@@ -98,27 +83,3 @@ Return JSON only, with this shape:
 Be conservative: use "verified" only when the component identity, endpoint references, ports, voltage/power assumptions, and interface compatibility are sufficiently supported. Use "review" for unknown part variants, missing pin mappings, or assumptions that need a data-sheet check. Use "blocked" for contradictory voltages, impossible endpoint references, unsafe power paths, or other build-stopping issues.
 Do not invent source URLs. Only cite official component bank URLs, and only for parts that are ACTUALLY present in the proposed graph — citing an unrelated part (e.g. a BME280 datasheet for a DHT22 design) is worse than citing nothing.`;
 
-/** @deprecated Use extractJson from llmService */
-export function extractJson(content: string): unknown {
-  return extractJsonFromLlm(content);
-}
-
-/** @deprecated Use callLlm from llmService with provider: 'groq' */
-export async function callGroq(
-  messages: ChatMessage[],
-  maxTokens: number,
-): Promise<string> {
-  try {
-    return await callLlm(messages, {
-      provider: 'groq',
-      model: env.GROQ_MODEL,
-      maxTokens,
-      jsonResponse: true,
-    });
-  } catch (error) {
-    if (error instanceof LlmError) {
-      throw new GroqError(error.message, error.status);
-    }
-    throw error;
-  }
-}

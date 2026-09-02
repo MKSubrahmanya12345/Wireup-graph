@@ -10,19 +10,12 @@
  * humidity_pct / state), the pipeline swaps in the knowledge-base firmware,
  * and the build ships with firmware + software that agree.
  *
- * A stub OpenAI-compatible server plays the LLM. Run with: npm test
+ * A stub Bedrock Converse server plays the LLM. Run with: npm test
  */
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
-import http from 'node:http';
+import { after, describe, it } from 'node:test';
 
-// Must be set BEFORE the dynamic imports below — env.ts reads them at import.
-process.env.GROQ_API_KEY = 'stub-key';
-process.env.GROQ_BASE_URL = 'http://127.0.0.1:8898';
-process.env.AGENTIC_TERMINAL_VALIDATION = '1';
-
-const { runAgenticPipeline } = await import('../src/agentic/pipeline.ts');
-const { normaliseGraph } = await import('../src/schemas/architecture.ts');
+import { applyBedrockStubEnv, startBedrockStub } from './bedrockStub.mjs';
 
 /** The draft that burned the user: flat field names the dashboard never reads. */
 const BAD_DRAFT = {
@@ -56,23 +49,17 @@ void loop() { server.handleClient(); }
   notes: [],
 };
 
-let server;
+// Must be set BEFORE the dynamic imports below — env.ts reads them at import.
+// Anything the pipeline asks the LLM: hand back the bad firmware draft.
+const stub = await startBedrockStub(() => JSON.stringify(BAD_DRAFT));
+applyBedrockStubEnv(stub.port);
+process.env.AGENTIC_TERMINAL_VALIDATION = '1';
 
-before(async () => {
-  server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', () => {
-      // Anything the pipeline asks the LLM: hand back the bad firmware draft.
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(BAD_DRAFT) } }] }));
-    });
-  });
-  await new Promise((resolve) => server.listen(8898, '127.0.0.1', resolve));
-});
+const { runAgenticPipeline } = await import('../src/agentic/pipeline.ts');
+const { normaliseGraph } = await import('../src/schemas/architecture.ts');
 
 after(async () => {
-  await new Promise((resolve) => server.close(resolve));
+  await stub.close();
 });
 
 describe('LLM draft breaks the JSON contract (the support-log scenario)', () => {
@@ -86,7 +73,7 @@ describe('LLM draft breaks the JSON contract (the support-log scenario)', () => 
         brief: 'a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer',
         projectName: 'ESP32-DHT22 Environmental Monitor',
         graph: normaliseGraph({}).graph,
-        provider: 'groq',
+        provider: 'bedrock',
       },
       (event) => {
         events.push(event);

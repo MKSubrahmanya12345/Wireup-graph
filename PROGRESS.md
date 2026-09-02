@@ -15,7 +15,7 @@ milestone in the directive is implemented, wired end-to-end and proven with a
 real run (HTTP calls / pipeline runs / `npm test`), not by inspection.
 
 **Waiting on real credentials (nothing to build, only env vars to set):**
-Razorpay, Gemini, Velxio, and the actual plan prices.
+Razorpay, AWS Bedrock, Velxio, and the actual plan prices.
 
 ---
 
@@ -25,7 +25,7 @@ Razorpay, Gemini, Velxio, and the actual plan prices.
 | - | ---- | ----- | -------- |
 | 1 | `PaymentProvider` (`checkout`/`verifyWebhook`/`refund`) + full `MockPaymentProvider` | `backend/src/providers/payment/` | ✅ `npm test` → `billingMock.test.mjs` |
 | 2 | `HardwareSimProvider` (`runSim(plan)`) + full `MockHardwareSimProvider` | `backend/src/providers/sim/` | ✅ `providers.test.mjs` |
-| 3 | Gemini adapter in the LLM selector; no key → warn + fall back to Groq | `backend/src/services/llmService.ts` | ✅ `providers.test.mjs` (both directions) |
+| 3 | AWS Bedrock adapter in the LLM selector (the only provider); no credentials → deterministic engine | `backend/src/services/llmService.ts` | ✅ `providers.test.mjs` |
 | 4 | Env-driven selection `PAYMENT_MODE` / `SIM_MODE` (`auto` = real when keyed, mock otherwise) | `backend/src/config/env.ts`, both `index.ts` factories | ✅ |
 | 5 | **CHECK** boots clean with no keys, all three mocks active | `config/startupReport.ts` | ✅ boot log: `Wireup adapters ready — 3/3 running against mocks` / `ALL MOCKS ACTIVE` |
 
@@ -48,13 +48,13 @@ Razorpay, Gemini, Velxio, and the actual plan prices.
 Also shipped: `/billing` page (plan cards + checkout that waits out the mock
 webhook), `Plan` / `Admin` links in the top nav.
 
-## M2 — Gemini-tier gating ✅
+## M2 — LLM provider accounting ✅
 
 | # | Item | Verified |
 | - | ---- | -------- |
-| 17 | `pipeline.ts` selects the provider from the **user's plan**, not a global env var | ✅ |
+| 17 | `pipeline.ts` runs every plan on AWS Bedrock and records the plan per build | ✅ |
 | 18 | The provider that actually ran is logged per build, and stored on the usage record | ✅ `LLM provider that actually ran for this build: …` |
-| 19 | **CHECK** free build logs Groq; pro build logs Gemini / the fallback correctly | ✅ free → `plan: free → entitled groq; provider that will run: groq`; pro → `entitled gemini; provider that will run: groq — requested gemini, fell back to groq (GEMINI_API_KEY is not configured)` |
+| 19 | **CHECK** every build logs the provider that ran | ✅ `plan: free → provider: bedrock (AWS Bedrock)` |
 
 ## M3 — 3D shapes + Complete gate on page 01 ✅
 
@@ -137,7 +137,7 @@ by a running Velxio.
 | Blocker | What is already built | Exactly what to set to go live |
 | --- | --- | --- |
 | **Razorpay account/keys** | `RazorpayAdapter` (orders, HMAC webhook verification, refunds) behind the shared interface; the whole loop proven on the mock | `PAYMENT_MODE=razorpay`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `APP_BASE_URL=https://…`; register `POST {APP_BASE_URL}/api/billing/webhook` in the Razorpay dashboard for `payment.captured` / `payment.failed` / `refund.processed` |
-| **Gemini API key** | Gemini adapter + plan-based tier gating + logged fallback | `GEMINI_API_KEY` (optionally `GEMINI_MODEL`, default `gemini-2.0-flash`) |
+| **AWS Bedrock credentials** | Bedrock adapter (Converse API) + per-build provider logging | `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` + `AWS_REGION` (optionally `BEDROCK_MODEL`, default `moonshotai.kimi-k2.5`) |
 | **Velxio pipeline** — not in this repo | `VelxioSimProvider`, a thin adapter posting the resolved plan to `POST {VELXIO_URL}/simulate` and expecting `{ ok, checks[], log[], runUrl }` | `SIM_MODE=velxio`, `VELXIO_URL`, optional `VELXIO_API_KEY`. If the real pipeline's contract differs, only `velxioSimProvider.ts` changes |
 | **[BLOCKED — NEEDS HUMAN: pricing]** | Plans, checkout, revenue reporting and the admin panel all handle real amounts today | Set `amountPaise` (and `pricingPending: false`) for each plan in `backend/src/billing/plans.ts`. Everything else follows automatically |
 | Admin credentials | Admin seeding is automatic | `ADMIN_EMAIL`, `ADMIN_PASSWORD` (the default `wireup-admin-dev` is dev-only and warns loudly at boot) |

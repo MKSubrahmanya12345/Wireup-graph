@@ -1,7 +1,7 @@
 # Fly.io config for Wireup — one machine serves the frontend + API same-origin.
 # Deploy:
 #   fly launch --no-deploy --name <your-app>
-#   fly secrets set JWT_SECRET="$(openssl rand -hex 32)" MONGO_URI="..." GROQ_API_KEY="..."
+#   fly secrets set JWT_SECRET="$(openssl rand -hex 32)" MONGO_URI="..." AWS_ACCESS_KEY_ID="..." AWS_SECRET_ACCESS_KEY="..."
 #   fly deploy
 #
 # Builds from the repo-root Dockerfile (multi-stage: vite build + tsc + runtime).

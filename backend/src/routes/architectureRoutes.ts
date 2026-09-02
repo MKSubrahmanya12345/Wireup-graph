@@ -10,7 +10,7 @@ import { planRateLimiter, renderRateLimiter } from '../middleware/rateLimiter.js
 
 const router = Router();
 
-// Rate limited: every call here spends real Groq credits.
+// Rate limited: every call here spends real Bedrock credits.
 router.post('/architecture/interpret', planRateLimiter, interpretBrief);
 router.post('/architecture/plan', planRateLimiter, planArchitecture);
 
