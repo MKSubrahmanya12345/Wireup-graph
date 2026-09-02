@@ -93,25 +93,27 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
     ),
 
   startInterpretation: async (options?: LlmOptions) => {
-      const { brief } = get();
-      if (!brief.trim()) {
-        set({ error: 'Describe what you want to build first.' });
-        return;
-      }
+    const { brief, revision, answers, questions, requirements, feedback } = get();
+    if (!brief.trim()) {
+      set({ error: 'Describe what you want to build first.' });
+      return;
+    }
 
-      set({ stage: 'interpreting', error: null });
-      try {
-        const payload = {
-          brief: brief.trim(),
-          answers: {},
-          priorQuestions: [],
-          feedback: [],
-          provider: options?.provider,
-          model: options?.model,
-        };
-        const result = (await api.interpretBrief(payload)) as InterpretResponse;
+    set({ stage: 'interpreting', error: null });
+    try {
+      const isReanalyze = revision > 0;
+      const payload = {
+        brief: brief.trim(),
+        answers: isReanalyze ? answers : {},
+        priorRequirements: isReanalyze ? (requirements ?? undefined) : undefined,
+        priorQuestions: isReanalyze ? questions : [],
+        feedback: isReanalyze ? feedback : [],
+        provider: options?.provider ?? get().llmOptions.provider,
+        model: options?.model ?? get().llmOptions.model,
+      };
+      const result = (await api.interpretBrief(payload)) as InterpretResponse;
 
-        set({
+      set({
         requirements: result.requirements,
         questions: result.questions,
         assumptions: result.assumptions,
@@ -142,6 +144,10 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         feedback,
         graph: useGraphStore.getState().graph,
       })) as InterpretResponse;
+
+      if (result.questions && result.questions.length > 0) {
+        console.warn('[useDesignSession] Unexpected questions returned on second pass:', result.questions);
+      }
 
       set({
         requirements: result.requirements,
