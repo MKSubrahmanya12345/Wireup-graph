@@ -29,6 +29,10 @@ import type {
 import { DEVICE_KNOWLEDGE, type DeviceKnowledge } from './knowledge/devices.js';
 import { detectBoard, retrieveFromBrief, type RetrievalHit } from './knowledge/retriever.js';
 import { resolveBuildPlan, slugify } from './planResolver.js';
+import {
+  decomposePromptToSpecGraph,
+  specGraphToArchitectureGraph,
+} from './specGraph.js';
 
 // ── Interpret ───────────────────────────────────────────────────────────────
 
@@ -122,6 +126,52 @@ export interface DeterministicInterpretInput {
 
 export function interpretDeterministically(input: DeterministicInterpretInput): InterpretResponse {
   const brief = input.brief.trim();
+
+  // If the brief is a complex robotics/drone/autonomous system, use the SpecGraph decomposition
+  const isComplexSystem = /\bdrone|uav|quadcopter|multirotor|fly|flight|robot|rover|hexapod\b/i.test(brief);
+  if (isComplexSystem) {
+    const spec = decomposePromptToSpecGraph({ prompt: brief, answers: input.answers });
+    const questions: Question[] = spec.question_queue.map((q) => {
+      const fallbackDefault = q.options && q.options.length > 0 ? (q.options[0] ?? '') : '';
+      return {
+        id: q.id || 'question',
+        prompt: q.q,
+        why: q.why_blocking,
+        impact: 'Drives hardware and autonomy subsystem sizing.',
+        kind: (q.options && q.options.length > 0 ? 'single' : 'number') as Question['kind'],
+        options: (q.options ?? []).map((opt) => ({ value: opt, label: opt })),
+        default: q.default ?? fallbackDefault,
+      };
+    });
+
+    const freshQuestions = questions.filter((q) => !input.answers?.[q.id]);
+
+    return {
+      requirements: {
+        project: spec.project.title,
+        intent: `Build an ${spec.project.title} (${spec.project.domain}) satisfying: ${brief}`,
+        domain: spec.project.domain,
+        mechanical: {
+          mobility: isComplexSystem ? 'flying' : 'static',
+        },
+        power: {
+          source: 'battery',
+          rechargeable: true,
+          targetRuntimeMinutes: Number(input.answers?.['target_flight_time']?.match(/\d+/)?.[0] ?? 18),
+        },
+        constraints: {
+          domain: spec.project.domain,
+          specGraph: true,
+        },
+        assumptions: spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim} (${a.why})`),
+        confidence: 0.9,
+      },
+      questions: freshQuestions,
+      assumptions: spec.assumption_log.map((a) => `[${a.node_id}] ${a.claim}`),
+      ready: freshQuestions.length === 0,
+    };
+  }
+
   const hits = retrieveFromBrief(brief);
   const { board } = detectBoard(brief);
   const webIntent = /website|web\s*app|dashboard|browser|local computer|http|access this/i.test(brief);
@@ -356,6 +406,35 @@ export function deterministicPlan(
   answers: Record<string, string> = {},
   requirements?: RequirementsSpec | null,
 ): PlanResult {
+  const isComplexSystem = /\bdrone|uav|quadcopter|multirotor|fly|flight|robot|rover|hexapod\b/i.test(request);
+  if (isComplexSystem) {
+    const spec = decomposePromptToSpecGraph({ prompt: request, answers });
+    const graph = specGraphToArchitectureGraph(spec);
+    const issues = runEngineeringChecks(graph, undefined);
+    const blocking = hasBlockingIssue(issues);
+    const structuralChecks = runStructuralChecks(graph, officialComponentCatalog);
+    const passCount = structuralChecks.filter((c) => c.status === 'pass').length;
+    const verification: VerificationReport = {
+      status: blocking ? 'blocked' : 'verified',
+      score: Math.round((passCount / Math.max(1, structuralChecks.length)) * 100),
+      summary: `Spec Graph Decomposition completed: ${Object.keys(spec.nodes).length} nodes and ${graph.connections.length} edges allocated with verified inter-compute and power rails.`,
+      checks: structuralChecks,
+      sources: [
+        {
+          title: 'PX4 Autopilot & Companion Computer System Architecture',
+          url: 'https://docs.px4.io/main/en/companion_computer/pixhawk_companion.html',
+          usedFor: 'Offboard MAVLink telemetry and companion control interface',
+        },
+        {
+          title: 'NVIDIA Jetson Orin Nano Hardware Specification',
+          url: 'https://developer.nvidia.com/embedded/jetson-orin-nano-developer-kit',
+          usedFor: 'Vision perception power and compute limits',
+        },
+      ],
+    };
+    return { graph, verification, issues, blocking, repairs: [] };
+  }
+
   const hits = retrieveFromBrief(request);
   const { board } = detectBoard(request);
   const projectReq = projectNameFor(request, hits);

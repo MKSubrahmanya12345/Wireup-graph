@@ -117,6 +117,11 @@ const METADATA_BY_WOKWI_TYPE: Record<string, string> = {
   'wokwi-neopixel': 'neopixel',
   'wokwi-resistor': 'resistor',
   'wokwi-bme280': 'bmp280',
+  'wokwi-bmp280': 'bmp280',
+  'wokwi-gas-sensor': 'gas-sensor',
+  'wokwi-relay-module': 'relay',
+  'wokwi-relay': 'relay',
+  'wokwi-ks2e-m-dc5': 'ks2e-m-dc5',
   // NOTE deliberately absent: 'wokwi-ds18b20'. The pinned Velxio catalog
   // (components-metadata.json, 156 parts) has no DS18B20 model — mapping it
   // to a made-up id would put a dead part on the canvas. It stays in

@@ -102,6 +102,122 @@ export const officialComponentCatalog: OfficialComponentRecord[] = [
       'Quad-SPI timing and IO voltage must match the host controller.',
     ],
   },
+  {
+    id: 'espressif-esp32-devkit',
+    manufacturer: 'Espressif Systems',
+    family: 'ESP32-DEVKIT',
+    partNumbers: ['ESP32-WROOM-32', 'ESP32-DevKitC'],
+    officialUrl: 'https://www.espressif.com/en/products/devkits/esp32-devkitc',
+    facts: {
+      supply: '3.3–5.0 V',
+      interfaces: 'Wi-Fi 802.11 b/g/n, Bluetooth v4.2 BR/EDR & BLE, I2C, SPI, UART, PWM, ADC, DAC',
+      cpu: 'Xtensa Dual-Core 32-bit LX6 @ up to 240 MHz',
+      flash: '4 MB SPI Flash',
+    },
+    interfaceNotes: [
+      'Strapping pins (GPIO 0, 2, 5, 12, 15) have boot-time level constraints.',
+      'GPIO 34-39 are input-only pins with no internal pull-up/pull-down or output drivers.',
+    ],
+  },
+  {
+    id: 'aosong-dht22',
+    manufacturer: 'Aosong Electronics',
+    family: 'DHT22',
+    partNumbers: ['AM2302', 'DHT22'],
+    officialUrl: 'https://www.sparkfun.com/datasheets/Sensors/Temperature/DHT22.pdf',
+    facts: {
+      supply: '3.3–6.0 V',
+      interfaces: 'Single-wire digital bus',
+      measures: 'Temperature (-40..80 °C), Humidity (0..100 %RH)',
+      accuracy: '±0.5 °C temp, ±2-5 %RH humidity',
+    },
+    interfaceNotes: [
+      'Requires a 4.7kΩ–10kΩ pull-up resistor on the DATA line to 3.3V.',
+      'Sampling period should not be faster than 2 seconds between readings.',
+    ],
+  },
+  {
+    id: 'generic-hcsr04',
+    manufacturer: 'Generic',
+    family: 'HC-SR04',
+    partNumbers: ['HC-SR04'],
+    officialUrl: 'https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf',
+    facts: {
+      supply: '5.0 V',
+      interfaces: 'Digital pulse trigger and echo',
+      range: '2 cm to 400 cm',
+      resolution: '0.3 cm',
+    },
+    interfaceNotes: [
+      'ECHO output is 5V logic. When connecting to 3.3V ESP32 GPIO, use a voltage divider (e.g. 1kΩ/2kΩ).',
+      'Trigger with a 10 µs pulse on TRIG pin.',
+    ],
+  },
+  {
+    id: 'solomon-ssd1306',
+    manufacturer: 'Solomon Systech',
+    family: 'SSD1306',
+    partNumbers: ['SSD1306', 'SSD1306-128X64-I2C'],
+    officialUrl: 'https://cdn-shop.adafruit.com/datasheets/SSD1306.pdf',
+    facts: {
+      supply: '3.3–5.0 V',
+      interfaces: 'I2C (default address 0x3C or 0x3D) or SPI',
+      resolution: '128x64 monochrome OLED',
+    },
+    interfaceNotes: [
+      'Requires I2C pull-up resistors on SDA/SCL lines.',
+      'Shares the I2C bus with other sensor nodes without collision.',
+    ],
+  },
+  {
+    id: 'invensense-mpu6050',
+    manufacturer: 'InvenSense / TDK',
+    family: 'MPU6050',
+    partNumbers: ['MPU-6050'],
+    officialUrl: 'https://invensense.tdk.com/products/motion-tracking/6-axis/mpu-6050/',
+    facts: {
+      supply: '2.375–3.46 V (breakouts include 3.3V LDO for 5V input)',
+      interfaces: 'I2C (address 0x68 or 0x69 with AD0 pin)',
+      measures: '3-axis accelerometer (±2g..±16g) + 3-axis gyroscope (±250°/s..±2000°/s)',
+    },
+    interfaceNotes: [
+      'Standard I2C bus device. Includes Digital Motion Processor (DMP) capability.',
+    ],
+  },
+  {
+    id: 'hanwei-mq2',
+    manufacturer: 'Hanwei Electronics',
+    family: 'MQ-2',
+    partNumbers: ['MQ-2'],
+    officialUrl: 'https://www.pololu.com/file/0J309/MQ2.pdf',
+    facts: {
+      supply: '5.0 V (internal heater coil)',
+      interfaces: 'Analog voltage output (AO) + Digital threshold output (DO)',
+      detects: 'LPG, Propane, Methane, Hydrogen, Alcohol, Smoke',
+      heaterPower: 'approx 150-180 mA @ 5V',
+    },
+    interfaceNotes: [
+      'Heater coil requires 5V supply and pre-heating burn-in time.',
+      'Analog AO output (0-5V) requires voltage division before feeding ESP32 3.3V ADC inputs.',
+    ],
+  },
+  {
+    id: 'towerpro-sg90',
+    manufacturer: 'TowerPro',
+    family: 'SG90',
+    partNumbers: ['SG90', 'MG90S'],
+    officialUrl: 'http://www.ee.ic.ac.uk/pcheung/teaching/DE1_EE/stores/sg90_datasheet.pdf',
+    facts: {
+      supply: '4.8–6.0 V',
+      interfaces: '50 Hz PWM (500–2400 µs pulse width for 0–180° rotation)',
+      torque: '1.8 kg·cm @ 4.8V',
+      stallCurrent: 'up to 650 mA',
+    },
+    interfaceNotes: [
+      'Never drive servo motor VCC directly from the MCU 3.3V rail. Use 5V VIN or external supply.',
+      'PWM control pin is compatible with 3.3V logic signals.',
+    ],
+  },
 ];
 
 /** Serialised into the planner prompt as the evidence bank. */

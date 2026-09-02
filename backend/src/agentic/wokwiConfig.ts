@@ -116,7 +116,15 @@ function wiringForDevice(
         ],
       };
     case 'mq2-gas':
-      return null;
+      return {
+        partType: 'wokwi-gas-sensor',
+        partId: `gas_${index + 1}`,
+        pinNets: [
+          ['VCC', '5V'],
+          ['GND', 'GND.0'],
+          ['AOUT', espPin(pin('sig') ?? pin('ao') ?? pin('data') ?? 'GPIO34')],
+        ],
+      };
     case 'soil-moisture':
       return null;
     case 'relay-1ch':

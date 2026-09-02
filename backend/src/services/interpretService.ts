@@ -28,10 +28,11 @@ Record every decision as an ASSUMPTION so the human can see and override it.
 
 STEP 2 — Ask ONLY about what you genuinely cannot decide.
 
-A question is justified only when ALL THREE are true:
+A question is justified only when ALL FOUR are true:
   1. MATERIAL — the answer changes the architecture: the bill of materials, the topology, or the power budget.
   2. NO SAFE DEFAULT — guessing wrong would waste the user's money, time, or a safety margin.
   3. USER KNOWS — it is about the user's intent or context, not about engineering you should already know.
+  4. IN SCOPE — the brief (or something it implies) actually requires this domain at all; never ask about anything the brief gives no signal for (e.g. don't ask about enclosures, colors, or branding unless the brief mentions them).
 
 NEVER ask about:
   - component choices (you choose these)
@@ -145,7 +146,32 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
 
   const parsed = parsedResult.data;
 
-  // Enforce the question budget server-side regardless of what the model returns.
+  const isSubsequentPass =
+    (input.priorQuestions && input.priorQuestions.length > 0) ||
+    Object.keys(input.answers ?? {}).length > 0;
+
+  if (isSubsequentPass) {
+    // If this is a second-or-later pass (the human already answered once),
+    // force ready = true and force questions = [] server-side.
+    // Fold anything the model still tried to ask into assumptions.
+    const foldedAssumptions = parsed.questions.map((q) => {
+      const choice = input.answers[q.id] ?? q.default ?? 'default';
+      return `Assumed (no second round): ${q.prompt} → ${choice}`;
+    });
+
+    const baseAssumptions = parsed.assumptions.length
+      ? parsed.assumptions
+      : parsed.requirements.assumptions;
+
+    return {
+      requirements: parsed.requirements,
+      questions: [],
+      assumptions: [...baseAssumptions, ...foldedAssumptions],
+      ready: true,
+    };
+  }
+
+  // First pass: enforce the question budget server-side regardless of what the model returns.
   const questions = parsed.questions.slice(0, MAX_QUESTIONS).map((question, index) => ({
     ...question,
     // The schema tolerates a missing/blank id; give the question a stable one
