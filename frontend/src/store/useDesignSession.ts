@@ -102,12 +102,17 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
     set({ stage: 'interpreting', error: null });
     try {
       const isReanalyze = revision > 0;
+      // Re-analyze is a CONTINUATION, not a cold start: send the same payload
+      // shape submitAnswers() builds so the backend sees prior state and its
+      // single-round guarantee kicks in. Only the very first analyze of a
+      // session sends truly-empty state.
       const payload = {
         brief: brief.trim(),
         answers: isReanalyze ? answers : {},
         priorRequirements: isReanalyze ? (requirements ?? undefined) : undefined,
         priorQuestions: isReanalyze ? questions : [],
         feedback: isReanalyze ? feedback : [],
+        graph: isReanalyze ? useGraphStore.getState().graph : undefined,
         provider: options?.provider ?? get().llmOptions.provider,
         model: options?.model ?? get().llmOptions.model,
       };
@@ -145,8 +150,14 @@ export const useDesignSession = create<SessionState>()((set, get) => ({
         graph: useGraphStore.getState().graph,
       })) as InterpretResponse;
 
-      if (result.questions && result.questions.length > 0) {
-        console.warn('[useDesignSession] Unexpected questions returned on second pass:', result.questions);
+      // The backend guarantees a second-pass /interpret never returns
+      // questions. If one shows up here, a prompt/server regression slipped
+      // through — be loud about it in dev instead of silently dropping it.
+      if (import.meta.env.DEV && result.questions && result.questions.length > 0) {
+        console.warn(
+          '[useDesignSession] Backend returned questions on a second pass — the single-round guarantee regressed:',
+          result.questions,
+        );
       }
 
       set({

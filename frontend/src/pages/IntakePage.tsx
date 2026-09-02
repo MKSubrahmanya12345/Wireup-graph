@@ -308,12 +308,15 @@ function QuestionCard({
 }) {
   return (
     <div className="question-card">
-      <div className="question-head">
-        <strong>{question.prompt}</strong>
+      <div className="question-prompt">
+        {question.prompt}
         {question.unit && <span className="unit-badge">{question.unit}</span>}
       </div>
-      {question.why && <p className="question-why">Why I'm asking: {question.why}</p>}
-      {question.impact && <p className="question-impact">This changes: {question.impact}</p>}
+      {(question.why || question.impact) && (
+        <p className="question-meta">
+          {[question.why, question.impact].filter(Boolean).join(' — ')}
+        </p>
+      )}
 
       {question.kind === 'single' && (
         <div className="option-grid">

@@ -407,15 +407,19 @@ button { font-family: inherit; }
   padding: 22px;
   display: flex; flex-direction: column; gap: 18px;
 }
-.question-list { display: grid; gap: 14px; }
+.question-list { display: grid; gap: 18px; }
+/* Deliberately light: the questions panel already has its one header — each
+   card is just prompt + options, no per-card head/eyebrow chrome. */
 .question-card {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 16px 18px;
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--line);
 }
-.question-head { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.question-card:last-child { border-bottom: 0; padding-bottom: 0; }
+.question-prompt {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600;
+}
 .unit-badge {
   font: 600 11px var(--mono);
   color: var(--cyan);
@@ -424,8 +428,7 @@ button { font-family: inherit; }
   padding: 2px 8px;
   border-radius: 6px;
 }
-.question-why, .question-impact { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-.question-why { color: var(--ink-soft); }
+.question-meta { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .option-grid.two { grid-template-columns: 1fr 1fr; }
 .option-card {
