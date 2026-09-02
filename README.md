@@ -2,13 +2,37 @@
 
 **Describe the hardware on your bench. Get a validated architecture, compilable firmware, and a local dashboard — as two zip files.**
 
-Wireup is an agentic hardware workspace. Three pages, one pipeline:
+Wireup is an agentic hardware workspace. Four pages, one pipeline:
 
 | Step | Page | What happens |
 | ---- | ---- | ------------ |
 | 01 | **Prompt & Questions** | You describe the parts you own. Wireup reads its device knowledge base (RAG), decides what it can, asks only what's left, and draws one 3D shape per part it identifies — live. **Complete** unlocks only once the graph passes the very same validity check page 02 uses. |
 | 02 | **Architecture Graph** | A validated system graph — components, pins, rails — checked by deterministic engineering rules (power budget, voltage rails, orphans…), with datasheet sources. |
-| 03 | **Agentic Build** | The pipeline generates firmware, **compiles it with g++ in a real terminal**, generates a MERN dashboard, **installs + typechecks + builds it with npm/tsc/vite**, cross-checks the firmware⇄software contract — then hands you **two zips**. |
+| 03 | **Agentic Build** | The pipeline generates the **website first** — **installs + typechecks + builds it with npm/tsc/vite** and publishes it live — then generates firmware and **compiles it with g++ in a real terminal**, cross-checks the firmware⇄website contract, and hands you **two zips**. |
+| 04 | **Simulation ⇄ Website** | The generated dashboard running, and the circuit bench. Usable **while page 03 is still building** — see below. |
+
+### The build is a job, not a request — so the two halves run in parallel
+
+A build takes minutes, so it runs as a **server-side job** (`POST
+/api/build/agentic/jobs`, then attach with `GET …/jobs/:id/stream?from=<seq>`).
+Two consequences you can feel:
+
+- **Website first, firmware second.** The dashboard is generated, built and
+  *published* before the firmware is even drafted. Page 04 serves that real
+  bundle in an iframe immediately, so **you can click through the generated
+  website while the firmware is still being written and compiled on page 03** —
+  different pages, at the same time, one build.
+- **Leaving the page costs nothing.** Navigating away, closing the tab or
+  hitting refresh does not kill the build: the job keeps running and the browser
+  re-attaches by id, replaying only the events it missed. Cancel is explicit
+  (`POST …/jobs/:id/cancel`) and stops at the next stage boundary.
+
+The contract between the two halves is fixed up front from the knowledge base
+(one JSON field per metric + `state`): the website is generated against it, and
+the firmware gate (`FW-CONTRACT-FIELD`) forces the sketch to publish exactly
+those names. A model draft that drifts is repaired, or replaced by the
+knowledge-base synthesiser — the website you are already clicking through is
+never bent to fit a draft.
 
 Not an AI wrapper: the core engine is a curated knowledge base + engineering rules + terminal validation. An LLM (AWS Bedrock) is an *optional assistant* whose drafts must survive the exact same terminal gauntlet — and are discarded if they don't.
 

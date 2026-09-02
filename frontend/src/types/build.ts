@@ -120,8 +120,56 @@ export type AgenticEvent =
   | { type: 'command_result'; stage: string; cmd: string; exitCode: number | null; output: string; durationMs: number }
   | { type: 'validation'; stage: string; report: ValidationReport }
   | { type: 'artifact'; stage: string; summary: string; files: string[] }
+  /** Which half of the build is usable right now — see BuildProgress. */
+  | { type: 'progress'; progress: BuildProgress }
   | { type: 'result'; result: AgenticBuildResult }
+  | { type: 'cancelled'; message: string }
   | { type: 'error'; message: string };
+
+// ── Live progress: the two halves finish at different times ────────────────
+
+/**
+ * What a STILL-RUNNING build has already produced.
+ *
+ * The website half goes live while the firmware is still being written, so
+ * page 04 can run the generated dashboard against a build that is not finished
+ * — and says plainly which half it is waiting on.
+ */
+export interface BuildProgress {
+  status: 'running' | 'done' | 'error' | 'cancelled';
+  /** Pipeline stage in flight, e.g. 'firmware-validate'. */
+  stage: string;
+  projectName: string;
+  slug: string;
+  startedAt: string;
+  updatedAt: string;
+  website: {
+    ready: boolean;
+    preview: BuildPreview | null;
+    files: BuildFile[];
+  } | null;
+  firmware: {
+    ready: boolean;
+    board: string;
+    files: BuildFile[];
+  } | null;
+  circuit: { parts: number; wires: number; board: string } | null;
+}
+
+/** Server-side job a build runs as — survive navigation and refresh. */
+export interface BuildJobSnapshot {
+  id: string;
+  status: 'running' | 'done' | 'error' | 'cancelled';
+  brief: string;
+  projectName: string;
+  startedAt: string;
+  finishedAt: string | null;
+  seq: number;
+  truncated: boolean;
+  progress: BuildProgress | null;
+  result: AgenticBuildResult | null;
+  error: string | null;
+}
 
 // ── Simulation, instructions, BOM (M4/M5) ──────────────────────────────────
 

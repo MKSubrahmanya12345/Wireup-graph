@@ -61,6 +61,18 @@ export function previewTarget(result: AgenticBuildResult | null): PreviewTarget 
   return { url: preview.url, note: preview.note, publishedAt: preview.publishedAt };
 }
 
+/** Why the Website half is still empty while a build is RUNNING. */
+export function previewBuildingReason(stage: string | undefined): string {
+  const where = stage ?? 'starting';
+  if (where === 'retrieve') {
+    return 'The build is still reading the device knowledge base and resolving the plan. The dashboard is generated from that plan, so it comes next.';
+  }
+  if (where.startsWith('software')) {
+    return 'The dashboard is being generated and built right now (npm install → tsc → vite build). It is published here the moment that gate passes — the firmware has not even started yet.';
+  }
+  return `The dashboard gate has not published a bundle for this build yet (stage: ${where}).`;
+}
+
 /** Why there is nothing to show on the Website half — in the user's terms. */
 export function previewBlockedReason(result: AgenticBuildResult | null): string {
   if (!result) return 'No build in this browser yet. Run the agentic build on page 03 first.';

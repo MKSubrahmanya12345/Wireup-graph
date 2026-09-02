@@ -14,6 +14,7 @@ import SimPage from './pages/SimPage';
 // ??$$$ SpecGraph live document page import
 import SpecGraphPage from './pages/SpecGraphPage';
 import { useAuth } from './store/useAuth';
+import { useBuildStore } from './store/useBuildStore';
 
 function Workspace({ children }: { children: ReactNode }) {
   return (
@@ -91,10 +92,13 @@ function RequireAdmin({ children }: { children: ReactNode }) {
  */
 export default function App() {
   const bootstrap = useAuth((state) => state.bootstrap);
+  const resumeBuild = useBuildStore((state) => state.resume);
 
   useEffect(() => {
-    void bootstrap();
-  }, [bootstrap]);
+    // A build runs as a server-side job, so a refresh (or a closed tab) does
+    // not lose it: pick the running job back up and keep streaming.
+    void bootstrap().then(() => resumeBuild());
+  }, [bootstrap, resumeBuild]);
 
   return (
     <Routes>

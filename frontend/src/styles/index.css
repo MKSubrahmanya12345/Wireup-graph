@@ -257,6 +257,21 @@ button { font-family: inherit; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }
 .live-dot.busy { background: var(--amber); animation: pulse 1s infinite; }
 
+/* "A build is running on the server" chip in the top nav — clicking it takes
+   you to whichever half of the build is usable right now. */
+.build-live-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 9px;
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  font: 600 11px var(--mono);
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.build-live-chip:hover { filter: brightness(1.12); }
+
 .user-chip {
   display: inline-flex; align-items: center; gap: 9px;
   background: var(--panel);

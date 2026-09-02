@@ -115,16 +115,12 @@ function wiringForDevice(
           ['OUT', espPin(pin('out') ?? pin('data') ?? 'GPIO14')],
         ],
       };
+    // MQ-2 and soil-moisture have NO Wokwi model (`wokwi-gas-sensor` is not a
+    // real element). They fall through to null on purpose: the part is reported
+    // in `unsupported` and the sim boots the rest of the circuit, rather than
+    // drawing a lookalike part that silently measures nothing.
     case 'mq2-gas':
-      return {
-        partType: 'wokwi-gas-sensor',
-        partId: `gas_${index + 1}`,
-        pinNets: [
-          ['VCC', '5V'],
-          ['GND', 'GND.0'],
-          ['AOUT', espPin(pin('sig') ?? pin('ao') ?? pin('data') ?? 'GPIO34')],
-        ],
-      };
+      return null;
     case 'soil-moisture':
       return null;
     case 'relay-1ch':

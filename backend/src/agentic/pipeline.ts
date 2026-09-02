@@ -29,6 +29,7 @@ import { newPreviewId, previewApiBaseFor, previewBaseFor, publishPreview } from 
 import type {
   AgenticBuildResult,
   BuildEvent,
+  BuildProgress,
   EmitFn,
   PipelineInput,
   ValidationFinding,
@@ -38,9 +39,15 @@ import type {
 /**
  * The Wireup agentic build pipeline.
  *
- *   retrieve (RAG) → resolve plan → generate firmware → compile in terminal
- *     → repair loop → generate MERN software → build in terminal → repair loop
- *     → cross-artifact consistency → ship.
+ *   retrieve (RAG) → resolve plan → generate the WEBSITE → build it in the
+ *     terminal (npm/tsc/vite) → PUBLISH it live → generate firmware → compile
+ *     it with g++ → repair loop → cross-check the contract → simulate → ship.
+ *
+ * Website-first is deliberate: the dashboard is the half a human can look at,
+ * so it is built, validated and published before the firmware even starts.
+ * Page 04 can then run that website while the firmware is still being written
+ * on page 03 — the two halves of one build finish at different times, and each
+ * is announced on the wire (`progress` events) the moment it is usable.
  *
  * Generation is deterministic-first (knowledge base templates). When AWS
  * Bedrock is configured the LLM is offered the first draft, but every
@@ -70,6 +77,32 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
   const previewId = newPreviewId();
   let preview: Awaited<ReturnType<typeof publishPreview>> = null;
   let result: AgenticBuildResult | null = null;
+
+  // ── Live progress: which half of the build is usable right now ──────────
+  // Page 04 reads this to run the website while the firmware is still being
+  // written — the two halves finish at different times by design. Declared
+  // outside the try so the finally block can close out the terminal status.
+  const progress: BuildProgress = {
+    status: 'running',
+    stage: 'retrieve',
+    projectName,
+    slug,
+    startedAt: new Date(t0).toISOString(),
+    updatedAt: new Date(t0).toISOString(),
+    website: null,
+    firmware: null,
+    circuit: null,
+  };
+  const markProgress = (patch: Partial<BuildProgress>): void => {
+    Object.assign(progress, patch, { updatedAt: new Date().toISOString() });
+    emit({ type: 'progress', progress: { ...progress } });
+  };
+  const cancelled = (): boolean => {
+    if (!input.signal?.aborted) return false;
+    emit({ type: 'cancelled', message: 'Build cancelled — the agent stopped between stages.' });
+    markProgress({ status: 'cancelled' });
+    return true;
+  };
 
   try {
     // ── Stage 1: retrieval ──────────────────────────────────────────────────
@@ -102,7 +135,126 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     say('retrieve', '✔ [Spec Graph] Hydrated hardware specification & 2D/3D architecture graph from live document session', 'ok');
     for (const warning of resolved.warnings) say('retrieve', warning, 'warn');
 
-    // ── Stage 2: firmware (generate → compile → repair) ─────────────────────
+    // ── The contract both halves are built against ──────────────────────────
+    // Website-first means the dashboard exists BEFORE the firmware does, so the
+    // field names cannot be read off a sketch that has not been written yet.
+    // They come from the knowledge base instead: one JSON field per KB metric
+    // plus the status badge key. The website is generated against these exact
+    // names, and the firmware gate (FW-CONTRACT-FIELD) makes the sketch publish
+    // them — the pair is reconciled at stage 4, never by bending the website.
+    const expectedJsonFields = [
+      ...new Set(plan.modules.flatMap((m) => m.metrics.map((metric) => metric.jsonField))),
+      'state',
+    ];
+    say('retrieve', `JSON contract the website and firmware must agree on: ${expectedJsonFields.join(', ')}`, 'ok');
+
+    // The circuit is known as soon as the plan resolves — page 04 can already
+    // say what it is waiting for, instead of showing an empty box.
+    markProgress({
+      stage: 'software',
+      circuit: {
+        parts: plan.modules.length + 1,
+        wires: plan.modules.reduce((n, module) => n + Object.keys(module.pins).length, 0),
+        board: plan.board.name,
+      },
+    });
+    say('retrieve', 'build order: website first, firmware second — the dashboard goes live while the firmware is still being written', 'ok');
+
+    // ── Stage 2: website (generate → build → repair → PUBLISH) ──────────────
+    emit({ type: 'stage', stage: 'software', title: 'Assembling MERN dashboard software' });
+
+    let software: SoftwareSynthResult = await synthesizeSoftware(plan);
+    say('software', `merged ${software.files.length} files (scaffold + device wiring)`);
+    say('software', `metrics: ${plan.modules.flatMap((m) => m.metrics.map((x) => x.id)).join(', ') || 'none'}; controls: ${plan.modules.flatMap((m) => m.controls.map((x) => x.id)).join(', ') || 'none'}`);
+
+    // Until the firmware exists, the "fields the firmware publishes" ARE the
+    // contract fields. Re-read from the real sketch at stage 4.
+    let firmwareJsonFields = [...expectedJsonFields];
+    say('software', `dashboard wired against the knowledge-base contract: ${firmwareJsonFields.join(', ')}`);
+
+    let softwareReport: ValidationReport | null = null;
+    let softwareIterations = 0;
+    let previousSoftwareFingerprint = '';
+
+    for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
+      softwareIterations = attempt;
+      emit({ type: 'stage', stage: 'software-validate', title: `Building MERN project (attempt ${attempt})` });
+      softwareReport = await validateSoftware(software.files, {
+        workDir: path.join(work.root, 'software'),
+        devicePort: 80,
+        firmwareJsonFields,
+        metrics: plan.modules.flatMap((m) => m.metrics),
+        preview: { base: previewBaseFor(previewId), apiBase: previewApiBaseFor(previewId) },
+      });
+      reportToEvents('software-validate', softwareReport, emit);
+
+      if (softwareReport.ok) {
+        say('software-validate', `MERN project builds clean — attempt ${attempt}`, 'ok');
+        break;
+      }
+
+      const errors = softwareReport.findings.filter((f) => f.severity === 'error');
+      say('software-validate', `${errors.length} error(s): ${[...new Set(errors.map((e) => e.code))].join(', ')}`, 'error');
+      if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
+
+      const repaired = await repairSoftware(software, errors, plan, firmwareJsonFields);
+
+      if (repaired) {
+        software = repaired;
+        say('software-repair', 'device wiring regenerated against the knowledge-base contract — re-validating');
+      } else {
+        say('software-repair', 'no repair strategy available — stopping with diagnostics', 'error');
+        break;
+      }
+
+      // Progress guard: if this iteration produced byte-identical wiring to the
+      // last failed one, more loops cannot help — report and stop instead of
+      // freezing on the same errors.
+      const fingerprint = softwareFingerprint(software);
+      if (fingerprint === previousSoftwareFingerprint) {
+        say('software-repair', 'repair produced no change — the loop cannot make progress; stopping with diagnostics', 'error');
+        break;
+      }
+      previousSoftwareFingerprint = fingerprint;
+    }
+
+    if (!softwareReport?.ok) {
+      emit({ type: 'error', message: `Software did not pass validation after ${softwareIterations} attempt(s). See the log for the build output.` });
+      return;
+    }
+
+    emit({
+      type: 'artifact',
+      stage: 'software',
+      summary: `MERN dashboard · ${software.files.length} files`,
+      files: software.files.map((f) => f.path),
+    });
+
+    // Keep the dashboard the gate just built, before the workspace is wiped —
+    // page 04 serves this exact bundle. Best effort: no preview never fails a
+    // build, it only means page 04 says why there is nothing to show.
+    preview = await publishPreview({
+      id: previewId,
+      plan,
+      distDir: path.join(softwareTreeDir(path.join(work.root, 'software')), 'frontend', 'dist'),
+    });
+    if (preview) {
+      say('software', `live preview published at ${preview.url} (real bundle, stub device API)`, 'ok');
+      say('software', '⟶ the website is LIVE now — open page 04 (Simulation ⇄ Website) and use it while the firmware below is still being written', 'ok');
+    } else {
+      say('software', 'no live preview: the dashboard build produced no dist/ to serve', 'warn');
+    }
+
+    // Half the build is usable. Say so on the wire so page 04 lights up while
+    // the firmware stage is still running.
+    markProgress({
+      stage: 'firmware',
+      website: { ready: true, preview, files: software.files },
+    });
+
+    if (cancelled()) return;
+
+    // ── Stage 3: firmware (generate → compile → repair) ─────────────────────
     emit({ type: 'stage', stage: 'firmware', title: 'Generating firmware' });
 
     // ── Provider selection (M2) ─────────────────────────────────────────────
@@ -127,13 +279,11 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     let firmware: FirmwareResult = synthesizeFirmware(plan);
     let firmwareSource: 'deterministic' | 'llm-assisted' = 'deterministic';
 
-    // The JSON contract the dashboard is generated against: one field per KB
-    // metric plus the status badge key. The firmware MUST publish these exact
-    // names — enforced at the firmware gate and re-checked downstream.
-    const expectedJsonFields = [
-      ...new Set(plan.modules.flatMap((m) => m.metrics.map((metric) => metric.jsonField))),
-      'state',
-    ];
+    // The JSON contract (`expectedJsonFields`, resolved at stage 1) is now a
+    // hard gate on this sketch: the website already shipped against those exact
+    // names, so a draft that renames them is repaired or replaced — the website
+    // is never bent to fit a draft.
+    say('firmware', `firmware must publish the website's contract fields: ${expectedJsonFields.join(', ')}`);
 
     if (llmAvailable) {
       try {
@@ -191,8 +341,10 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     let previousFirmwareFingerprint = '';
 
     for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
+      if (cancelled()) return;
       firmwareIterations = attempt;
       emit({ type: 'stage', stage: 'firmware-validate', title: `Compiling firmware (attempt ${attempt})` });
+      markProgress({ stage: 'firmware-validate' });
       firmwareReport = await validateFirmware(firmware.files, {
         workDir: path.join(work.root, 'firmware'),
         boardDefine: plan.board.archDefine,
@@ -294,106 +446,59 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       files: firmware.files.map((f) => f.path),
     });
 
-    // ── Stage 3: software (generate → build → repair) ───────────────────────
-    emit({ type: 'stage', stage: 'software', title: 'Assembling MERN dashboard software' });
-
-    let software: SoftwareSynthResult = await synthesizeSoftware(plan);
-    say('software', `merged ${software.files.length} files (scaffold + device wiring)`);
-    say('software', `metrics: ${plan.modules.flatMap((m) => m.metrics.map((x) => x.id)).join(', ') || 'none'}; controls: ${plan.modules.flatMap((m) => m.controls.map((x) => x.id)).join(', ') || 'none'}`);
-
-    let firmwareJsonFields = collectFirmwareJsonFields(firmware);
-    say('software', `firmware publishes JSON fields: ${firmwareJsonFields.join(', ') || '(none detected)'}`);
-
-    let softwareReport: ValidationReport | null = null;
-    let softwareIterations = 0;
-    let previousSoftwareFingerprint = '';
-
-    for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
-      softwareIterations = attempt;
-      emit({ type: 'stage', stage: 'software-validate', title: `Building MERN project (attempt ${attempt})` });
-      softwareReport = await validateSoftware(software.files, {
-        workDir: path.join(work.root, 'software'),
-        devicePort: 80,
-        firmwareJsonFields,
-        metrics: plan.modules.flatMap((m) => m.metrics),
-        preview: { base: previewBaseFor(previewId), apiBase: previewApiBaseFor(previewId) },
-      });
-      reportToEvents('software-validate', softwareReport, emit);
-
-      if (softwareReport.ok) {
-        say('software-validate', `MERN project builds clean — attempt ${attempt}`, 'ok');
-        break;
-      }
-
-      const errors = softwareReport.findings.filter((f) => f.severity === 'error');
-      say('software-validate', `${errors.length} error(s): ${[...new Set(errors.map((e) => e.code))].join(', ')}`, 'error');
-      if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
-
-      const repaired = await repairSoftware(software, errors, plan, firmwareJsonFields);
-
-      if (repaired === 'swap-firmware') {
-        // The dashboard contract can only be satisfied by the KB firmware.
-        // Swap it in (deterministic fields are the contract by construction)
-        // and regenerate the wiring against it.
-        say('software-repair', `firmware does not publish the fields the dashboard needs (${errors.filter((e) => e.code === 'FIELD-NOT-PUBLISHED').length} mismatch) — replacing the LLM draft with knowledge-base firmware so the pair agrees`, 'warn');
-        firmware = synthesizeFirmware(plan);
-        firmwareSource = 'deterministic';
-        firmwareJsonFields = collectFirmwareJsonFields(firmware);
-        say('software-repair', `replacement firmware publishes JSON fields: ${firmwareJsonFields.join(', ')}`);
-        software = await synthesizeSoftware(plan);
-      } else if (repaired) {
-        software = repaired;
-        say('software-repair', 'device wiring regenerated against the firmware that actually exists — re-validating');
-      } else {
-        say('software-repair', 'no repair strategy available — stopping with diagnostics', 'error');
-        break;
-      }
-
-      // Progress guard: if this iteration produced byte-identical wiring to the
-      // last failed one, more loops cannot help — report and stop instead of
-      // freezing on the same errors.
-      const fingerprint = softwareFingerprint(software);
-      if (fingerprint === previousSoftwareFingerprint) {
-        say('software-repair', 'repair produced no change — the loop cannot make progress; stopping with diagnostics', 'error');
-        break;
-      }
-      previousSoftwareFingerprint = fingerprint;
-    }
-
-    if (!softwareReport?.ok) {
-      emit({ type: 'error', message: `Software did not pass validation after ${softwareIterations} attempt(s). See the log for the build output.` });
-      return;
-    }
-
-    emit({
-      type: 'artifact',
-      stage: 'software',
-      summary: `MERN dashboard · ${software.files.length} files`,
-      files: software.files.map((f) => f.path),
+    // The other half is usable now too.
+    firmwareJsonFields = collectFirmwareJsonFields(firmware);
+    say('firmware', `firmware publishes JSON fields: ${firmwareJsonFields.join(', ') || '(none detected)'}`, 'ok');
+    markProgress({
+      stage: 'consistency',
+      firmware: { ready: true, board: firmware.board, files: firmware.files },
     });
 
-    // Keep the dashboard the gate just built, before the workspace is wiped —
-    // page 04 serves this exact bundle. Best effort: no preview never fails a
-    // build, it only means page 04 says why there is nothing to show.
-    preview = await publishPreview({
-      id: previewId,
-      plan,
-      distDir: path.join(softwareTreeDir(path.join(work.root, 'software')), 'frontend', 'dist'),
-    });
-    if (preview) {
-      say('software', `live preview published at ${preview.url} (real bundle, stub device API)`, 'ok');
-    } else {
-      say('software', 'no live preview: the dashboard build produced no dist/ to serve', 'warn');
-    }
+    if (cancelled()) return;
 
     // ── Stage 4: cross-artifact consistency ─────────────────────────────────
-    emit({ type: 'stage', stage: 'consistency', title: 'Cross-checking firmware ⇄ software contract' });
-    const consistency = crossConsistency(firmware, software, firmwareJsonFields);
+    emit({ type: 'stage', stage: 'consistency', title: 'Cross-checking firmware ⇄ website contract' });
+    let consistency = crossConsistency(firmware, software, firmwareJsonFields);
     reportToEvents('consistency', consistency, emit);
+
+    // Website-first consequence, handled head-on: the dashboard is already
+    // published against the knowledge-base contract, so when a firmware draft
+    // drifts off it the FIRMWARE is pulled back — never the website the human
+    // may already be clicking through. The KB synthesiser publishes the
+    // contract fields by construction, so this always converges.
+    if (!consistency.ok && firmwareSource === 'llm-assisted') {
+      const drifted = consistency.findings.filter((f) => f.severity === 'error');
+      say(
+        'consistency',
+        `the draft firmware disagrees with the shipped website (${[...new Set(drifted.map((f) => f.code))].join(', ')}) — replacing it with knowledge-base firmware and re-compiling`,
+        'warn',
+      );
+      firmware = synthesizeFirmware(plan);
+      firmwareSource = 'deterministic';
+      firmwareReport = await validateFirmware(firmware.files, {
+        workDir: path.join(work.root, 'firmware'),
+        boardDefine: plan.board.archDefine,
+        expectedJsonFields,
+        plan,
+      });
+      reportToEvents('firmware-validate', firmwareReport, emit);
+      if (!firmwareReport.ok) {
+        emit({ type: 'error', message: 'Knowledge-base firmware did not pass its own gate — nothing shipped. See the log.' });
+        return;
+      }
+      firmwareJsonFields = collectFirmwareJsonFields(firmware);
+      say('consistency', `replacement firmware publishes: ${firmwareJsonFields.join(', ')}`, 'ok');
+      markProgress({ firmware: { ready: true, board: firmware.board, files: firmware.files } });
+      consistency = crossConsistency(firmware, software, firmwareJsonFields);
+      reportToEvents('consistency', consistency, emit);
+    }
+
     if (!consistency.ok) {
-      emit({ type: 'error', message: 'Firmware and software disagree on their API contract. See findings in the log.' });
+      emit({ type: 'error', message: 'Firmware and website disagree on their API contract. See findings in the log.' });
       return;
     }
+    markProgress({ stage: 'simulate' });
+    if (cancelled()) return;
 
     // ── Stage 5: hardware simulation (M4) ───────────────────────────────────
     // Two INDEPENDENT verdicts come out of this stage:
@@ -521,12 +626,18 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       'ok',
     );
 
-    say('done', `pipeline complete in ${((Date.now() - t0) / 1000).toFixed(1)} s — firmware ⇢ ${firmwareIterations} iteration(s), software ⇢ ${softwareIterations} iteration(s)`, 'ok');
+    say('done', `pipeline complete in ${((Date.now() - t0) / 1000).toFixed(1)} s — website ⇢ ${softwareIterations} iteration(s), firmware ⇢ ${firmwareIterations} iteration(s)`, 'ok');
+    markProgress({ status: 'done', stage: 'done' });
     emit({ type: 'result', result });
   } catch (error) {
     logger.error({ err: error }, 'agentic pipeline crashed');
     emit({ type: 'error', message: error instanceof Error ? error.message : 'Agentic build crashed.' });
   } finally {
+    // Any early return above (a gate that never passed, a cancel) leaves the
+    // snapshot saying "running" — close it out so page 04 stops waiting.
+    if (progress.status === 'running') {
+      markProgress({ status: input.signal?.aborted ? 'cancelled' : 'error' });
+    }
     await work.cleanup();
   }
 }
@@ -568,23 +679,22 @@ function firmwareFingerprint(firmware: FirmwareResult): string {
 }
 
 /**
- * Deterministic repair for software trees.
+ * Deterministic repair for website trees.
  *
- * Strategies, in order:
- *  1. FIELD-NOT-PUBLISHED / CONTRACT-FIELD — point every metric path at a
- *     field the firmware actually publishes (returns fresh wiring).
- *  2. Firmware publishes nothing that satisfies the contract — return
- *     'swap-firmware' so the caller replaces an LLM draft with the KB
- *     synthesiser (whose fields are the contract by construction).
- *  3. Anything else touching only the generated files — regenerate from KB.
- *  4. Scaffold errors are fatal — return null (no strategy).
+ * The website is built against the knowledge-base contract (one JSON field per
+ * KB metric + `state`), so repair never needs a firmware to look at — the
+ * contract fields ARE the target. Strategies, in order:
+ *  1. FIELD-NOT-PUBLISHED / CONTRACT-FIELD — re-point every metric path at the
+ *     contract field the firmware gate forces the sketch to publish.
+ *  2. Anything else touching only the generated files — regenerate from KB.
+ *  3. Scaffold errors are fatal — return null (no strategy).
  */
 async function repairSoftware(
   software: SoftwareSynthResult,
   errors: ValidationFinding[],
   plan: import('./types.js').DeviceBuildPlan,
-  firmwareJsonFields: string[],
-): Promise<SoftwareSynthResult | 'swap-firmware' | null> {
+  contractFields: string[],
+): Promise<SoftwareSynthResult | null> {
   const scaffoldBroken = errors.some(
     (e) =>
       e.file &&
@@ -596,13 +706,11 @@ async function repairSoftware(
     (e) => e.code === 'FIELD-NOT-PUBLISHED' || e.code === 'CONTRACT-FIELD',
   );
   if (fieldErrors.length > 0) {
-    const { overrides, unmapped } = mapMetricFieldsToFirmware(plan, firmwareJsonFields);
+    const { overrides, unmapped } = mapMetricFieldsToFirmware(plan, contractFields);
     if (unmapped.length === 0) {
-      // Every KB metric can read a field the firmware publishes.
+      // Every KB metric maps onto a contract field — regenerate with them.
       return synthesizeSoftware(plan, overrides);
     }
-    // The firmware can never satisfy the contract → swap it for the KB synth.
-    return 'swap-firmware';
   }
 
   return synthesizeSoftware(plan);
