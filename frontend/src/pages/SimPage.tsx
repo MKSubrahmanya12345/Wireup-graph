@@ -20,6 +20,13 @@
  * The swap button flips between them, keeps its state in the URL (?view=…) so
  * a reload or a shared link lands on the same half, and reports plainly when a
  * half has nothing to show instead of rendering an empty frame.
+ *
+ * This page works WHILE a build is running. The build is a server-side job and
+ * the pipeline builds website-first, so the Website half goes live as soon as
+ * the dashboard gate publishes its bundle — you sit here clicking through the
+ * generated dashboard while page 03 is still writing and compiling the
+ * firmware. The Simulation half says so explicitly until the firmware lands,
+ * then the bench appears without a reload.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -33,8 +40,10 @@ import { applyCanvasToArtifacts } from '../lib/vlxSync';
 import {
   chooseEngine,
   previewBlockedReason,
+  previewBuildingReason,
   previewTarget,
   velxioArtifact,
+  type PreviewTarget,
   type SimEngine,
 } from '../lib/simSources';
 
@@ -60,6 +69,11 @@ function downloadText(filename: string, content: string): void {
 export default function SimPage() {
   const result = useBuildStore((state) => state.result);
   const loadResult = useBuildStore((state) => state.loadResult);
+  // A build runs as a server-side job, so this page works WHILE one is running:
+  // the website half lights up as soon as the build publishes its dashboard,
+  // and the simulation half says plainly that the firmware is still coming.
+  const progress = useBuildStore((state) => state.progress);
+  const buildRunning = useBuildStore((state) => state.running);
   const [demoBusy, setDemoBusy] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
 
@@ -109,8 +123,25 @@ export default function SimPage() {
   const engine = chooseEngine(config, engineChoice);
   const velxioUrl = config?.velxio.embedUrl ?? null;
   const vlx = useMemo(() => velxioArtifact(result), [result]);
-  const preview = useMemo(() => previewTarget(result), [result]);
+  const finishedPreview = useMemo(() => previewTarget(result), [result]);
   const samples = useMemo(() => samplesFromLog(result?.simulation?.hardware.log), [result]);
+
+  // ── Mid-build support ─────────────────────────────────────────────────────
+  // The website half does NOT wait for the firmware. As soon as the running
+  // job publishes its dashboard bundle, this page serves it — that is the whole
+  // point of building website-first.
+  const preview: PreviewTarget | null = finishedPreview ?? (
+    progress?.website?.preview
+      ? {
+          url: progress.website.preview.url,
+          note: progress.website.preview.note,
+          publishedAt: progress.website.preview.publishedAt,
+        }
+      : null
+  );
+  /** Firmware files for the bench: from the finished build, or the running one. */
+  const benchFiles = result?.firmware.files ?? (progress?.firmware?.ready ? progress.firmware.files : null);
+  const firmwarePending = buildRunning && !benchFiles;
 
   // ── Bidirectional canvas bridge (embedded Velxio only) ────────────────────
   // Push: the build's .vlx lands on the canvas the moment the iframe is
@@ -160,11 +191,13 @@ export default function SimPage() {
         </Link>
 
         <div className="sim-title">
-          <h1>{result ? result.projectName : 'Simulation & website'}</h1>
+          <h1>{result ? result.projectName : progress?.projectName ?? 'Simulation & website'}</h1>
           <span className="tiny muted">
             {result
               ? `${result.slug} · ${result.firmware.board}`
-              : 'No build loaded — run the agentic build on page 03'}
+              : buildRunning
+                ? `${progress?.slug ?? 'build'} · building — website first, firmware second`
+                : 'No build loaded — run the agentic build on page 03'}
           </span>
         </div>
 
@@ -258,18 +291,41 @@ export default function SimPage() {
                   </p>
                 )}
               </>
-            ) : result ? (
+            ) : benchFiles ? (
               <WokwiBench
-                files={result.firmware.files}
+                files={benchFiles}
                 samples={samples}
-                provider={result.simulation?.hardware.provider}
-                hardwareReady={result.simulation?.hardware.ready}
+                provider={result?.simulation?.hardware.provider}
+                hardwareReady={result?.simulation?.hardware.ready ?? progress?.firmware?.ready}
                 sourceNote={
                   vlx
                     ? `The same circuit is exported as ${vlx.filename} (${vlx.parts} parts, ${vlx.wires} wires) for the Velxio emulator.`
                     : undefined
                 }
               />
+            ) : firmwarePending ? (
+              // The build is running right now — the website half is live, this
+              // half is waiting on the firmware. Say so, with the circuit the
+              // plan already resolved, instead of pretending there is nothing.
+              <div className="sim-empty">
+                <h2>Firmware is being written right now</h2>
+                <p>
+                  The agentic build runs website-first: the dashboard is already published — open
+                  the <button type="button" className="sim-linkbtn" onClick={() => setView('website')}>🖥 Website</button> half
+                  and use it while the firmware compiles.
+                </p>
+                <p className="muted tiny">
+                  {progress?.circuit
+                    ? `Circuit resolved: ${progress.circuit.board} · ${progress.circuit.parts} parts · ${progress.circuit.wires} signal wires. Stage: ${progress.stage}.`
+                    : `Stage: ${progress?.stage ?? 'starting'}.`}{' '}
+                  The bench appears here the moment the firmware gate passes — no reload needed.
+                </p>
+                <p>
+                  <Link className="demo-jump-btn" to="/build">
+                    ↳ Watch the firmware being written (page 03)
+                  </Link>
+                </p>
+              </div>
             ) : (
               <div className="sim-empty">
                 <h2>Nothing to simulate yet</h2>
@@ -302,13 +358,17 @@ export default function SimPage() {
           </section>
         ) : (
           <section className="sim-panel">
-            <div className="sim-panel-bar">
+              <div className="sim-panel-bar">
               <div>
                 <strong>Generated dashboard — live</strong>
                 <span className="tiny muted">
                   {preview
-                    ? 'This is the real bundle the software gate built. Its device API is a Wireup preview stub; the shipped Express backend talks to your board over the LAN.'
-                    : 'Not published for this build.'}
+                    ? buildRunning
+                      ? 'Published by the build that is STILL RUNNING — this is the real bundle its software gate built. Its device API is a Wireup preview stub. The firmware is being written in parallel on page 03.'
+                      : 'This is the real bundle the software gate built. Its device API is a Wireup preview stub; the shipped Express backend talks to your board over the LAN.'
+                    : buildRunning
+                      ? `Building right now (stage: ${progress?.stage ?? 'starting'}) — the dashboard appears here the moment its gate passes, no reload needed.`
+                      : 'Not published for this build.'}
                 </span>
               </div>
               <div className="sim-panel-actions">
@@ -316,6 +376,11 @@ export default function SimPage() {
                   <a className="sim-linkbtn" href={preview.url} target="_blank" rel="noreferrer noopener">
                     Open in a tab ↗
                   </a>
+                )}
+                {buildRunning && (
+                  <Link className="sim-linkbtn" to="/build">
+                    ↳ Build terminal (page 03)
+                  </Link>
                 )}
                 <Link className="sim-linkbtn" to="/build">
                   Download the zip
@@ -332,8 +397,15 @@ export default function SimPage() {
               />
             ) : (
               <div className="sim-empty">
-                <h2>No live dashboard for this build</h2>
-                <p>{previewBlockedReason(result)}</p>
+                <h2>{buildRunning ? 'The dashboard is being built right now' : 'No live dashboard for this build'}</h2>
+                <p>{buildRunning ? previewBuildingReason(progress?.stage) : previewBlockedReason(result)}</p>
+                {buildRunning && (
+                  <p>
+                    <Link className="demo-jump-btn" to="/build">
+                      ↳ Watch the website gate run (page 03)
+                    </Link>
+                  </p>
+                )}
               </div>
             )}
           </section>

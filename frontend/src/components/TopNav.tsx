@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 
 import { WireupWordmark } from './Brand';
 import { useAuth } from '../store/useAuth';
+import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 
@@ -13,13 +14,17 @@ import { useGraphStore } from '../store/useGraphStore';
 //   { to: '/build', label: 'Agentic Build', step: '03' },
 // ];
 
-// ??$$$ Updated STEPS including Hardware Spec Graph step (01.5)
+// ??$$$ Updated STEPS including Hardware Spec Graph step (01.5) and the
+// simulator (04). The simulator is a first-class page now, not a side door off
+// page 03: a build runs as a server-side job, so you can sit on 04 running the
+// generated website while 03 is still writing the firmware.
 const STEPS = [
   { to: '/', label: 'Projects', step: '00', end: true },
   { to: '/design', label: 'Prompt & Questions', step: '01' },
   { to: '/spec-graph', label: 'Spec Graph', step: '01.5' },
   { to: '/graph', label: 'Graph', step: '02' },
   { to: '/build', label: 'Agentic Build', step: '03' },
+  { to: '/sim', label: 'Simulation', step: '04' },
 ];
 
 /**
@@ -34,11 +39,21 @@ export default function TopNav() {
   const stage = useDesignSession((state) => state.stage);
   const nodeCount = useGraphStore((state) => state.graph.nodes.length);
   const project = useGraphStore((state) => state.graph.project);
+  const buildRunning = useBuildStore((state) => state.running);
+  const buildProgress = useBuildStore((state) => state.progress);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  // Which half of the in-flight build is usable — so the nav tells you that you
+  // can go run the website while the firmware is still being written.
+  const buildNote = buildRunning
+    ? buildProgress?.website?.ready
+      ? 'website live · firmware building'
+      : 'website building'
+    : null;
 
   return (
     <header className="topnav">
@@ -61,6 +76,12 @@ export default function TopNav() {
       </nav>
 
       <div className="topnav-right">
+        {buildNote && (
+          <NavLink to={buildProgress?.website?.ready ? '/sim' : '/build'} className="build-live-chip" title="A build is running on the server — it keeps going while you use other pages">
+            <i className="live-dot busy" />
+            {buildNote}
+          </NavLink>
+        )}
         <span className="nav-status" title={project}>
           <i className={`live-dot${stage === 'planning' || stage === 'interpreting' ? ' busy' : ''}`} />
           {nodeCount > 0 ? `${project} · ${nodeCount} nodes` : 'No design yet'}

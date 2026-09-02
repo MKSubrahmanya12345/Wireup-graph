@@ -15,6 +15,7 @@ import type {
   AgenticEvent,
   AuthSession,
   BuildFile,
+  BuildJobSnapshot,
   CheckoutOutcome,
   PaymentRecord,
   Plan,
@@ -242,22 +243,153 @@ export const api = {
   adminUsage: () => request<{ usage: UsageEvent[] }>('/admin/usage'),
   adminWebhooks: () => request<{ webhooks: WebhookLogEntry[] }>('/admin/webhooks'),
 };
+/** The body both build entry points accept. */
+export interface AgenticBuildRequest {
+  brief: string;
+  projectName?: string;
+  graph: unknown;
+  provider?: string;
+  model?: string;
+  /** Follow-up change request from the page-03 chatbot. */
+  revisionInstruction?: string;
+  /** Page-01's sample-interval answer — honored in firmware/config.h. */
+  sampleIntervalMs?: number;
+}
+
+/** Read an NDJSON response, one callback per line. */
+async function readNdjson(response: Response, onEvent: (event: AgenticEvent) => void): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new ApiError('Streaming not supported by this browser.', 0);
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      // ': ping' keep-alives from the server are comments, not events.
+      if (line && !line.startsWith(':')) onEvent(JSON.parse(line) as AgenticEvent);
+      newline = buffer.indexOf('\n');
+    }
+  }
+  if (buffer.trim() && !buffer.trim().startsWith(':')) onEvent(JSON.parse(buffer) as AgenticEvent);
+}
+
+async function checkResponse(response: Response, fallback: string): Promise<void> {
+  if (response.ok) return;
+  if (response.status === 401) {
+    setAuthToken(null);
+    onUnauthorized?.();
+  }
+  const text = await response.text().catch(() => '');
+  let message = `${fallback} (${response.status})`;
+  try {
+    message = (JSON.parse(text) as { error?: string }).error ?? message;
+  } catch {
+    /* html error page — keep the default */
+  }
+  throw new ApiError(message, response.status);
+}
+
+/**
+ * Start a build as a server-side JOB.
+ *
+ * The build keeps running whether or not this tab is looking at it, which is
+ * what lets the simulator page run the website the build publishes while the
+ * firmware is still being written — and what lets a refresh resume.
+ */
+export async function startAgenticJob(
+  body: AgenticBuildRequest,
+  signal?: AbortSignal,
+): Promise<{ jobId: string; status: string; streamUrl: string; snapshotUrl: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/build/agentic/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') throw error;
+    throw new ApiError('Cannot reach the Wireup API. Is the backend running?', 0);
+  }
+  await checkResponse(response, 'Could not start the build');
+  return (await response.json()) as {
+    jobId: string;
+    status: string;
+    streamUrl: string;
+    snapshotUrl: string;
+  };
+}
+
+/**
+ * Attach to a running job. `fromSeq` replays everything this client has not
+ * seen yet, so a refresh or a second tab resumes mid-build instead of starting
+ * from an empty terminal. Resolves when the job reaches a terminal state.
+ */
+export async function streamAgenticJob(
+  jobId: string,
+  onEvent: (event: AgenticEvent, seq?: number) => void,
+  signal?: AbortSignal,
+  fromSeq = 0,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/build/agentic/jobs/${jobId}/stream?from=${fromSeq}`, {
+      headers: authHeaders(),
+      signal,
+    });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return;
+    throw new ApiError('Cannot reach the Wireup API. Is the backend running?', 0);
+  }
+  await checkResponse(response, 'Could not attach to the build');
+  await readNdjson(response, (event) => onEvent(event));
+}
+
+/** Where a job stands right now — status, live progress, final result. */
+export async function agenticJobSnapshot(jobId: string): Promise<BuildJobSnapshot | null> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/build/agentic/jobs/${jobId}`, { headers: authHeaders() });
+  } catch {
+    return null;
+  }
+  if (response.status === 404) return null;
+  await checkResponse(response, 'Could not read the build job');
+  const body = (await response.json()) as { job: BuildJobSnapshot };
+  return body.job;
+}
+
+/** Ask the server to stop a running build. */
+export async function cancelAgenticJob(jobId: string): Promise<BuildJobSnapshot | null> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/build/agentic/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+  } catch {
+    return null;
+  }
+  if (response.status === 404) return null;
+  await checkResponse(response, 'Could not cancel the build');
+  const body = (await response.json()) as { job: BuildJobSnapshot };
+  return body.job;
+}
+
 /**
  * Stream the agentic build: POST + NDJSON reader, one callback per event.
- * Resolves when the stream closes; rejects on transport/parse failures.
+ * Kept for callers that want the one-request shape; the job endpoints above
+ * are what the app uses (a build that survives navigation and refresh).
  */
 export async function streamAgenticBuild(
-  body: {
-    brief: string;
-    projectName?: string;
-    graph: unknown;
-    provider?: string;
-    model?: string;
-    // ??$$$ Optional user revision instruction for chatbot prompt re-runs
-    revisionInstruction?: string;
-    /** Page-01's sample-interval answer — honored in firmware/config.h. */
-    sampleIntervalMs?: number;
-  },
+  body: AgenticBuildRequest,
   onEvent: (event: AgenticEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -274,39 +406,6 @@ export async function streamAgenticBuild(
     throw new ApiError('Cannot reach the Wireup API. Is the backend running?', 0);
   }
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      setAuthToken(null);
-      onUnauthorized?.();
-    }
-    const text = await response.text().catch(() => '');
-    let message = `Build failed (${response.status})`;
-    try {
-      message = (JSON.parse(text) as { error?: string }).error ?? message;
-    } catch {
-      /* html error page — keep default */
-    }
-    throw new ApiError(message, response.status);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new ApiError('Streaming not supported by this browser.', 0);
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newline = buffer.indexOf('\n');
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (line) {
-        onEvent(JSON.parse(line) as AgenticEvent);
-      }
-      newline = buffer.indexOf('\n');
-    }
-  }
-  if (buffer.trim()) onEvent(JSON.parse(buffer) as AgenticEvent);
+  await checkResponse(response, 'Build failed');
+  await readNdjson(response, onEvent);
 }

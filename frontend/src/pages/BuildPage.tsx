@@ -347,6 +347,10 @@ export default function BuildPage() {
   const reports = useBuildStore((state) => state.reports);
   const result = useBuildStore((state) => state.result);
   const error = useBuildStore((state) => state.error);
+  // Live progress: which half of this build is already usable. The website
+  // half lands here mid-build, so the right pane can serve it immediately.
+  const progress = useBuildStore((state) => state.progress);
+  const cancelled = useBuildStore((state) => state.cancelled);
   const run = useBuildStore((state) => state.run);
   const cancel = useBuildStore((state) => state.cancel);
   const clear = useBuildStore((state) => state.clear);
@@ -419,9 +423,22 @@ export default function BuildPage() {
         </div>
         <div className="build-actions">
           {running ? (
-            <button type="button" className="ghost-button" onClick={cancel}>
-              Cancel
-            </button>
+            <>
+              {/* The website half goes live BEFORE the firmware finishes — that
+                  is the whole point of building website-first, so the escape
+                  hatch to page 04 is right here in the build header. */}
+              {progress?.website?.ready && (
+                <Link to="/sim?view=website" className="primary-button as-link">
+                  🖥 Website is live — open page 04
+                </Link>
+              )}
+              <Link to="/sim" className="ghost-button as-link">
+                ↳ Simulation page
+              </Link>
+              <button type="button" className="ghost-button" onClick={cancel}>
+                Cancel
+              </button>
+            </>
           ) : (
             <>
               {result && (
@@ -463,7 +480,15 @@ export default function BuildPage() {
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
-                <span className="chatbot-status-tag">{running ? 'BUILDING…' : 'READY'}</span>
+                <span className="chatbot-status-tag" title={progress?.stage}>
+                  {running
+                    ? progress?.website?.ready
+                      ? 'FIRMWARE…'
+                      : 'WEBSITE…'
+                    : cancelled
+                      ? 'CANCELLED'
+                      : 'READY'}
+                </span>
               </div>
             </div>
 
@@ -551,6 +576,29 @@ export default function BuildPage() {
 
         {/* ── RIGHT PANE: Code Explorer, Files, Bench & BOM ──────────────── */}
         <div className="ide-right-pane">
+          {/* Website-first payoff: the dashboard is serving in the iframe below
+              while the terminal on the left is still compiling firmware. */}
+          {running && progress?.website?.preview && (
+            <section className="file-browser">
+              <div className="fb-tabs">
+                <span className="fb-tab active">🖥 website — live, firmware still building</span>
+                <Link className="fb-tab" to="/sim?view=website">
+                  open full page ↗
+                </Link>
+              </div>
+              <iframe
+                className="sim-frame"
+                src={progress.website.preview.url}
+                title="Generated dashboard preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+                style={{ width: '100%', height: 520, border: 0 }}
+              />
+              <p className="muted tiny" style={{ padding: '8px 12px' }}>
+                {progress.website.preview.note} The firmware gate is running in the terminal on the
+                left; this dashboard does not wait for it.
+              </p>
+            </section>
+          )}
           {result ? (
             <>
               {/* Render Readiness indicators in right pane above code */}

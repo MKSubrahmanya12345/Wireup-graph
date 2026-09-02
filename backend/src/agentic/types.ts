@@ -28,6 +28,40 @@ export interface ValidationReport {
   durationMs: number;
 }
 
+/**
+ * Live progress of a build that is STILL RUNNING.
+ *
+ * The website half and the firmware half are independent halves of one build,
+ * and they finish at different times. This snapshot says which half is
+ * already usable, so page 04 can run the generated website while the firmware
+ * is still being written on page 03 — instead of both halves waiting for the
+ * whole pipeline to finish.
+ */
+export interface BuildProgress {
+  status: 'running' | 'done' | 'error' | 'cancelled';
+  /** Pipeline stage currently executing, e.g. 'firmware-validate'. */
+  stage: string;
+  projectName: string;
+  slug: string;
+  startedAt: string;
+  updatedAt: string;
+  /** Website half — non-null from the moment the dashboard gate passes. */
+  website: {
+    ready: boolean;
+    /** Live bundle page 04 serves in its iframe (null if no dist was built). */
+    preview: BuildPreviewSummary | null;
+    files: BuildFile[];
+  } | null;
+  /** Firmware half — non-null from the moment the firmware gate passes. */
+  firmware: {
+    ready: boolean;
+    board: string;
+    files: BuildFile[];
+  } | null;
+  /** The circuit the plan resolved — known before either half compiles. */
+  circuit: { parts: number; wires: number; board: string } | null;
+}
+
 /** Events streamed to the browser as NDJSON while the pipeline runs. */
 export type BuildEvent =
   | { type: 'stage'; stage: string; title: string; detail?: string }
@@ -43,7 +77,10 @@ export type BuildEvent =
     }
   | { type: 'validation'; stage: string; report: ValidationReport }
   | { type: 'artifact'; stage: string; summary: string; files: string[] }
+  /** Which half of the build is live right now — see BuildProgress. */
+  | { type: 'progress'; progress: BuildProgress }
   | { type: 'result'; result: AgenticBuildResult }
+  | { type: 'cancelled'; message: string }
   | { type: 'error'; message: string };
 
 /** What the two independent readiness indicators on page 03 are built from. */
@@ -211,6 +248,12 @@ export interface PipelineInput {
    * to the exact same terminal gate as a first draft.
    */
   revisionInstruction?: string;
+  /**
+   * Cancellation. A build runs as a server-side job, so the human can leave
+   * the page, come back, or stop it explicitly — the pipeline checks this
+   * between stages and stops instead of burning minutes nobody is watching.
+   */
+  signal?: AbortSignal;
 }
 
 export type EmitFn = (event: BuildEvent) => void;
