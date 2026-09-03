@@ -527,9 +527,45 @@ export function detectResourceContention(
   }
 }
 
+/**
+ * Normalise raw node objects (LLM output, a rehydrated client payload, or a
+ * stale persisted graph) into fully-defaulted SpecNodes.
+ *
+ * `specNodeSchema` is null-tolerant by design — it turns a missing/blank
+ * `requires`/`spawned`/`assumptions`/`open_questions`/`known_uncertainty` into
+ * an empty array — so this is what guarantees every node has the arrays the UI
+ * and the deterministic passes iterate over. Nodes that somehow cannot be
+ * normalised are rebuilt with safe defaults instead of crashing the graph.
+ */
+function normalizeSpecNodes(nodes: unknown): Record<string, SpecNode> {
+  if (!nodes || typeof nodes !== 'object' || Array.isArray(nodes)) return {};
+
+  const result: Record<string, SpecNode> = {};
+  for (const [id, value] of Object.entries(nodes as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const parsed = specNodeSchema.safeParse(value);
+    result[id] = parsed.success
+      ? parsed.data
+      : {
+          id,
+          domain: 'general',
+          title: 'Component',
+          status: 'unresolved',
+          spec: {},
+          requires: [],
+          spawned: [],
+          assumptions: [],
+          open_questions: [],
+          known_uncertainty: [],
+          validation: { checked: false, issues: [] },
+        };
+  }
+  return result;
+}
+
 /** Deterministic finalisation: question budget, branches, validation, contention. */
 export function finalizeSpecGraph(graph: SpecGraphProject): SpecGraphProject {
-  const nodes = graph.nodes ?? {};
+  const nodes = normalizeSpecNodes(graph.nodes ?? {});
 
   // Normalise every node once before any cross-node logic runs.
   for (const node of Object.values(nodes)) {
@@ -572,7 +608,9 @@ export function applyUserAnswersToSpecGraph(
   specGraph: SpecGraphProject,
   answers: Record<string, string>,
 ): SpecGraphProject {
-  const nodes: Record<string, SpecNode> = { ...specGraph.nodes };
+  // Re-normalise the incoming graph: the /answer endpoint receives whatever the
+  // client persisted, which may predate the normalisation pass above.
+  const nodes: Record<string, SpecNode> = normalizeSpecNodes(specGraph.nodes ?? {});
   const assumptionLog = [...(specGraph.assumption_log ?? [])];
   const changedNodeIds = new Set<string>();
 

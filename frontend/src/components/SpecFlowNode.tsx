@@ -33,9 +33,9 @@ export default function SpecFlowNode({ data }: NodeProps<SpecFlowNodeType>) {
         )}
       </div>
       <div className="spec-node-meta">
-        <span>{node.requires.length} req</span>
-        <span>{node.spawned.length} spawn</span>
-        {node.open_questions.length > 0 && <span className="warn">{node.open_questions.length} q</span>}
+        <span>{node.requires?.length ?? 0} req</span>
+        <span>{node.spawned?.length ?? 0} spawn</span>
+        {(node.open_questions?.length ?? 0) > 0 && <span className="warn">{node.open_questions?.length ?? 0} q</span>}
       </div>
       <Handle type="source" position={Position.Right} className="spec-handle" />
     </div>

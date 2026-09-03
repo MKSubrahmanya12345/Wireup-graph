@@ -103,7 +103,7 @@ export default function SpecGraphPage() {
 
         // Pre-select the recommended default for every open question.
         const defaults: Record<string, string> = { ...(answers ?? {}) };
-        for (const question of res.specGraph.question_queue) {
+        for (const question of res.specGraph.question_queue ?? []) {
           defaults[questionKey(question)] =
             answers?.[questionKey(question)] ??
             question.default ??
@@ -177,7 +177,7 @@ export default function SpecGraphPage() {
 
   const edgeCount =
     Object.values(specGraph?.nodes ?? {}).reduce(
-      (sum, node) => sum + node.requires.length + node.spawned.length,
+      (sum, node) => sum + (node.requires?.length ?? 0) + (node.spawned?.length ?? 0),
       0,
     ) ?? 0;
 
@@ -305,10 +305,10 @@ export default function SpecGraphPage() {
                     )}
 
                     <div className="sg-node-edges">
-                      {node.requires.length > 0 && (
+                      {(node.requires?.length ?? 0) > 0 && (
                         <div className="sg-edge-row">
                           <span className="sg-edge-key requires">requires</span>
-                          {node.requires.map((id) => (
+                          {(node.requires ?? []).map((id) => (
                             <span
                               key={id}
                               className="sg-edge-chip"
@@ -322,10 +322,10 @@ export default function SpecGraphPage() {
                           ))}
                         </div>
                       )}
-                      {node.spawned.length > 0 && (
+                      {(node.spawned?.length ?? 0) > 0 && (
                         <div className="sg-edge-row">
                           <span className="sg-edge-key spawned">spawned</span>
-                          {node.spawned.map((id) => (
+                          {(node.spawned ?? []).map((id) => (
                             <span
                               key={id}
                               className="sg-edge-chip spawned"
@@ -341,9 +341,9 @@ export default function SpecGraphPage() {
                       )}
                     </div>
 
-                    {node.assumptions.length > 0 && (
+                    {(node.assumptions?.length ?? 0) > 0 && (
                       <ul className="sg-node-assumptions">
-                        {node.assumptions.slice(0, 2).map((assumption, index) => (
+                        {(node.assumptions ?? []).slice(0, 2).map((assumption, index) => (
                           <li key={index}>
                             <strong>{assumption.claim}</strong>
                             <span>{assumption.why}</span>
@@ -352,16 +352,16 @@ export default function SpecGraphPage() {
                       </ul>
                     )}
 
-                    {node.known_uncertainty.length > 0 && (
+                    {(node.known_uncertainty?.length ?? 0) > 0 && (
                       <div className="sg-node-uncertainty">
-                        {node.known_uncertainty.map((uncertainty) => (
+                        {(node.known_uncertainty ?? []).map((uncertainty) => (
                           <span key={uncertainty}>± {uncertainty}</span>
                         ))}
                       </div>
                     )}
 
-                    {node.open_questions.length > 0 && (
-                      <div className="sg-node-pending">⚡ {node.open_questions.length} open question(s)</div>
+                    {(node.open_questions?.length ?? 0) > 0 && (
+                      <div className="sg-node-pending">⚡ {node.open_questions?.length ?? 0} open question(s)</div>
                     )}
                   </button>
                 );
