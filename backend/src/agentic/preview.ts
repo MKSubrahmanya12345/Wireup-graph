@@ -2,8 +2,9 @@
  * Live preview of the generated dashboard.
  *
  * Page 04's "Website" half must show the app, not a description of it. The
- * pipeline already builds the generated MERN frontend for real (`npm install`
- * → `tsc -b` → `vite build`) inside the validation workspace, and then throws
+ * pipeline already builds the generated MERN frontend for real (warm
+ * `node_modules` hydration → `tsc -b` → `vite build`) inside the validation
+ * workspace, and then throws
  * the workspace away. This module keeps that exact `dist/` — the artifact the
  * gate approved — and serves it under an unguessable id.
  *
@@ -22,6 +23,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { cp, mkdir, rm, readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +58,8 @@ export interface PreviewSpec {
   sampleIntervalMs: number;
   createdAt: number;
   dir: string;
+  /** Feed behind this preview's browser terminal (/api/preview/<id>/terminal). */
+  terminal: PreviewTerminalLog;
 }
 
 /** Public description handed to the browser with the build result. */
@@ -75,6 +79,57 @@ export interface PreviewSummary {
 const KEEP = 8;
 
 const previews = new Map<string, PreviewSpec>();
+
+// ── The preview's own browser terminal ──────────────────────────────────────
+
+export interface PreviewTerminalLine {
+  seq: number;
+  at: string;
+  kind: 'boot' | 'request' | 'device' | 'control' | 'error' | 'info';
+  text: string;
+}
+
+/**
+ * The in-memory line feed behind a preview's browser terminal — the same
+ * design as the generated scaffold's terminal (ring buffer + live emitter),
+ * bound to ONE preview so parallel builds never interleave.
+ */
+export class PreviewTerminalLog {
+  private buffer: PreviewTerminalLine[] = [];
+  private nextSeq = 1;
+  private emitter = new EventEmitter();
+
+  constructor() {
+    // Terminal tabs come and go; never die on a detached viewer's warning.
+    this.emitter.setMaxListeners(0);
+  }
+
+  push(kind: PreviewTerminalLine['kind'], text: string): PreviewTerminalLine {
+    const line: PreviewTerminalLine = {
+      seq: this.nextSeq,
+      at: new Date().toISOString().slice(11, 19),
+      kind,
+      text,
+    };
+    this.nextSeq += 1;
+    this.buffer.push(line);
+    if (this.buffer.length > 500) this.buffer.shift();
+    this.emitter.emit('line', line);
+    return line;
+  }
+
+  recent(sinceSeq = 0): PreviewTerminalLine[] {
+    if (sinceSeq <= 0) return this.buffer.slice(-100);
+    return this.buffer.filter((line) => line.seq > sinceSeq);
+  }
+
+  subscribe(listener: (line: PreviewTerminalLine) => void): () => void {
+    this.emitter.on('line', listener);
+    return () => {
+      this.emitter.off('line', listener);
+    };
+  }
+}
 
 export function previewRoot(): string {
   return env.PREVIEW_DIR || path.join(os.tmpdir(), 'wireup-previews');
@@ -156,7 +211,10 @@ export async function publishPreview(options: {
     sampleIntervalMs: plan.sampleIntervalMs,
     createdAt: Date.now(),
     dir,
+    terminal: new PreviewTerminalLog(),
   };
+  spec.terminal.push('boot', `preview terminal ready — ${spec.projectName} (${spec.board})`);
+  spec.terminal.push('boot', 'device API is the preview stub; the shipped Express backend talks to the real board over your LAN');
   previews.set(id, spec);
   await prune();
 
@@ -219,6 +277,69 @@ function livePayload(spec: PreviewSpec, now: number): Record<string, unknown> {
  */
 export function previewRouter(): Router {
   const router = Router();
+
+  // Feed the browser terminal: every stub-API call (minus the high-frequency
+  // polling and the terminal's own stream) becomes a line on the log.
+  router.use('/preview/:id', (req, res, next) => {
+    const spec = getPreview(req.params.id);
+    if (spec && req.path.startsWith('/api/')) {
+      const noisy =
+        req.path.startsWith('/api/telemetry/live') ||
+        req.path.startsWith('/api/telemetry/history') ||
+        req.path.startsWith('/api/terminal');
+      if (!noisy) {
+        if (req.path.startsWith('/api/telemetry/control')) {
+          spec.terminal.push('control', `${req.method} ${req.path} → device command (preview stub accepts, nothing actuated)`);
+        } else {
+          spec.terminal.push('request', `${req.method} ${req.path}`);
+        }
+      }
+    }
+    next();
+  });
+
+  router.get('/preview/:id/api/terminal/stream', (req, res) => {
+    const spec = getPreview(req.params.id);
+    if (!spec) return res.status(404).json({ error: 'preview expired' });
+    res.status(200).set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+    const since = Number(req.query.since ?? 0);
+    for (const line of spec.terminal.recent(Number.isFinite(since) ? since : 0)) {
+      res.write(`data: ${JSON.stringify(line)}\n\n`);
+    }
+    const unsubscribe = spec.terminal.subscribe((line) => res.write(`data: ${JSON.stringify(line)}\n\n`));
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+    req.on('close', () => {
+      unsubscribe();
+      clearInterval(heartbeat);
+    });
+  });
+
+  router.post('/preview/:id/api/terminal/probe', (req, res) => {
+    const spec = getPreview(req.params.id);
+    if (!spec) return res.status(404).json({ error: 'preview expired' });
+    const now = Date.now();
+    spec.terminal.push('device', `probing stub device … ${spec.metrics.length} metric(s) online`);
+    for (const metric of spec.metrics) {
+      spec.terminal.push('device', `${metric.id} = ${sampleValue(metric, now)} ${metric.unit} (field ${metric.jsonField})`);
+    }
+    res.json({ ok: true, metrics: spec.metrics.length });
+  });
+
+  // The terminal page itself. Relative URLs only — it lands on whatever host
+  // and port this deployment is serving, nothing hard-coded.
+  router.get('/preview/:id/terminal', (req, res) => {
+    const spec = getPreview(req.params.id);
+    if (!spec) return res.status(404).json({ error: 'preview expired — run the build again' });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(previewTerminalPage(spec.projectName));
+  });
 
   router.get('/preview/:id/api/health', (req, res) => {
     const spec = getPreview(req.params.id);
@@ -328,4 +449,102 @@ export function previewRouter(): Router {
   });
 
   return router;
+}
+
+// ── The preview terminal page ───────────────────────────────────────────────
+
+/**
+ * Zero-dependency terminal page for a published preview. Stream and probe
+ * use RELATIVE URLs, so the page works on any host/port the deployment is
+ * reached through — nothing hard-coded, same rule as the generated scaffold.
+ */
+function previewTerminalPage(projectName: string): string {
+  const safeName = projectName.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const style = [
+    ':root { color-scheme: dark; }',
+    '* { box-sizing: border-box; }',
+    'body { margin: 0; background: #0b0f14; color: #d7e2ea; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; height: 100vh; display: flex; flex-direction: column; }',
+    'header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #1d2a36; background: #0e141b; }',
+    'header h1 { font-size: 12px; letter-spacing: 2px; margin: 0; color: #7fd1a8; }',
+    '.name { color: #6b7f8f; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.state { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid #1d2a36; color: #6b7f8f; }',
+    '.state.live { color: #7fd1a8; border-color: #245a41; }',
+    '.state.dead { color: #e2726e; border-color: #5a2424; }',
+    'button { font: inherit; font-size: 11px; background: #12202c; color: #d7e2ea; border: 1px solid #24435a; border-radius: 6px; padding: 4px 10px; cursor: pointer; }',
+    'button:hover { background: #172a39; }',
+    'button:disabled { opacity: 0.5; cursor: default; }',
+    'main { flex: 1; overflow-y: auto; padding: 10px 14px; }',
+    '.ln { white-space: pre-wrap; word-break: break-word; }',
+    '.ln .at { color: #4d6273; margin-right: 10px; }',
+    '.ln.boot { color: #e5c07b; }',
+    '.ln.request { color: #8296a5; }',
+    '.ln.device { color: #7fd1a8; }',
+    '.ln.control { color: #61afef; }',
+    '.ln.error { color: #e2726e; }',
+    'footer { padding: 6px 14px; border-top: 1px solid #1d2a36; color: #4d6273; font-size: 11px; }',
+  ];
+  const script = [
+    'var term = document.getElementById("term");',
+    'var state = document.getElementById("state");',
+    'var lastSeq = 0;',
+    'function addLine(line) {',
+    '  if (!line || typeof line !== "object") return;',
+    '  if (typeof line.seq === "number") lastSeq = Math.max(lastSeq, line.seq);',
+    '  var row = document.createElement("div");',
+    '  row.className = "ln " + (line.kind || "info");',
+    '  var at = document.createElement("span");',
+    '  at.className = "at";',
+    '  at.textContent = line.at || "";',
+    '  var tx = document.createElement("span");',
+    '  tx.textContent = line.text || "";',
+    '  row.appendChild(at);',
+    '  row.appendChild(tx);',
+    '  var stick = term.scrollHeight - term.scrollTop - term.clientHeight < 48;',
+    '  term.appendChild(row);',
+    '  if (stick) term.scrollTop = term.scrollHeight;',
+    '}',
+    'function connect() {',
+    '  var es = new EventSource("api/terminal/stream?since=" + lastSeq);',
+    '  es.onopen = function () { state.textContent = "live"; state.className = "state live"; };',
+    '  es.onmessage = function (event) {',
+    '    try { addLine(JSON.parse(event.data)); } catch (e) { /* keep-alive */ }',
+    '  };',
+    '  es.onerror = function () {',
+    '    state.textContent = "reconnecting…";',
+    '    state.className = "state dead";',
+    '    es.close();',
+    '    setTimeout(connect, 1500);',
+    '  };',
+    '}',
+    'document.getElementById("probe").addEventListener("click", function () {',
+    '  var btn = this;',
+    '  btn.disabled = true;',
+    '  fetch("api/terminal/probe", { method: "POST" }).finally(function () { btn.disabled = false; });',
+    '});',
+    'document.getElementById("clear").addEventListener("click", function () { term.replaceChildren(); });',
+    'connect();',
+  ];
+  return [
+    '<!doctype html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="utf-8" />',
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+    '<title>' + safeName + ' — preview terminal</title>',
+    '<style>' + style.join('') + '</style>',
+    '</head>',
+    '<body>',
+    '<header>',
+    '<h1>DEVICE TERMINAL</h1>',
+    '<span class="name">' + safeName + ' · preview stub</span>',
+    '<span class="state" id="state">connecting…</span>',
+    '<button id="probe" type="button">Probe device</button>',
+    '<button id="clear" type="button">Clear</button>',
+    '</header>',
+    '<main id="term" role="log" aria-live="polite"></main>',
+    '<footer>Live feed of this preview\'s stub API and device probes. The shipped zip runs the real Express backend with this same terminal on your own machine — on whatever port it binds.</footer>',
+    '<script>' + script.join('') + '</script>',
+    '</body>',
+    '</html>',
+  ].join('\n');
 }

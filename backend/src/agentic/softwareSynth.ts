@@ -289,17 +289,21 @@ no external service.
 # 1. Backend (terminal 1)
 cd backend
 cp .env.example .env      # then set DEVICE_IP to the address the firmware printed
-npm install
-npm run dev               # http://localhost:8080
+pnpm install
+pnpm dev                  # the boot log prints the port it bound (prefers 8080)
 
 # 2. Frontend (terminal 2)
 cd frontend
-npm install
-npm run dev               # http://localhost:5173
+pnpm install
+pnpm dev                  # http://localhost:5173
 \`\`\`
 
 Open **http://localhost:5173** — live cards for every sensor appear as soon
-as the board is reachable.
+as the board is reachable. While the backend runs, open **its own browser
+terminal** at \`http://localhost:<backend-port>/terminal\` — the API's
+terminal, in the browser: a live request/device feed with a probe button.
+It follows whatever port the server actually bound (a busy default port
+never stops the dashboard).
 
 ## How it fits together
 

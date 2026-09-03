@@ -17,9 +17,11 @@
  *                 the device API behind it is Wireup's preview stub, because a
  *                 browser tab cannot reach your ESP32 over your LAN.
  *
- * The swap button flips between them, keeps its state in the URL (?view=…) so
- * a reload or a shared link lands on the same half, and reports plainly when a
- * half has nothing to show instead of rendering an empty frame.
+ * The swap button flips between them, keeps its state in the URL (?view=…)
+ * so a reload or a shared link lands on the same half, and reports plainly
+ * when a half has nothing to show instead of rendering an empty frame.
+ * WEBSITE is the default half — it is what a human looks at first, and the
+ * build publishes it before the firmware exists.
  *
  * This page works WHILE a build is running. The build is a server-side job and
  * the pipeline builds website-first, so the Website half goes live as soon as
@@ -95,7 +97,7 @@ export default function SimPage() {
   const [configError, setConfigError] = useState<string | null>(null);
   const [engineChoice, setEngineChoice] = useState<SimEngine | null>(null);
 
-  const view: View = isView(params.get('view')) ? (params.get('view') as View) : 'simulation';
+  const view: View = isView(params.get('view')) ? (params.get('view') as View) : 'website';
 
   const setView = useCallback(
     (next: View) => {
@@ -375,6 +377,11 @@ export default function SimPage() {
                 {preview && (
                   <a className="sim-linkbtn" href={preview.url} target="_blank" rel="noreferrer noopener">
                     Open in a tab ↗
+                  </a>
+                )}
+                {preview && (
+                  <a className="sim-linkbtn" href={`${preview.url}terminal`} target="_blank" rel="noreferrer noopener" title="The generated site's terminal, in the browser — live request/device feed">
+                    Terminal ↗
                   </a>
                 )}
                 {buildRunning && (

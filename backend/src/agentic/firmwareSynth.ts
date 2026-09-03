@@ -1039,7 +1039,8 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
       'Edit firmware/config.h — set WIFI_SSID and WIFI_PASSWORD.',
       `Flash with Arduino IDE (open firmware/${plan.slug}.ino) or PlatformIO (pio run -t upload).`,
       'Watch Serial at 115200 baud for the assigned IP address.',
-      "Run 'npm install && npm run dev' in the software project; set DEVICE_IP to that address.",
+      "Run 'pnpm install && pnpm dev' in the software project; set DEVICE_IP to that address.",
+      "Open the software backend's browser terminal at http://localhost:<port>/terminal.",
     ],
     notes: [
       ...plan.modules.flatMap((module) => module.firmwareNotes),
