@@ -101,6 +101,16 @@ export async function pkgManagerBase(): Promise<string[]> {
       return pkgBase;
     }
   }
+  // Neither `pnpm` nor `corepack pnpm` answered. Falling through silently
+  // here used to mean every install died later with a bare, unactionable
+  // ENOENT — surface a loud, actionable warning at the point of discovery
+  // instead.
+  logger.warn(
+    'pkg-cache: no working package manager found (neither `pnpm --version` nor `corepack pnpm --version` succeeded). ' +
+      'Website builds will fail. Fix this by: (1) installing pnpm globally (`npm i -g pnpm`), or ' +
+      '(2) running `corepack enable` so corepack can provision pnpm on demand, or ' +
+      '(3) setting AGENTIC_PKG_MANAGER=npm in backend/.env to use npm instead.',
+  );
   pkgBase = ['pnpm']; // will surface a clean spawn error in the caller's check
   return pkgBase;
 }
@@ -210,16 +220,38 @@ export interface HydrationResult {
 /** pkgDir → key already materialised there (repair attempts reuse the tree). */
 const hydrated = new Map<string, string>();
 
+/** Error codes that mean "this platform can't recreate the link as a link". */
+function isLinkPermissionError(code: unknown): boolean {
+  return code === 'EPERM' || code === 'EACCES' || code === 'EINVAL';
+}
+
+/**
+ * Copy a directory tree preserving symlinks where possible (cheap: pnpm's
+ * node_modules is mostly junctions/symlinks). On platforms/configurations
+ * where recreating links fails — stock Windows without Developer Mode or
+ * admin rights needs elevated privileges to create symlinks/junctions — wipe
+ * whatever landed and fall back to a fully materialised (dereferenced) copy.
+ * Bigger on disk, but always a valid, working install.
+ */
+async function copyTreeSymlinkSafe(src: string, dest: string): Promise<void> {
+  try {
+    await cp(src, dest, { recursive: true, verbatimSymlinks: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (!isLinkPermissionError(code)) throw error;
+    await rm(dest, { recursive: true, force: true }).catch(() => undefined);
+    await cp(src, dest, { recursive: true, dereference: true });
+  }
+}
+
 async function copyWarmTree(key: string, pkgDir: string): Promise<number> {
   const startedAt = Date.now();
   const modulesDir = path.join(pkgDir, 'node_modules');
   await rm(modulesDir, { recursive: true, force: true }).catch(() => undefined);
   // verbatimSymlinks keeps pnpm's relative links exactly as stored — the copy
-  // is a working install because the directory structure is identical.
-  await cp(path.join(warmDirFor(key), 'node_modules'), modulesDir, {
-    recursive: true,
-    verbatimSymlinks: true,
-  });
+  // is a working install because the directory structure is identical. Falls
+  // back to a dereferenced copy when the platform can't recreate the links.
+  await copyTreeSymlinkSafe(path.join(warmDirFor(key), 'node_modules'), modulesDir);
   return Date.now() - startedAt;
 }
 
@@ -231,10 +263,7 @@ async function promoteToWarm(key: string, pkgDir: string): Promise<void> {
   // half-populated tree that a later build would trust.
   const staging = `${target}.tmp-${randomBytes(4).toString('hex')}`;
   try {
-    await cp(path.join(pkgDir, 'node_modules'), path.join(staging, 'node_modules'), {
-      recursive: true,
-      verbatimSymlinks: true,
-    });
+    await copyTreeSymlinkSafe(path.join(pkgDir, 'node_modules'), path.join(staging, 'node_modules'));
     await cp(path.join(pkgDir, 'pnpm-lock.yaml'), path.join(staging, 'pnpm-lock.yaml')).catch(() => undefined);
     await cp(path.join(pkgDir, 'package.json'), path.join(staging, 'package.json')).catch(() => undefined);
     if (!(await isWarm(key))) {
