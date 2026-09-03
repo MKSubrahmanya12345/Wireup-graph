@@ -762,14 +762,7 @@ export default function BuildPage() {
           zIndex: 1000,
         }}>
           <button 
-            onClick={() => {
-              try {
-                const debugStore = require('./store/useDebugStore').useDebugStore;
-                debugStore.getState().toggleConsole();
-              } catch (e) {
-                console.log('Debug console not available');
-              }
-            }}
+            onClick={toggleConsole}
             style={{
               background: '#1f2937',
               color: 'white',
@@ -801,6 +794,21 @@ export default function BuildPage() {
           </div>
         </div>
       )}
+
+      {/*
+        Debug console. Collapsed it renders its own toggle; opened it overlays
+        the page with the full event / error / performance view. It reads the
+        build store's live state, so it works in every environment.
+      */}
+      <DebugConsole
+        isOpen={isConsoleOpen}
+        onToggle={toggleConsole}
+        events={debugEvents}
+        errorContexts={debugErrorContexts}
+        stageProgress={stageProgress}
+        connectionHealth={connectionHealth}
+        reports={reports}
+      />
     </div>
   );
 }

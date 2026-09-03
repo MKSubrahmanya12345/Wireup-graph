@@ -9,7 +9,7 @@ import {
 import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useDesignSession } from './useDesignSession';
 import { useGraphStore } from './useGraphStore';
-import { useDebugConsole } from '../hooks/useDebugConsole';
+import { useDebugStore } from './useDebugStore';
 import type {
   AgenticBuildResult,
   AgenticEvent,
@@ -109,17 +109,14 @@ export const useBuildStore = create<BuildState>()((set, get) => {
 
   /** Translate one streamed event into store state. */
   const handle = (event: AgenticEvent): void => {
-    // Forward all events to debug console if it exists
-    try {
-      const debugStore = require('../store/useDebugStore').useDebugStore;
-      debugStore.getState().addEvent(event);
-    } catch (e) {
-      // Debug store not available, continue without it
-    }
+    // Forward every event to the debug console store. This used to go through
+    // `require()`, which does not exist in the browser ESM bundle — it threw and
+    // the catch swallowed it, so the console never saw a single event.
+    useDebugStore.getState().addEvent(event);
     
     switch (event.type) {
       case 'stage':
-        set((state) => ({ currentStage: event.stage }));
+        set({ currentStage: event.stage });
         push({ kind: 'stage', tone: 'info', stage: event.stage, text: `▶ ${event.title}` });
         break;
       case 'stage_progress':

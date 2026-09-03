@@ -144,6 +144,8 @@ export default function SpecGraphPage() {
 
   // §2: the manifest's queue holds pointers — dereference against live nodes.
   const questions = specGraph ? resolveQuestionQueue(specGraph) : [];
+  // Same story for the audit log of assumptions (also pointer-based).
+  const assumptionLog = specGraph ? resolveAssumptionLog(specGraph) : [];
   const allAnswered =
     questions.length > 0 &&
     questions.every(({ question }) => effectiveAnswer(question, selectedAnswers));
@@ -372,11 +374,11 @@ export default function SpecGraphPage() {
               })}
             </div>
 
-            {(specGraph?.assumption_log?.length ?? 0) > 0 && (
+            {assumptionLog.length > 0 && (
               <div className="sg-audit">
                 <div className="sg-section-label">Audit log of assumptions</div>
                 <ul>
-                  {resolveAssumptionLog(specGraph).map((entry, index) => (
+                  {assumptionLog.map((entry, index) => (
                     <li key={`${entry.node_id}-${index}`}>
                       <code>[{entry.node_id}]</code>
                       <span>{entry.claim} — {entry.why}</span>

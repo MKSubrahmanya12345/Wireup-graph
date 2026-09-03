@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { AgenticEvent, ErrorContext, StageProgress } from '../types/build';
+import type { AgenticEvent } from '../types/build';
 
 export interface DebugConsoleState {
   isOpen: boolean;

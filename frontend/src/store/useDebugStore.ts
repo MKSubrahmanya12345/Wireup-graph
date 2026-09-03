@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgenticEvent, ErrorContext, StageProgress, ConnectionHealth } from '../types/build';
+import type { AgenticEvent, ErrorContext } from '../types/build';
 
 interface DebugState {
   isConsoleOpen: boolean;
