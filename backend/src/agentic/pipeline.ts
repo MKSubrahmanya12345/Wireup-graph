@@ -40,15 +40,22 @@ import type {
 /**
  * The Wireup agentic build pipeline.
  *
- *   retrieve (RAG) → resolve plan → generate the WEBSITE → build it in the
- *     terminal (npm/tsc/vite) → PUBLISH it live → generate firmware → compile
- *     it with g++ → repair loop → cross-check the contract → simulate → ship.
+ *   retrieve (RAG) → resolve plan → start the firmware LLM draft IN THE
+ *     BACKGROUND → generate the WEBSITE → build it in the terminal
+ *     (pnpm/tsc/vite, warm dependency store, both trees concurrently) →
+ *     PUBLISH it live → collect the background draft → compile firmware →
+ *     repair loop → cross-check the contract → simulate → ship.
  *
  * Website-first is deliberate: the dashboard is the half a human can look at,
- * so it is built, validated and published before the firmware even starts.
- * Page 04 can then run that website while the firmware is still being written
- * on page 03 — the two halves of one build finish at different times, and each
- * is announced on the wire (`progress` events) the moment it is usable.
+ * so it is built, validated and published before the firmware is gated. Page
+ * 04 can run that website while the firmware is still being worked on — the
+ * two halves of one build finish at different times, and each is announced on
+ * the wire (`progress` events) the moment it is usable.
+ *
+ * The halves share no resources: the firmware draft is one network call to
+ * the LLM, the website stage is local pnpm/tsc/vite work — so the draft
+ * starts the moment the plan resolves and its latency hides entirely inside
+ * the website build.
  *
  * Generation is deterministic-first (knowledge base templates). When AWS
  * Bedrock is configured the LLM is offered the first draft, but every
@@ -56,7 +63,16 @@ import type {
  * LLM failure falls back to the deterministic path. Nothing ships unvalidated.
  */
 
-const PIPELINE_VERSION = 'wireup-agentic-2.0';
+const PIPELINE_VERSION = 'wireup-agentic-2.1';
+
+/** The firmware LLM draft, started in the background during the website stage. */
+interface FirmwareDraft {
+  /** Resolves with the parsed draft, or null when the LLM failed/timed out. */
+  promise: Promise<FirmwareResult | null>;
+  startedAt: number;
+  /** Why the draft did not come back (null while it is still running). */
+  error: { message: string | null };
+}
 
 function now(): string {
   return new Date().toISOString().slice(11, 19);
@@ -211,6 +227,55 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     });
     say('retrieve', 'build order: website first, firmware second — the dashboard goes live while the firmware is still being written', 'ok');
 
+    // ── Provider selection (M2) + the background firmware draft ─────────────
+    // AWS Bedrock is the only LLM provider. Which plan the user is on still
+    // gets logged per build so usage reporting stays honest.
+    const userPlan: 'free' | 'pro' = input.userPlan ?? 'free';
+    const requestedProvider: LlmProvider = 'bedrock';
+    const effective = resolveEffectiveProvider(requestedProvider);
+    const llmProvider: LlmProvider = effective.provider;
+    const llmNote = effective.fallbackFrom
+      ? `requested ${effective.fallbackFrom}, fell back to ${effective.provider} (${effective.reason})`
+      : undefined;
+    say(
+      'firmware',
+      `plan: ${userPlan} → provider: ${llmProvider} (AWS Bedrock)${llmNote ? ` — ${llmNote}` : ''}`,
+      effective.fallbackFrom ? 'warn' : 'info',
+    );
+
+    const llmAvailable = isLlmAvailable(llmProvider);
+    let firmwareDraft: FirmwareDraft | null = null;
+    if (llmAvailable) {
+      // The draft is one network call and shares NOTHING with the website
+      // stage (local pnpm/tsc/vite work) — so it starts NOW, in the
+      // background, and stage 3 collects the result instead of paying its
+      // latency after the website gate. Deterministic fallback stays instant.
+      const startedAt = Date.now();
+      const error = { message: null as string | null };
+      say('firmware', `${llmProvider} available — LLM draft started in the background (45s timeout guard) while the website builds.`);
+      const promise = (async (): Promise<FirmwareResult | null> => {
+        try {
+          const draftPromise = generateFirmwareLlm(brief, projectName, graphParsed, {
+            provider: llmProvider,
+            model: input.model,
+            jsonContract: { endpoint: '/api/sensors', fields: expectedJsonFields },
+          });
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => reject(new Error('LLM response timeout (45s safety limit reached)')), 45_000);
+            timer.unref?.();
+          });
+          return firmwareResultSchema.parse(await Promise.race([draftPromise, timeoutPromise]));
+        } catch (err) {
+          error.message = err instanceof Error ? err.message : String(err);
+          return null;
+        }
+      })();
+      promise.catch(() => undefined); // never unhandled — stage 3 awaits it again
+      firmwareDraft = { promise, startedAt, error };
+    } else {
+      say('firmware', 'No LLM key configured — knowledge-base synthesis engine drives (this is the primary path, not a fallback).');
+    }
+
     // ── Stage 2: website (generate → build → repair → PUBLISH) ──────────────
     emit({ type: 'stage', stage: 'software', title: 'Assembling MERN dashboard software' });
 
@@ -305,26 +370,9 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
 
     if (cancelled()) return;
 
-    // ── Stage 3: firmware (generate → compile → repair) ─────────────────────
+    // ── Stage 3: firmware (collect background draft → compile → repair) ─────
     emit({ type: 'stage', stage: 'firmware', title: 'Generating firmware' });
 
-    // ── Provider selection (M2) ─────────────────────────────────────────────
-    // AWS Bedrock is the only LLM provider. Which plan the user is on still
-    // gets logged per build so usage reporting stays honest.
-    const userPlan: 'free' | 'pro' = input.userPlan ?? 'free';
-    const requestedProvider: LlmProvider = 'bedrock';
-    const effective = resolveEffectiveProvider(requestedProvider);
-    const llmProvider: LlmProvider = effective.provider;
-    const llmNote = effective.fallbackFrom
-      ? `requested ${effective.fallbackFrom}, fell back to ${effective.provider} (${effective.reason})`
-      : undefined;
-    say(
-      'firmware',
-      `plan: ${userPlan} → provider: ${llmProvider} (AWS Bedrock)${llmNote ? ` — ${llmNote}` : ''}`,
-      effective.fallbackFrom ? 'warn' : 'info',
-    );
-
-    const llmAvailable = isLlmAvailable(llmProvider);
     // What actually generated the artifacts, recorded per build.
     let actualLlmProvider = 'none (deterministic knowledge-base engine)';
     let firmware: FirmwareResult = synthesizeFirmware(plan);
@@ -336,34 +384,25 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // is never bent to fit a draft.
     say('firmware', `firmware must publish the website's contract fields: ${expectedJsonFields.join(', ')}`);
 
-    if (llmAvailable) {
-      try {
-        say('firmware', `${llmProvider} available — asking the LLM for a first draft (45s timeout guard).`);
-        // Old 8s timeout call commented out per Rule 2:
-        // const timeoutPromise = new Promise<never>((_, reject) =>
-        //   setTimeout(() => reject(new Error('LLM response timeout (8s limit reached for fast build)')), 8000)
-        // );
-
-        // ??$$$ Wrap LLM call with a 45-second timeout guard so Bedrock has time to generate full C++ code
-        const draftPromise = generateFirmwareLlm(brief, projectName, graphParsed, {
-          provider: llmProvider,
-          model: input.model,
-          jsonContract: { endpoint: '/api/sensors', fields: expectedJsonFields },
-        });
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('LLM response timeout (45s safety limit reached)')), 45_000)
-        );
-        const draft = await Promise.race([draftPromise, timeoutPromise]);
-        firmware = firmwareResultSchema.parse(draft);
+    if (firmwareDraft) {
+      // Collect the draft that has been running since before the website
+      // gate — by now it is usually already done, so this costs ~0 ms.
+      const waitedMs = Date.now() - firmwareDraft.startedAt;
+      say('firmware', `collecting the background LLM draft (running for ${(waitedMs / 1000).toFixed(1)} s alongside the website)…`);
+      const draft = await firmwareDraft.promise;
+      if (draft) {
+        firmware = draft;
         firmwareSource = 'llm-assisted';
         actualLlmProvider = llmProvider;
-        say('firmware', `LLM draft came back from ${llmProvider}: ${firmware.files.length} file(s) for ${firmware.board}`, 'ok');
-      } catch (error) {
-        say('firmware', `LLM draft skipped (${error instanceof Error ? error.message : String(error)}) — using fast knowledge-base synthesiser.`, 'warn');
+        say(
+          'firmware',
+          `LLM draft came back from ${llmProvider}: ${firmware.files.length} file(s) for ${firmware.board} (finished ${((Date.now() - firmwareDraft.startedAt) / 1000).toFixed(1)} s after start, largely hidden inside the website build)`,
+          'ok',
+        );
+      } else {
+        say('firmware', `LLM draft skipped (${firmwareDraft.error.message ?? 'unknown error'}) — using fast knowledge-base synthesiser.`, 'warn');
         firmwareSource = 'deterministic';
       }
-    } else {
-      say('firmware', 'No LLM key configured — knowledge-base synthesis engine drives (this is the primary path, not a fallback).');
     }
 
     // ── Multi-turn revision: apply a human follow-up request before gating ──

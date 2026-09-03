@@ -1,10 +1,18 @@
 import path from 'node:path';
+import { stat } from 'node:fs/promises';
 
 import ts from 'typescript';
 
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import type { BuildFile } from '../schemas/build.js';
+import {
+  hydrateModules,
+  pkgManagerBase,
+  registryReachable,
+  warmStatus,
+  type Pkg,
+} from './pkgCache.js';
 import {
   freePort,
   materialise,
@@ -19,10 +27,15 @@ import type { DeviceMetricSpec, ValidationFinding, ValidationReport } from './ty
  *
  * Tier 1 (always): structural + cross-artifact consistency + TypeScript
  *   syntax for every .ts/.tsx (compiler API, no network needed).
- * Tier 2 (terminal enabled + network): materialise the tree, run
- *   `npm install`, then `tsc --noEmit` for the backend and `vite build`
- *   (which includes `tsc -b`) for the frontend. A software zip only ships
- *   when the project builds.
+ * Tier 2 (terminal enabled): materialise the tree, hydrate node_modules from
+ *   the warm dependency store (a real `pnpm install` only runs when the
+ *   generated package.json actually deviates from the scaffold template),
+ *   then run both trees CONCURRENTLY — `pnpm exec tsc --noEmit` + build for
+ *   the API, `pnpm run build` (tsc -b + vite) for the dashboard. A software
+ *   zip only ships when the project builds, and the common build never waits
+ *   on the network.
+ * Tier 2b: runtime smoke — the compiled backend is booted against a stub
+ *   device and must answer with the promised metrics before anything ships.
  */
 
 const PLACEHOLDER_PATTERN = /\bTODO\b|\bFIXME\b|your code here|implementation goes here|\bTBD\b/i;
@@ -102,6 +115,15 @@ function syntaxCheckAll(files: BuildFile[]): ValidationFinding[] {
     }
   }
   return findings;
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** tsc/vite error lines → findings. */
@@ -247,6 +269,13 @@ export async function validateSoftware(
   if (hardFail()) return finish(checks, findings, commands, startedAt);
 
   // ── Tier 2: real build ────────────────────────────────────────────────────
+  // Two independent trees. They are prepared and gated CONCURRENTLY, and in
+  // the common case neither touches the network: the scaffold's dependencies
+  // are fixed boilerplate, so node_modules is copied from the warm store
+  // keyed by the package.json hash (baked into the image at build time — see
+  // pkgCache.ts). A real `pnpm install` only runs when the generated manifest
+  // deviates from the template, and only after the registry was proven
+  // reachable — probed at most once per build, never once per repair attempt.
   const terminalEnabled = options.terminal ?? env.AGENTIC_TERMINAL_VALIDATION !== '0';
   if (!terminalEnabled) {
     checks.push({ name: 'full-build', ok: false, detail: 'Skipped: terminal validation disabled (AGENTIC_TERMINAL_VALIDATION=0)' });
@@ -256,68 +285,99 @@ export async function validateSoftware(
   const treeDir = softwareTreeDir(options.workDir);
   await materialise(treeDir, files);
 
-  const network = await runCommand(['npm', 'ping', '--registry=https://registry.npmjs.org'], { timeoutMs: 25_000 });
-  commands.push(network);
-  if (network.exitCode !== 0) {
-    checks.push({ name: 'full-build', ok: false, detail: 'Skipped: npm registry unreachable — Tier-1 checks are authoritative' });
+  const pkgList: Pkg[] = ['backend', 'frontend'];
+  const manifestOf = (pkg: Pkg): string => byPath.get(`${pkg}/package.json`) ?? '';
+  const statuses = await Promise.all(
+    pkgList.map(async (pkg) => ({ pkg, status: await warmStatus(pkg, manifestOf(pkg)) })),
+  );
+  const networkPkgs = statuses.filter((s) => s.status === 'network').map((s) => s.pkg);
+  if (networkPkgs.length > 0 && !(await registryReachable())) {
+    const warmPkgs = statuses.filter((s) => s.status !== 'network').map((s) => s.pkg);
+    checks.push({
+      name: 'full-build',
+      ok: false,
+      detail: `Skipped: package registry unreachable (${networkPkgs.join(', ')} would need a real install${
+        warmPkgs.length ? `; ${warmPkgs.join(', ')} could have run warm` : ''
+      }) — Tier-1 checks are authoritative`,
+    });
     return finish(checks, findings, commands, startedAt);
   }
 
-  for (const pkg of ['backend', 'frontend'] as const) {
-    const install = await runCommand(['npm', 'install', '--no-audit', '--no-fund', '--loglevel=error'], {
-      cwd: path.join(treeDir, pkg),
+  const pkgBase = await pkgManagerBase();
+
+  const buildTree = async (pkg: Pkg): Promise<void> => {
+    const pkgDir = path.join(treeDir, pkg);
+
+    // 1. Dependencies — warm-store copy in the common case; a real install
+    //    only when this build's package.json deviates from the template.
+    const hydrate = await hydrateModules({
+      pkg,
+      pkgDir,
+      packageJson: manifestOf(pkg),
       timeoutMs: Math.max(env.AGENTIC_COMMAND_TIMEOUT_MS, 300_000),
     });
-    commands.push(install);
-    checks.push({
-      name: `npm install (${pkg})`,
-      ok: install.exitCode === 0,
-      detail: install.exitCode === 0 ? `Dependencies installed (${Math.round(install.durationMs / 1000)} s)` : `npm install failed in ${pkg}`,
-    });
-    if (install.exitCode !== 0) {
-      findings.push({ severity: 'error', code: 'NPM-INSTALL', message: `npm install failed in ${pkg}: ${install.output.split('\n').slice(-3).join(' | ')}` });
-      return finish(checks, findings, commands, startedAt);
+    if (hydrate.command) commands.push(hydrate.command);
+    checks.push({ name: `install (${pkg})`, ok: hydrate.ok, detail: hydrate.detail });
+    if (!hydrate.ok) {
+      findings.push({ severity: 'error', code: 'PNPM-INSTALL', message: `dependency install failed in ${pkg}.` });
+      return;
     }
-  }
 
-  // Backend typecheck.
-  const beTsc = await runCommand(['npx', 'tsc', '-p', 'tsconfig.json', '--noEmit'], {
-    cwd: path.join(treeDir, 'backend'),
-    timeoutMs: 180_000,
-  });
-  commands.push(beTsc);
-  const beErrors = beTsc.exitCode === 0 ? [] : parseTscOutput(beTsc.output, treeDir);
-  checks.push({
-    name: 'tsc --noEmit (backend)',
-    ok: beTsc.exitCode === 0,
-    detail: beTsc.exitCode === 0 ? 'API type-checks clean' : `${beErrors.length} type error(s) in API`,
-  });
-  findings.push(...beErrors);
-  if (beErrors.length === 0 && beTsc.exitCode !== 0) {
-    findings.push({ severity: 'error', code: 'TSC-BACKEND', message: beTsc.output.split('\n').slice(-4).join(' | ') });
-  }
+    if (pkg === 'backend') {
+      // 2a. Type-check + compile the API (dist also feeds the smoke gate).
+      const beTsc = await runCommand([...pkgBase, 'exec', 'tsc', '-p', 'tsconfig.json', '--noEmit'], {
+        cwd: pkgDir,
+        timeoutMs: 180_000,
+      });
+      commands.push(beTsc);
+      const beErrors = beTsc.exitCode === 0 ? [] : parseTscOutput(beTsc.output, treeDir);
+      checks.push({
+        name: 'tsc --noEmit (backend)',
+        ok: beTsc.exitCode === 0,
+        detail: beTsc.exitCode === 0 ? 'API type-checks clean' : `${beErrors.length} type error(s) in API`,
+      });
+      findings.push(...beErrors);
+      if (beErrors.length === 0 && beTsc.exitCode !== 0) {
+        findings.push({ severity: 'error', code: 'TSC-BACKEND', message: beTsc.output.split('\n').slice(-4).join(' | ') });
+      }
 
-  // Frontend production build (tsc -b + vite build). With a preview
-  // requested, the same build is emitted under the preview prefix.
-  const feBuildArgv = options.preview
-    ? ['npm', 'run', 'build', '--', `--base=${options.preview.base}`]
-    : ['npm', 'run', 'build'];
-  const feBuild = await runCommand(feBuildArgv, {
-    cwd: path.join(treeDir, 'frontend'),
-    timeoutMs: 300_000,
-    env: options.preview ? { ...process.env, VITE_API_BASE: options.preview.apiBase } : undefined,
-  });
-  commands.push(feBuild);
-  const feErrors = feBuild.exitCode === 0 ? [] : parseTscOutput(feBuild.output, treeDir);
-  checks.push({
-    name: 'vite build (frontend)',
-    ok: feBuild.exitCode === 0,
-    detail: feBuild.exitCode === 0 ? `Dashboard built to frontend/dist (${Math.round(feBuild.durationMs / 1000)} s)` : `${feErrors.length || '?'} build error(s) in dashboard`,
-  });
-  findings.push(...feErrors);
-  if (feErrors.length === 0 && feBuild.exitCode !== 0) {
-    findings.push({ severity: 'error', code: 'VITE-BUILD', message: feBuild.output.split('\n').slice(-4).join(' | ') });
-  }
+      const beBuild = await runCommand([...pkgBase, 'run', 'build'], { cwd: pkgDir, timeoutMs: 180_000 });
+      commands.push(beBuild);
+      const buildOk = beBuild.exitCode === 0;
+      checks.push({
+        name: 'build (backend)',
+        ok: buildOk,
+        detail: buildOk ? `API compiled to dist (${(beBuild.durationMs / 1000).toFixed(1)} s)` : 'backend build failed',
+      });
+      if (!buildOk) {
+        findings.push({ severity: 'error', code: 'TSC-BACKEND-BUILD', message: beBuild.output.split('\n').slice(-4).join(' | ') });
+      }
+      return;
+    }
+
+    // 2b. Frontend production build (tsc -b + vite build). With a preview
+    //     requested, the same build is emitted under the preview prefix.
+    const scriptArgs = options.preview ? [`--base=${options.preview.base}`] : [];
+    const feBuildArgv = [...pkgBase, 'run', 'build', ...(pkgBase[0] === 'npm' && scriptArgs.length ? ['--'] : []), ...scriptArgs];
+    const feBuild = await runCommand(feBuildArgv, {
+      cwd: pkgDir,
+      timeoutMs: 300_000,
+      env: options.preview ? { ...process.env, VITE_API_BASE: options.preview.apiBase } : undefined,
+    });
+    commands.push(feBuild);
+    const feErrors = feBuild.exitCode === 0 ? [] : parseTscOutput(feBuild.output, treeDir);
+    checks.push({
+      name: 'vite build (frontend)',
+      ok: feBuild.exitCode === 0,
+      detail: feBuild.exitCode === 0 ? `Dashboard built to frontend/dist (${Math.round(feBuild.durationMs / 1000)} s)` : `${feErrors.length || '?'} build error(s) in dashboard`,
+    });
+    findings.push(...feErrors);
+    if (feErrors.length === 0 && feBuild.exitCode !== 0) {
+      findings.push({ severity: 'error', code: 'VITE-BUILD', message: feBuild.output.split('\n').slice(-4).join(' | ') });
+    }
+  };
+
+  await Promise.all(pkgList.map(buildTree));
 
   // ── Tier 2b: runtime smoke — boot the generated app against a stub device ─
   // Compiling is not running. This gate starts a stub device server, boots
@@ -440,16 +500,12 @@ async function runtimeSmokeTest(treeDir: string, metrics: DeviceMetricSpec[]): P
     return fail(`stub device did not start: ${stub.output.slice(-300)}`);
   }
 
-  // 2. Compile the generated backend (tsc → dist) — tsx would work on Linux
-  //    but node dist/server.js works everywhere the Wireup API itself runs.
-  const build = await runCommand(['npm', 'run', 'build'], {
-    cwd: backendDir,
-    timeoutMs: 180_000,
-  });
-  commands.push(build);
-  if (build.exitCode !== 0) {
+  // 2. Run the dist the concurrent build phase already produced — compiling
+  //    the API overlapped with the vite build; here the generated app only
+  //    has to boot and answer.
+  if (!(await pathExists(path.join(backendDir, 'dist', 'server.js')))) {
     await stub.stop();
-    return fail(`generated backend failed to compile at runtime: ${build.output.slice(-300)}`);
+    return fail('generated backend dist/server.js is missing — the build phase did not produce it');
   }
 
   // 3. Boot it against the stub.

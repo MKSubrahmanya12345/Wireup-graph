@@ -40,7 +40,7 @@ primary_region = "iad"
     path = "/api/healthz"
 
 [[vm]]
-  # Builds run g++/npm/tsc/vite — give the machine headroom.
+  # Builds run g++/pnpm/tsc/vite — give the machine headroom.
   cpu_kind = "shared"
   cpus = 2
   memory_mb = 2048

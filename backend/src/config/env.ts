@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import os from 'node:os';
+import path from 'node:path';
 import { z } from 'zod';
 
 /** Blank env values are treated as "not set" rather than failing validation. */
@@ -92,8 +94,32 @@ const envSchema = z.object({
   // (generated wokwi.toml + diagram.json). Requires wokwi-cli AND
   // WOKWI_CLI_TOKEN (free at https://wokwi.com/dashboard/ci).
   AGENTIC_WOKWI: z.string().default('1'),
-  // The Wokwi CI token (read from the environment, not the .env defaults).
+  // Wokwi CI token (read from the environment, not the .env defaults).
   WOKWI_CLI_TOKEN: emptyToUndefined,
+
+  // ── Website-stage toolchain speed ─────────────────────────────────────────
+  // Package manager for the generated website's terminal gate. pnpm is the
+  // default: its content-addressable store + symlinked node_modules is what
+  // makes the warm-tree path cheap (same model as the firmware toolchain
+  // cache — minutes cold, seconds warm). npm remains selectable for
+  // environments that cannot have pnpm on PATH.
+  AGENTIC_PKG_MANAGER: z.enum(['pnpm', 'npm']).default('pnpm'),
+  // Warm node_modules store, keyed by the sha256 of each package.json. The
+  // Docker image bakes it at build time (backend/scripts/warmPkgCache.mjs);
+  // anywhere else the first build warms it once and every build after that
+  // hydrates dependencies without touching the network.
+  AGENTIC_PKG_CACHE: z
+    .string()
+    .min(1)
+    .default(path.join(os.tmpdir(), 'wireup-pkg-cache')),
+  // '1' (default): hydrate generated trees from the warm store and only run a
+  // real install when the generated package.json deviates from the scaffold
+  // template. '0': force a real install every build (debugging only).
+  AGENTIC_WARM_TREE: z.string().default('1'),
+  // Registry the fallback install resolves against — and what the
+  // reachability probe pings (probed at most once per build, not once per
+  // repair attempt).
+  AGENTIC_REGISTRY_URL: z.string().default('https://registry.npmjs.org'),
 
   // ── Payments ─────────────────────────────────────────────────────────────
   // 'auto' (default) resolves to razorpay when a key is present, mock when it

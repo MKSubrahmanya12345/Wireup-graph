@@ -51,16 +51,17 @@ vars, and per-component verification: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.m
 ## Quick start
 
 ```bash
-# terminal 1 — API (http://localhost:5000)
+# terminal 1 — API (prefers http://localhost:5000; a busy port never stops it —
+# the boot log prints the port it actually bound)
 cd backend
 cp .env.example .env     # optional; defaults work out of the box
-npm install
-npm run dev
+pnpm install
+pnpm dev
 
-# terminal 2 — app (http://localhost:5173)
+# terminal 2 — app (http://localhost:5173; walks to the next free port if taken)
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open http://localhost:5173 — create an account or hit **"Skip — try as guest"**
@@ -72,9 +73,9 @@ Open http://localhost:5173 — create an account or hit **"Skip — try as guest
 
 1. **Page 01** — Wireup detects `DHT22 + ESP32`, asks two questions it can't decide (Wi-Fi setup, sample interval) and nothing else.
 2. **Page 02** — the graph: ESP32 DevKit, DHT22 on GPIO4 (10 kΩ pull-up noted), USB 5 V rail, engineering checks ✔ verified.
-3. **Page 03** — run the agentic build. Watch the terminal: RAG retrieval → firmware synthesis → `g++ -fsyntax-only` ✔ → MERN scaffold merge → `npm install` → `tsc --noEmit` ✔ → `vite build` ✔ → contract checks ✔.
+3. **Page 03** — run the agentic build. The firmware LLM draft starts in the background immediately after plan resolution; the website then builds with dependencies hydrated from the warm store (no network in the common case) → `pnpm exec tsc --noEmit` ✔ → `pnpm run build` ✔ → contract checks ✔, with the API and dashboard trees built concurrently.
 4. Download **dht22-monitor-firmware.zip** and **dht22-monitor-software.zip**.
-5. On your bench: edit `firmware/config.h` with your Wi-Fi, flash, open **`http://<device-ip>/`** — the device serves its own dashboard (live tiles + temperature chart + Wi-Fi settings), no laptop app required. The software zip adds long-term history: `npm install && npm run dev` on any computer/phone on the same Wi-Fi (`CORS_ORIGIN=*`, mDNS `dht22-monitor.local` supported). No cloud anywhere. (Can't join your Wi-Fi? The board starts its own hotspot, `http://192.168.4.1`.)
+5. On your bench: edit `firmware/config.h` with your Wi-Fi, flash, open **`http://<device-ip>/`** — the device serves its own dashboard (live tiles + temperature chart + Wi-Fi settings), no laptop app required. The software zip adds long-term history: `pnpm install && pnpm dev` on any computer/phone on the same Wi-Fi (`CORS_ORIGIN=*`, mDNS `dht22-monitor.local` supported). No cloud anywhere. (Can't join your Wi-Fi? The board starts its own hotspot, `http://192.168.4.1`.)
 
 ### The firmware is a full product, not just JSON
 
@@ -176,8 +177,10 @@ The build ends with two *independent* verdicts:
 
 - **Hardware ready ✔/✘** — from the `HardwareSimProvider` (mock virtual bench
   or Velxio). A simulator that *errors* is reported as an error, never a skip.
-- **Software ready ✔/✘** — `npm install` → `tsc --noEmit` → `vite build` →
-  runtime boot smoke test → firmware⇄software contract.
+- **Software ready ✔/✘** — warm `node_modules` hydration (pnpm; real install
+  only when the generated `package.json` deviates from the scaffold) →
+  concurrent `tsc --noEmit`/build for backend and frontend → runtime boot
+  smoke test → firmware⇄software contract.
 
 **Both must pass before the zips unlock.** Force the failure path with
 `SIM_FORCE_FAIL=1` (circuit fails) or `SIM_FORCE_ERROR=1` (provider errors).
