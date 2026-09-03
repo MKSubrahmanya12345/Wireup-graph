@@ -25,7 +25,7 @@ import { repairGraph } from '../data/repairGraph.js';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-// ??$$$ SpecGraph engine imports
+// ??$$$ SpecGraph engine imports — AI-powered decomposition, no deterministic fallback.
 import {
   decomposePromptToSpecGraph,
   applyUserAnswersToSpecGraph,
@@ -270,32 +270,48 @@ export const repairArchitecture = asyncHandler(async (req: Request, res: Respons
   });
 });
 
-// ??$$$ POST /api/architecture/spec-graph — Generate hardware project spec graph from prompt
+// ??$$$ POST /api/architecture/spec-graph — AI decomposition of a prompt into a spec graph.
 export const generateSpecGraph = asyncHandler(async (req: Request, res: Response) => {
-  const { prompt, answers } = req.body ?? {};
-  if (!prompt || typeof prompt !== 'string') {
+  const { prompt, answers } = (req.body ?? {}) as { prompt?: unknown; answers?: unknown };
+  if (typeof prompt !== 'string' || !prompt.trim()) {
     throw ApiError.badRequest('A prompt string is required.');
   }
 
-  const specGraph = decomposePromptToSpecGraph({ prompt, answers: answers ?? {} });
+  const provider = (req.body.provider as LlmProvider | undefined) ?? env.LLM_PROVIDER;
+  const model = req.body.model as string | undefined;
+
+  // HARD RULE: the decomposition is AI-powered. No LLM configured = loud
+  // upstream failure, never a silent deterministic fallback.
+  if (!isLlmAvailable(provider)) {
+    throw ApiError.upstream(
+      'Spec-graph decomposition requires an LLM (AWS Bedrock). Configure AWS credentials to continue.',
+    );
+  }
+
+  const specGraph = await decomposePromptToSpecGraph({
+    prompt: prompt.trim(),
+    answers: (answers ?? {}) as Record<string, string>,
+    provider,
+    model,
+  });
+
   const archGraph = specGraphToArchitectureGraph(specGraph);
   const isReady = isSpecGraphReadyForHandoff(specGraph);
 
-  res.status(200).json({
-    specGraph,
-    archGraph,
-    isReady,
-  });
+  res.status(200).json({ specGraph, archGraph, isReady });
 });
 
-// ??$$$ POST /api/architecture/spec-graph/answer — Apply user answers to spec graph with dirty propagation & re-validation
+// ??$$$ POST /api/architecture/spec-graph/answer — apply user answers, dirty propagation + re-validation.
 export const answerSpecGraph = asyncHandler(async (req: Request, res: Response) => {
-  const { specGraph, answers } = req.body ?? {};
-  if (!specGraph || !answers) {
+  const { specGraph, answers } = (req.body ?? {}) as { specGraph?: unknown; answers?: unknown };
+  if (!specGraph || !answers || typeof answers !== 'object') {
     throw ApiError.badRequest('Both specGraph project object and answers map are required.');
   }
 
-  const updatedSpecGraph = applyUserAnswersToSpecGraph(specGraph as SpecGraphProject, answers);
+  const updatedSpecGraph = applyUserAnswersToSpecGraph(
+    specGraph as SpecGraphProject,
+    answers as Record<string, string>,
+  );
   const archGraph = specGraphToArchitectureGraph(updatedSpecGraph);
   const isReady = isSpecGraphReadyForHandoff(updatedSpecGraph);
 

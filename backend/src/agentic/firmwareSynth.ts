@@ -13,7 +13,6 @@ import type { DeviceBuildPlan, ResolvedModule } from './types.js';
 import { generateWokwiConfig } from './wokwiConfig.js';
 import { generateUniversalDiagram } from './universalDiagram.js';
 import { generateVelxioProject } from './velxioProject.js';
-import { decomposePromptToSpecGraph } from './specGraph.js';
 
 // ── Per-module code generation ──────────────────────────────────────────────
 
@@ -1018,7 +1017,6 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
   const sketch = { name: `${plan.slug}.ino`, content: sketchSource(plan, codes) };
   const configHeader = { name: 'config.h', content: configSource(plan, codes) };
   const velxio = generateVelxioProject(plan, sketch, [configHeader]);
-  const specGraph = decomposePromptToSpecGraph({ prompt: plan.projectName });
 
   const files: BuildFile[] = [
     { path: 'platformio.ini', content: platformioIni(plan) },
@@ -1027,7 +1025,6 @@ export function synthesizeFirmware(plan: DeviceBuildPlan): FirmwareResult {
     { path: 'wokwi.toml', content: wokwi.wokwiToml },
     { path: 'diagram.json', content: JSON.stringify(universal, null, 2) },
     { path: 'hardware/universal-diagram.json', content: JSON.stringify(universal, null, 2) },
-    { path: `hardware/${plan.slug}.project.json`, content: JSON.stringify(specGraph, null, 2) },
     { path: `simulation/${plan.slug}.vlx`, content: velxio.json },
     { path: 'README.md', content: readme(plan) },
   ];

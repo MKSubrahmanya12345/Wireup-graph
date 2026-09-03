@@ -11,6 +11,7 @@ import type {
   RequirementsSpec,
   Stage,
 } from '../types/session';
+import type { SpecGraphProject } from '../types/specGraph';
 import type { LlmOptions } from '../types/llm';
 
 interface SessionState {
@@ -26,8 +27,8 @@ interface SessionState {
   feedback: string[];
   revision: number;
   // ??$$$ Spec graph state persistence
-  specGraph: any | null;
-  setSpecGraph: (specGraph: any) => void;
+  specGraph: SpecGraphProject | null;
+  setSpecGraph: (specGraph: SpecGraphProject | null) => void;
   /** Issue ids the human has consciously accepted. */
   acceptedRisks: string[];
 
@@ -85,7 +86,7 @@ const persistedSession = loadPersisted<{
   assumptions: string[];
   revision: number;
   // ??$$$ Persisted spec graph
-  specGraph?: any | null;
+  specGraph?: SpecGraphProject | null;
 }>(SESSION_PERSIST_KEY);
 
 export const useDesignSession = create<SessionState>()((set, get) => ({

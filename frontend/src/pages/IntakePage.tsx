@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import IntakeScene from '../three/IntakeScene';
-import { evaluateGraphValidity } from '../lib/graphValidity';
 import { useDesignSession } from '../store/useDesignSession';
-import { useGraphStore } from '../store/useGraphStore';
-import type { Question } from '../types/session';
 
 const SUGGESTIONS = [
   'a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer',
   'esp32 with a soil moisture sensor and a relay to water my plant when dry — dashboard on my pc',
   'esp32 + bme280 weather station logging to a website i can open at home',
   'esp32 cam-free security: pir motion sensor + buzzer + led, web dashboard on my laptop',
+  'arduino uno + led + external website status + button',
 ];
 
 const BEDROCK_MODELS = [
@@ -23,89 +20,79 @@ const BEDROCK_MODELS = [
 
 /**
  * Page 01 — Prompt & questions.
- * Tell Wireup what you own and what you want; the engine decides what it can
- * and asks only what's left. Reached from the homepage prompt box (which
- * pre-fills the brief and auto-starts) or by opening a saved project.
+ *
+ * The prompt composer is the whole page: the user writes an engineering brief,
+ * picks an LLM, and hands off to the AI-powered Spec Graph (page 01b).
+ * Everything the old page did after "Analyze" — questions, engine read-out,
+ * the 3D bench, the validity gate — now lives on the Spec Graph page.
  */
 export default function IntakePage() {
   const navigate = useNavigate();
 
-  const stage = useDesignSession((state) => state.stage);
   const brief = useDesignSession((state) => state.brief);
   const setBrief = useDesignSession((state) => state.setBrief);
-  const questions = useDesignSession((state) => state.questions);
-  const answers = useDesignSession((state) => state.answers);
-  const setAnswer = useDesignSession((state) => state.setAnswer);
-  const requirements = useDesignSession((state) => state.requirements);
-  const assumptions = useDesignSession((state) => state.assumptions);
-  const error = useDesignSession((state) => state.error);
-  const startInterpretation = useDesignSession((state) => state.startInterpretation);
-  const submitAnswers = useDesignSession((state) => state.submitAnswers);
-  const skipQuestions = useDesignSession((state) => state.skipQuestions);
-  const revision = useDesignSession((state) => state.revision);
   const setLlmOptions = useDesignSession((state) => state.setLlmOptions);
-  const autoStart = useDesignSession((state) => state.autoStart);
   const clearAutoStart = useDesignSession((state) => state.clearAutoStart);
-  const nodeCount = useGraphStore((state) => state.graph.nodes.length);
-  const graph = useGraphStore((state) => state.graph);
-  const issues = useGraphStore((state) => state.issues);
-  const blocking = useGraphStore((state) => state.blocking);
-  const verification = useGraphStore((state) => state.verification);
 
-  const busy = stage === 'interpreting' || stage === 'planning';
-
-  // Homepage prompt box: the brief arrived pre-filled — kick off pass 0
-  // immediately (once; the flag is cleared so a remount never re-fires).
-  useEffect(() => {
-    if (autoStart && brief.trim() && stage === 'idle') {
-      clearAutoStart();
-      void startInterpretation();
-    }
-  }, [autoStart, brief, stage, clearAutoStart, startInterpretation]);
-
-  // The SAME validity check page 02 gates its build button with (M3 #22).
-  const validity = evaluateGraphValidity({ graph, issues, blocking, verification });
-
-  // LLM model selection (AWS Bedrock is the only provider)
   const [model, setModel] = useState<string>(BEDROCK_MODELS[0]);
 
-  // The graph used to auto-navigate the moment it existed. It no longer does:
-  // page 01 now owns an explicit "Complete" gate (M3) that only enables once
-  // the graph passes the very same validity check page 02 applies.
+  // The homepage prompt box pre-fills the brief and sets an auto-start flag for
+  // the OLD flow. Here the composer is the flow — clear the stale flag once.
+  useEffect(() => {
+    clearAutoStart();
+  }, [clearAutoStart]);
+
+  const analyze = () => {
+    if (!brief.trim()) return;
+    setLlmOptions({ provider: 'bedrock', model });
+    navigate('/spec-graph');
+  };
 
   return (
     <div className="page intake-page">
       <section className="intake-hero">
-        <div className="eyebrow">Wireup pipeline · 01 — prompt & questions</div>
+        <div className="eyebrow">Wireup pipeline · 01 — prompt &amp; questions</div>
         <h1>
           What are we <span className="accent-text">wiring up</span>?
         </h1>
         <p className="muted">
-          Name the parts on your bench and what you want them to do. Wireup checks its
-          device knowledge base, asks only what it genuinely can't decide, then takes
-          you to the graph.
+          Name the parts on your bench and what you want them to do. Wireup reads your brief,
+          decomposes it into a hardware spec graph, and asks only what it genuinely can’t decide.
         </p>
       </section>
 
-      <section className="composer-card">
+      <section className="composer-card intake-composer">
         <textarea
           className="brief-input"
-          rows={5}
+          rows={7}
           value={brief}
           onChange={(event) => setBrief(event.target.value)}
           placeholder="e.g. a dht22 sensor i have and esp32, then i want codes and a website to access this on my local computer"
-          disabled={busy}
+          autoFocus
         />
-        
-        {/* LLM Model Selector (AWS Bedrock) */}
-        <div className="llm-selector-row">
-          <div className="llm-field">
-            <label htmlFor="model">Model (AWS Bedrock)</label>
+
+        <div className="composer-suggestions" role="list" aria-label="Example briefs">
+          {SUGGESTIONS.map((suggestion, i) => (
+            <button
+              key={suggestion}
+              type="button"
+              className="suggestion-chip"
+              title={suggestion}
+              onClick={() => setBrief(suggestion)}
+            >
+              {i === 0 ? '⭐ ' : ''}
+              {suggestion}
+            </button>
+          ))}
+        </div>
+
+        <div className="composer-foot">
+          <label className="llm-selector compact" htmlFor="model">
+            <span className="llm-selector-label">Model · AWS Bedrock</span>
             <select
               id="model"
               value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={busy}
+              onChange={(event) => setModel(event.target.value)}
             >
               {BEDROCK_MODELS.map((m) => (
                 <option key={m} value={m}>
@@ -113,232 +100,23 @@ export default function IntakePage() {
                 </option>
               ))}
             </select>
-          </div>
-        </div>
-        
-        <div className="composer-foot">
-          <div className="suggestion-row">
-            {SUGGESTIONS.map((suggestion, i) => (
-              <button
-                key={suggestion}
-                type="button"
-                className="suggestion-chip"
-                title={suggestion}
-                onClick={() => setBrief(suggestion)}
-                disabled={busy}
-              >
-                {i === 0 ? '⭐ ' : ''}
-                {suggestion.length > 64 ? `${suggestion.slice(0, 64)}…` : suggestion}
-              </button>
-            ))}
-          </div>
+          </label>
+
           <button
             type="button"
             className="primary-button"
-            disabled={!brief.trim() || busy}
-            // Old onClick commented out per Rule 2:
-            // onClick={() => { setLlmOptions({ provider: 'bedrock', model }); void startInterpretation({ provider: 'bedrock', model }); }}
-            // ??$$$ Navigates to the live Hardware Spec Graph page with AI Doubt Modal Loop
-            onClick={() => {
-              setLlmOptions({ provider: 'bedrock', model });
-              navigate('/spec-graph');
-            }}
+            disabled={!brief.trim()}
+            onClick={analyze}
           >
-            {stage === 'interpreting'
-              ? 'Reading the brief…'
-              : stage === 'planning'
-                ? 'Building the plan…'
-                : revision > 0
-                  ? 'Re-analyze →'
-                  : 'Analyze my build →'}
+            Analyze my build →
           </button>
         </div>
-        {error && <div className="inline-error">{error}</div>}
       </section>
 
-      {stage === 'questioning' && questions.length > 0 && (
-        <section className="questions-card">
-          <div className="card-head">
-            <div>
-              <div className="eyebrow">agent questions</div>
-              <h2>Only what it can't decide</h2>
-              <p className="muted">
-                Everything else was decided from the knowledge base. Defaults are pre-filled —
-                change what matters, skip the rest.
-              </p>
-            </div>
-          </div>
-
-          <div className="question-list">
-            {questions.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                value={answers[question.id] ?? question.default}
-                onChange={(value) => setAnswer(question.id, value)}
-              />
-            ))}
-          </div>
-
-          <div className="question-actions">
-            <button type="button" className="primary-button" onClick={() => void submitAnswers()}>
-              Generate with my answers →
-            </button>
-            <button type="button" className="ghost-button" onClick={() => void skipQuestions()}>
-              Skip — use the defaults
-            </button>
-          </div>
-        </section>
-      )}
-
-      {requirements && (
-        <section className="rag-card">
-          <div className="eyebrow">engine read-out</div>
-          <div className="rag-grid">
-            <div className="rag-fact">
-              <span>Project</span>
-              <strong>{requirements.project}</strong>
-            </div>
-            <div className="rag-fact">
-              <span>Domain</span>
-              <strong>{requirements.domain}</strong>
-            </div>
-            <div className="rag-fact">
-              <span>Board</span>
-              <strong>{String(requirements.constraints.board ?? 'esp32-devkit')}</strong>
-            </div>
-            <div className="rag-fact">
-              <span>Web dashboard</span>
-              <strong>{requirements.constraints.web ? 'yes' : 'no'}</strong>
-            </div>
-          </div>
-          <p className="intent-line">{requirements.intent}</p>
-          {assumptions.length > 0 && (
-            <ul className="assumption-list">
-              {assumptions.map((assumption) => (
-                <li key={assumption}>{assumption}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-
-      {/* ── 3D bench + the Complete gate (M3) ──────────────────────────────── */}
-      <IntakeScene brief={brief} answers={answers} />
-
-      <div className="complete-bar">
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!validity.valid}
-          title={validity.valid ? 'Graph is valid — continue to page 02' : validity.reason}
-          onClick={() => {
-            if (!validity.valid) return;
-            navigate('/graph');
-          }}
-        >
-          Complete →
-        </button>
-        <span className={`verdict-pill ${validity.valid ? 'good' : nodeCount > 0 ? 'bad' : 'neutral'}`}>
-          {validity.valid ? '✔ graph valid' : '⛔ graph invalid'}
-        </span>
-        <span className="reason">
-          {validity.reason}
-          {nodeCount === 0 && ' Run “Analyze my build” to resolve the graph.'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function QuestionCard({
-  question,
-  value,
-  onChange,
-}: {
-  question: Question;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="question-card">
-      <div className="question-prompt">
-        {question.prompt}
-        {question.unit && <span className="unit-badge">{question.unit}</span>}
-      </div>
-      {(question.why || question.impact) && (
-        <p className="question-meta">
-          {[question.why, question.impact].filter(Boolean).join(' — ')}
-        </p>
-      )}
-
-      {question.kind === 'single' && (
-        <div className="option-grid">
-          {question.options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`option-card${value === option.value ? ' selected' : ''}`}
-              onClick={() => onChange(option.value)}
-            >
-              <strong>{option.label}</strong>
-              {option.hint && <span>{option.hint}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {question.kind === 'number' && (
-        <label className="field number-field">
-          <input
-            type="number"
-            value={value}
-            min={question.min}
-            max={question.max}
-            onChange={(event) => onChange(event.target.value)}
-          />
-          {question.unit && <span className="unit-badge">{question.unit}</span>}
-        </label>
-      )}
-
-      {question.kind === 'boolean' && (
-        <div className="option-grid two">
-          {['yes', 'no'].map((option) => (
-            <button
-              key={option}
-              type="button"
-              className={`option-card${value === option ? ' selected' : ''}`}
-              onClick={() => onChange(option)}
-            >
-              <strong>{option === 'yes' ? 'Yes' : 'No'}</strong>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {question.kind === 'multi' && (
-        <div className="option-grid">
-          {question.options.map((option) => {
-            const selected = value.split(',').map((v) => v.trim()).includes(option.value);
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`option-card${selected ? ' selected' : ''}`}
-                onClick={() => {
-                  const current = new Set(value.split(',').map((v) => v.trim()).filter(Boolean));
-                  if (selected) current.delete(option.value);
-                  else current.add(option.value);
-                  onChange([...current].join(', '));
-                }}
-              >
-                <strong>{option.label}</strong>
-                {option.hint && <span>{option.hint}</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <p className="tiny muted intake-note">
+        Analysis runs the AI decomposition engine — your brief becomes a dependency graph of
+        hardware, power, software and connectivity nodes before any code exists.
+      </p>
     </div>
   );
 }
