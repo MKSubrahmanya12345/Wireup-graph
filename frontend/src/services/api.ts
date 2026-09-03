@@ -21,12 +21,14 @@ import type {
   BuildFile,
   BuildJobSnapshot,
   CheckoutOutcome,
+  ConnectionHealth,
   PaymentRecord,
   Plan,
   Subscription,
   UsageEvent,
   WebhookLogEntry,
 } from '../types/build';
+import { AgenticStreamConnection, createConnectionHealthMonitor } from './connectionHealth';
 
 /** Vite dev-server proxies /api to the backend, so this stays relative. */
 const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
@@ -423,4 +425,154 @@ export async function streamAgenticBuild(
 
   await checkResponse(response, 'Build failed');
   await readNdjson(response, onEvent);
+}
+
+// ── Enhanced streaming with connection health monitoring ──────────────────────
+
+/**
+ * Create a connection health monitor instance
+ */
+export const connectionHealthMonitor = createConnectionHealthMonitor();
+
+/**
+ * Enhanced streaming with automatic reconnection and health monitoring
+ */
+export interface EnhancedStreamingOptions {
+  /** Maximum number of reconnection attempts */
+  maxReconnectAttempts?: number;
+  /** Delay between reconnection attempts (ms) */
+  reconnectDelayMs?: number;
+  /** Use exponential backoff for reconnection delays */
+  exponentialBackoff?: boolean;
+  /** Heartbeat timeout (ms) */
+  heartbeatTimeoutMs?: number;
+  /** Callbacks for connection events */
+  onConnectionHealth?: (health: ConnectionHealth) => void;
+  onReconnectAttempt?: (attempt: number, maxAttempts: number) => void;
+  onReconnectSuccess?: () => void;
+  onReconnectFailed?: () => void;
+}
+
+/**
+ * Stream agentic job with enhanced reliability and health monitoring
+ */
+export async function streamAgenticJobEnhanced(
+  jobId: string,
+  onEvent: (event: AgenticEvent) => void,
+  options: EnhancedStreamingOptions = {},
+): Promise<AgenticStreamConnection> {
+  const connection = new AgenticStreamConnection(
+    jobId,
+    0, // Start from sequence 0
+    streamAgenticJob,
+    {
+      maxReconnectAttempts: options.maxReconnectAttempts ?? 5,
+      reconnectDelayMs: options.reconnectDelayMs ?? 1000,
+      exponentialBackoff: options.exponentialBackoff ?? true,
+      heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 15000,
+      heartbeatIntervalMs: 5000,
+    },
+    {
+      onEvent,
+      onHealthChange: (health) => {
+        connectionHealthMonitor.notifyHealthChange(health);
+        options.onConnectionHealth?.(health);
+      },
+      onReconnectAttempt: (attempt, maxAttempts) => {
+        connectionHealthMonitor.notifyReconnectionStatus({
+          reconnecting: true,
+          attempts: attempt,
+          maxAttempts,
+        });
+        options.onReconnectAttempt?.(attempt, maxAttempts);
+      },
+      onReconnectSuccess: () => {
+        connectionHealthMonitor.notifyReconnectionStatus({
+          reconnecting: false,
+          attempts: 0,
+          maxAttempts: 0,
+        });
+        options.onReconnectSuccess?.();
+      },
+      onReconnectFailed: () => {
+        connectionHealthMonitor.notifyReconnectionStatus({
+          reconnecting: false,
+          attempts: 0,
+          maxAttempts: 0,
+        });
+        options.onReconnectFailed?.();
+      },
+    },
+  );
+
+  connectionHealthMonitor.startMonitoring(connection);
+  
+  // Start streaming in background
+  connection.startStreaming().catch(error => {
+    console.error('Enhanced streaming failed:', error);
+  });
+
+  return connection;
+}
+
+/**
+ * Create an enhanced job attachment that survives network issues
+ */
+export async function attachToJobEnhanced(
+  jobId: string,
+  fromSeq: number,
+  onEvent: (event: AgenticEvent) => void,
+  options: EnhancedStreamingOptions = {},
+): Promise<AgenticStreamConnection> {
+  const connection = new AgenticStreamConnection(
+    jobId,
+    fromSeq,
+    streamAgenticJob,
+    {
+      maxReconnectAttempts: options.maxReconnectAttempts ?? 5,
+      reconnectDelayMs: options.reconnectDelayMs ?? 1000,
+      exponentialBackoff: options.exponentialBackoff ?? true,
+      heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 15000,
+      heartbeatIntervalMs: 5000,
+    },
+    {
+      onEvent,
+      onHealthChange: options.onConnectionHealth || (() => {}),
+      onReconnectAttempt: options.onReconnectAttempt || (() => {}),
+      onReconnectSuccess: options.onReconnectSuccess || (() => {}),
+      onReconnectFailed: options.onReconnectFailed || (() => {}),
+    },
+  );
+
+  connectionHealthMonitor.startMonitoring(connection);
+  
+  // Start streaming in background
+  connection.startStreaming().catch(error => {
+    console.error('Enhanced job attachment failed:', error);
+  });
+
+  return connection;
+}
+
+/**
+ * Get current connection health status
+ */
+export function getConnectionHealth(): ConnectionHealth | null {
+  return connectionHealthMonitor.getCurrentHealth();
+}
+
+/**
+ * Subscribe to connection health updates
+ */
+export function onConnectionHealthChange(callback: (health: ConnectionHealth) => void): () => void {
+  return connectionHealthMonitor.onHealthChange(callback);
+}
+
+/**
+ * Subscribe to reconnection status updates
+ */
+export function onReconnectionStatus(
+  callback: (status: { reconnecting: boolean; attempts: number; maxAttempts: number }) => void,
+): () => void {
+  return connectionHealthMonitor.onReconnectionStatus(callback);
 }

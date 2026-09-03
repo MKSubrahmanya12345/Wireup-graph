@@ -46,7 +46,7 @@ export async function getHistory(
     .sort({ createdAt: -1 })
     .limit(limit);
   const rows = await query.toArray();
-  return rows.map((row) => ({
+  return rows.map((row: any) => ({
     device: String(row.device ?? ''),
     metric: String(row.metric ?? ''),
     value: row.value,

@@ -27,6 +27,9 @@ import {
 import { createWorkDir } from './terminal.js';
 import { isSpecGraphReadyForHandoff, saveSpecGraphToDisk } from './specGraph.js';
 import { newPreviewId, previewApiBaseFor, previewBaseFor, publishPreview } from './preview.js';
+import { ProgressTracker } from './progressTracker.js';
+import { ErrorContextTracker } from './errorContext.js';
+import { healthMonitor } from './healthMonitor.js';
 import type {
   AgenticBuildResult,
   BuildEvent,
@@ -80,6 +83,16 @@ function now(): string {
 
 export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Promise<void> {
   const t0 = Date.now();
+  
+  // Initialize enhanced progress tracking and health monitoring
+  const progressTracker = new ProgressTracker(emit);
+  progressTracker.startHeartbeat();
+  healthMonitor.start(emit);
+  
+  // Generate unique job ID for health tracking
+  const jobId = Math.random().toString(36).substr(2, 9);
+  healthMonitor.recordBuildStart(jobId);
+  
   const { graph: graphParsed } = normaliseGraph(input.graph ?? {});
   const brief = input.brief.trim();
   const projectName = (input.projectName ?? graphParsed.project ?? '').trim() || 'Wireup Device';
@@ -173,14 +186,27 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     }
 
     // ── Stage 1: retrieval ──────────────────────────────────────────────────
+    const stageDefinitions = ProgressTracker.getStageDefinitions();
+    progressTracker.initStage('retrieve', stageDefinitions.retrieve.title, stageDefinitions.retrieve.substeps);
+    progressTracker.startStage('retrieve');
+    progressTracker.startSubstep('retrieve', 'parse-brief', `Parsing: "${brief.slice(0, 80)}${brief.length > 80 ? '...' : ''}"`);
+    
     emit({ type: 'stage', stage: 'retrieve', title: 'Retrieving device knowledge (RAG)' });
     say('retrieve', `pipeline ${PIPELINE_VERSION} · workdir ${work.root}`);
     say('retrieve', `brief: "${brief.slice(0, 140)}${brief.length > 140 ? '…' : ''}"`);
 
+    progressTracker.completeSubstep('retrieve', 'parse-brief');
+    progressTracker.startSubstep('retrieve', 'knowledge-lookup', 'Looking up device knowledge');
+    
     const resolved = resolveBuildPlan(brief, projectName, graphParsed, input.sampleIntervalMs);
     const { plan } = resolved;
 
+    progressTracker.updateSubstep('retrieve', 'knowledge-lookup', 50, 'Resolving build plan');
+    progressTracker.completeSubstep('retrieve', 'knowledge-lookup');
+    progressTracker.startSubstep('retrieve', 'resolve-plan', 'Resolving hardware modules');
+
     if (plan.modules.length === 0) {
+      progressTracker.failSubstep('retrieve', 'resolve-plan', 'No supported hardware modules found');
       emit({
         type: 'error',
         message:
@@ -189,6 +215,9 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       });
       return;
     }
+
+    progressTracker.completeSubstep('retrieve', 'resolve-plan');
+    progressTracker.startSubstep('retrieve', 'validate-modules', `Found ${plan.modules.length} modules`);
 
     for (const module of plan.modules) {
       say('retrieve', `⟶ ${module.name} (${module.partNumber}) · bus ${module.bus} · pins ${JSON.stringify(module.pins)}`, 'ok');
@@ -201,6 +230,14 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     // ??$$$ Log Spec Graph & Session Document rehydration
     say('retrieve', '✔ [Spec Graph] Hydrated hardware specification & 2D/3D architecture graph from live document session', 'ok');
     for (const warning of resolved.warnings) say('retrieve', warning, 'warn');
+
+    progressTracker.completeSubstep('retrieve', 'validate-modules');
+    progressTracker.completeStage('retrieve');
+    
+    // Record stage performance
+    const retrieveTime = Date.now() - t0;
+    healthMonitor.recordStagePerformance('retrieve', retrieveTime, true);
+    say('retrieve', `✅ Stage completed in ${Math.round(retrieveTime / 1000)}s`, 'ok');
 
     // ── The contract both halves are built against ──────────────────────────
     // Website-first means the dashboard exists BEFORE the firmware does, so the
@@ -277,9 +314,16 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     }
 
     // ── Stage 2: website (generate → build → repair → PUBLISH) ──────────────
+    progressTracker.initStage('software', stageDefinitions.software.title, stageDefinitions.software.substeps);
+    progressTracker.startStage('software');
+    progressTracker.startSubstep('software', 'synthesize', 'Synthesizing MERN stack');
+    
     emit({ type: 'stage', stage: 'software', title: 'Assembling MERN dashboard software' });
 
     let software: SoftwareSynthResult = await synthesizeSoftware(plan);
+    progressTracker.completeSubstep('software', 'synthesize');
+    progressTracker.startSubstep('software', 'merge-files', `Merging ${software.files.length} files`);
+    
     say('software', `merged ${software.files.length} files (scaffold + device wiring)`);
     say('software', `metrics: ${plan.modules.flatMap((m) => m.metrics.map((x) => x.id)).join(', ') || 'none'}; controls: ${plan.modules.flatMap((m) => m.controls.map((x) => x.id)).join(', ') || 'none'}`);
 
@@ -288,13 +332,37 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     let firmwareJsonFields = [...expectedJsonFields];
     say('software', `dashboard wired against the knowledge-base contract: ${firmwareJsonFields.join(', ')}`);
 
+    progressTracker.completeSubstep('software', 'merge-files');
+    progressTracker.startSubstep('software', 'wire-endpoints', 'Wiring device endpoints');
+    
     let softwareReport: ValidationReport | null = null;
     let softwareIterations = 0;
     let previousSoftwareFingerprint = '';
 
+    progressTracker.completeSubstep('software', 'wire-endpoints');
+    progressTracker.startSubstep('software', 'generate-types', 'Generating TypeScript types');
+    
+    // Initialize software validation stage
+    progressTracker.initStage('software-validate', stageDefinitions['software-validate'].title, stageDefinitions['software-validate'].substeps);
+    
+    const softwareStageStart = Date.now();
+
     for (let attempt = 1; attempt <= env.AGENTIC_MAX_REPAIR_LOOPS; attempt++) {
       softwareIterations = attempt;
+      progressTracker.startStage('software-validate');
+      progressTracker.startSubstep('software-validate', 'install-deps', `Installing dependencies (attempt ${attempt})`);
+      
       emit({ type: 'stage', stage: 'software-validate', title: `Building MERN project (attempt ${attempt})` });
+      
+      // Add detailed logging for what's happening
+      say('software-validate', `Starting validation attempt ${attempt}/${env.AGENTIC_MAX_REPAIR_LOOPS}`, 'info');
+      say('software-validate', `Working directory: ${path.join(work.root, 'software')}`, 'info');
+      say('software-validate', `Files to validate: ${software.files.length}`, 'info');
+      
+      progressTracker.updateSubstep('software-validate', 'install-deps', 25, 'Setting up build environment');
+      
+      const validationStartTime = Date.now();
+      
       softwareReport = await validateSoftware(software.files, {
         workDir: path.join(work.root, 'software'),
         devicePort: 80,
@@ -302,17 +370,41 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
         metrics: plan.modules.flatMap((m) => m.metrics),
         preview: { base: previewBaseFor(previewId), apiBase: previewApiBaseFor(previewId) },
       });
+      
+      const validationDuration = Date.now() - validationStartTime;
+      say('software-validate', `Validation completed in ${validationDuration}ms`, 'info');
+      
+      // Emit performance warning if validation is taking too long
+      if (validationDuration > 120000) { // 2 minutes
+        say('software-validate', `⚠️ Validation took ${Math.round(validationDuration / 1000)}s - this may indicate performance issues`, 'warn');
+      }
+      
+      progressTracker.completeSubstep('software-validate', 'install-deps');
+      progressTracker.startSubstep('software-validate', 'type-check', 'Type checking TypeScript files');
+      
       reportToEvents('software-validate', softwareReport, emit);
 
       if (softwareReport.ok) {
-        say('software-validate', `MERN project builds clean — attempt ${attempt}`, 'ok');
+        progressTracker.completeSubstep('software-validate', 'type-check');
+        progressTracker.completeStage('software-validate');
+        
+        const totalSoftwareTime = Date.now() - softwareStageStart;
+        healthMonitor.recordStagePerformance('software', totalSoftwareTime, true);
+        say('software-validate', `MERN project builds clean — attempt ${attempt} (${Math.round(totalSoftwareTime / 1000)}s total)`, 'ok');
         break;
       }
 
+      progressTracker.failSubstep('software-validate', 'type-check', `Validation failed with ${softwareReport.findings.filter(f => f.severity === 'error').length} errors`);
+      
       const errors = softwareReport.findings.filter((f) => f.severity === 'error');
       say('software-validate', `${errors.length} error(s): ${[...new Set(errors.map((e) => e.code))].join(', ')}`, 'error');
-      if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) break;
+      
+      if (attempt === env.AGENTIC_MAX_REPAIR_LOOPS) {
+        progressTracker.failStage('software-validate', 'Maximum repair attempts reached');
+        break;
+      }
 
+      say('software-repair', `Attempting repair for attempt ${attempt}`, 'info');
       const repaired = await repairSoftware(software, errors, plan, firmwareJsonFields);
 
       if (repaired) {
@@ -727,12 +819,31 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
     );
 
     say('done', `pipeline complete in ${((Date.now() - t0) / 1000).toFixed(1)} s — website ⇢ ${softwareIterations} iteration(s), firmware ⇢ ${firmwareIterations} iteration(s)`, 'ok');
+    
+    // Record successful build completion
+    healthMonitor.recordBuildEnd(jobId, true);
+    
+    // Emit final health report
+    const healthReport = healthMonitor.getPerformanceReport();
+    say('health', `🏥 Build Health: ${healthReport.buildStats.totalBuilds} total builds, ${Math.round(healthReport.buildStats.successRate)}% success rate, avg ${Math.round(healthReport.buildStats.avgBuildTime / 1000)}s`, 'info');
+    
+    if (healthReport.recommendations.length > 0) {
+      say('health', `💡 Performance recommendations: ${healthReport.recommendations.slice(0, 2).join('; ')}`, 'info');
+    }
+    
     markProgress({ status: 'done', stage: 'done' });
     emit({ type: 'result', result });
   } catch (error) {
     logger.error({ err: error }, 'agentic pipeline crashed');
+    
+    // Record failed build
+    healthMonitor.recordBuildEnd(jobId, false);
+    
     emit({ type: 'error', message: error instanceof Error ? error.message : 'Agentic build crashed.' });
   } finally {
+    // Cleanup progress tracker and health monitoring
+    progressTracker.stopHeartbeat();
+    
     // Any early return above (a gate that never passed, a cancel) leaves the
     // snapshot saying "running" — close it out so page 04 stops waiting.
     if (progress.status === 'running') {
@@ -746,22 +857,86 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
 
 function reportToEvents(stage: string, report: ValidationReport, emit: EmitFn): void {
   emit({ type: 'validation', stage, report });
+  
+  // Enhanced logging for each command with detailed output
   for (const command of report.commands) {
     emit({ type: 'command', stage, cmd: command.cmd });
+    
+    // Log the command start with timing
+    emit({ type: 'log', stage, line: `[${now()}] 🔧 Running: ${command.cmd}`, tone: 'info' });
+    
     emit({ type: 'command_result', stage, cmd: command.cmd, exitCode: command.exitCode, output: command.output, durationMs: command.durationMs });
+    
+    // Enhanced result logging
+    if (command.exitCode === 0) {
+      emit({ type: 'log', stage, line: `[${now()}] ✅ Command completed (${command.durationMs}ms): ${command.cmd}`, tone: 'ok' });
+      
+      // Log useful output snippets for successful operations
+      if (command.output.length > 0) {
+        const lines = command.output.split('\n').filter(line => line.trim());
+        const importantLines = lines.filter(line => 
+          line.includes('compiled') || 
+          line.includes('built') || 
+          line.includes('generated') ||
+          line.includes('installed') ||
+          line.includes('dependencies')
+        ).slice(0, 3);
+        
+        for (const line of importantLines) {
+          emit({ type: 'log', stage, line: `[${now()}] 📝 ${line.trim()}`, tone: 'info' });
+        }
+      }
+    } else {
+      emit({ type: 'log', stage, line: `[${now()}] ❌ Command failed (exit ${command.exitCode}, ${command.durationMs}ms): ${command.cmd}`, tone: 'error' });
+      
+      // Log error details
+      if (command.output.length > 0) {
+        const errorLines = command.output.split('\n')
+          .filter(line => line.trim() && (
+            line.toLowerCase().includes('error') ||
+            line.toLowerCase().includes('failed') ||
+            line.toLowerCase().includes('cannot') ||
+            line.includes('ERR!')
+          ))
+          .slice(0, 5);
+          
+        for (const errorLine of errorLines) {
+          emit({ type: 'log', stage, line: `[${now()}] 🚨 ${errorLine.trim()}`, tone: 'error' });
+        }
+      }
+    }
   }
+  
+  // Enhanced check reporting
   for (const check of report.checks) {
-    emit({ type: 'log', stage, line: `  ${check.ok ? '✔' : '✘'} ${check.name} — ${check.detail}`, tone: check.ok ? 'ok' : 'error' });
+    const status = check.ok ? '✔' : '✘';
+    const tone = check.ok ? 'ok' : 'error';
+    emit({ type: 'log', stage, line: `[${now()}] ${status} ${check.name} — ${check.detail}`, tone });
   }
+  
+  // Enhanced finding reporting with context
   for (const finding of report.findings.slice(0, 20)) {
-    emit({
-      type: 'log',
-      stage,
-      line: `    [${finding.severity}] ${finding.code}${finding.file ? ` ${finding.file}${finding.line ? `:${finding.line}` : ''}` : ''} — ${finding.message}`,
-      tone: finding.severity === 'error' ? 'error' : finding.severity === 'warning' ? 'warn' : 'info',
+    const location = finding.file && finding.line ? ` (${finding.file}:${finding.line})` : '';
+    const prefix = finding.severity === 'error' ? '🚨' : finding.severity === 'warning' ? '⚠️' : 'ℹ️';
+    
+    emit({ 
+      type: 'log', 
+      stage, 
+      line: `[${now()}] ${prefix} ${finding.code}: ${finding.message}${location}`, 
+      tone: finding.severity === 'error' ? 'error' : 'warn' 
     });
+    
+    if (finding.hint) {
+      emit({ 
+        type: 'log', 
+        stage, 
+        line: `[${now()}] 💡 Hint: ${finding.hint}`, 
+        tone: 'info' 
+      });
+    }
   }
 }
+
 
 /** JSON fields the firmware publishes — extracted from sensor JSON emission lines. */
 function collectFirmwareJsonFields(firmware: FirmwareResult): string[] {

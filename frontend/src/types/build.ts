@@ -113,8 +113,67 @@ export interface ValidationReport {
   durationMs: number;
 }
 
+/** Substep progress within a stage */
+export interface StageSubstep {
+  id: string;
+  title: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  startedAt?: number;
+  completedAt?: number;
+  progress?: number; // 0-100
+  detail?: string;
+}
+
+/** Enhanced stage progress with substeps */
+export interface StageProgress {
+  stage: string;
+  title: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+  estimatedDurationMs?: number;
+  substeps: StageSubstep[];
+  currentSubstep?: string; // ID of current substep
+}
+
+/** Connection health status */
+export interface ConnectionHealth {
+  connected: boolean;
+  lastHeartbeat: number;
+  reconnectAttempts: number;
+  latencyMs?: number;
+}
+
+/** Enhanced error context with debugging information */
+export interface ErrorContext {
+  id: string;
+  timestamp: number;
+  stage: string;
+  operation: string;
+  severity: 'error' | 'warning' | 'notice';
+  message: string;
+  details?: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+  suggestion?: string;
+  relatedErrors?: string[];
+  stackTrace?: string;
+  environment?: Record<string, any>;
+  duration?: number;
+  retryCount?: number;
+}
+
 export type AgenticEvent =
   | { type: 'stage'; stage: string; title: string; detail?: string }
+  | { type: 'stage_progress'; progress: StageProgress }
+  | { type: 'substep'; stage: string; substep: StageSubstep }
+  | { type: 'heartbeat'; timestamp: number; health: ConnectionHealth }
+  | { type: 'operation_start'; stage: string; operation: string; operationId: string; metadata?: Record<string, any> }
+  | { type: 'operation_step'; stage: string; operationId: string; stepId: string; stepName: string; status: 'running' | 'completed' | 'failed' }
+  | { type: 'operation_complete'; stage: string; operationId: string; status: 'completed' | 'failed'; duration: number }
+  | { type: 'error_context'; stage: string; errorId: string; context: ErrorContext }
   | { type: 'log'; stage: string; line: string; tone?: 'info' | 'ok' | 'warn' | 'error' }
   | { type: 'command'; stage: string; cmd: string; cwd?: string }
   | { type: 'command_result'; stage: string; cmd: string; exitCode: number | null; output: string; durationMs: number }

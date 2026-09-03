@@ -9,11 +9,15 @@ import {
 import { clearPersisted, loadPersisted, persistTo } from '../lib/localPersist';
 import { useDesignSession } from './useDesignSession';
 import { useGraphStore } from './useGraphStore';
+import { useDebugConsole } from '../hooks/useDebugConsole';
 import type {
   AgenticBuildResult,
   AgenticEvent,
   BuildProgress,
   ValidationReport,
+  ConnectionHealth,
+  StageProgress,
+  ErrorContext,
 } from '../types/build';
 
 export interface TerminalLine {
@@ -44,6 +48,13 @@ interface BuildState {
   error: string | null;
   cancelled: boolean;
   abort: AbortController | null;
+
+  // Enhanced progress tracking
+  stageProgress: Map<string, StageProgress>;
+  currentStage?: string;
+  connectionHealth?: ConnectionHealth;
+  errorContexts: ErrorContext[];
+  operationTraces: Map<string, any>;
 
   run: (options?: { provider?: string; model?: string; revisionInstruction?: string }) => Promise<void>;
   /** Re-attach to a job this browser started before a refresh/navigation. */
@@ -98,9 +109,87 @@ export const useBuildStore = create<BuildState>()((set, get) => {
 
   /** Translate one streamed event into store state. */
   const handle = (event: AgenticEvent): void => {
+    // Forward all events to debug console if it exists
+    try {
+      const debugStore = require('../store/useDebugStore').useDebugStore;
+      debugStore.getState().addEvent(event);
+    } catch (e) {
+      // Debug store not available, continue without it
+    }
+    
     switch (event.type) {
       case 'stage':
+        set((state) => ({ currentStage: event.stage }));
         push({ kind: 'stage', tone: 'info', stage: event.stage, text: `▶ ${event.title}` });
+        break;
+      case 'stage_progress':
+        set((state) => ({
+          stageProgress: new Map(state.stageProgress.set(event.progress.stage, event.progress)),
+          currentStage: event.progress.stage,
+        }));
+        break;
+      case 'substep':
+        // Update the substep in the current stage progress
+        set((state) => {
+          const currentProgress = state.stageProgress.get(event.stage);
+          if (currentProgress) {
+            const updatedSubsteps = currentProgress.substeps.map(s => 
+              s.id === event.substep.id ? event.substep : s
+            );
+            const updatedProgress = { ...currentProgress, substeps: updatedSubsteps };
+            return {
+              stageProgress: new Map(state.stageProgress.set(event.stage, updatedProgress))
+            };
+          }
+          return state;
+        });
+        break;
+      case 'heartbeat':
+        set({ connectionHealth: event.health });
+        break;
+      case 'operation_start':
+        push({ 
+          kind: 'log', 
+          tone: 'info', 
+          stage: event.stage, 
+          text: `🚀 Starting ${event.operation}` 
+        });
+        break;
+      case 'operation_step':
+        push({ 
+          kind: 'log', 
+          tone: event.status === 'failed' ? 'error' : 'info', 
+          stage: event.stage, 
+          text: `${event.status === 'completed' ? '✅' : event.status === 'failed' ? '❌' : '📋'} ${event.stepName}` 
+        });
+        break;
+      case 'operation_complete':
+        push({ 
+          kind: 'log', 
+          tone: event.status === 'failed' ? 'error' : 'ok', 
+          stage: event.stage, 
+          text: `${event.status === 'failed' ? '💥' : '🎉'} Operation ${event.status} (${event.duration}ms)` 
+        });
+        break;
+      case 'error_context':
+        set((state) => ({
+          errorContexts: [...state.errorContexts, event.context].slice(-50) // Keep last 50 errors
+        }));
+        const errorIcon = event.context.severity === 'error' ? '🚨' : '⚠️';
+        push({ 
+          kind: 'log', 
+          tone: event.context.severity === 'error' ? 'error' : 'warn', 
+          stage: event.stage, 
+          text: `${errorIcon} ${event.context.code || 'ERROR'}: ${event.context.message}` 
+        });
+        if (event.context.suggestion) {
+          push({ 
+            kind: 'log', 
+            tone: 'info', 
+            stage: event.stage, 
+            text: `💡 ${event.context.suggestion}` 
+          });
+        }
         break;
       case 'log':
         push({ kind: 'log', tone: event.tone ?? 'info', stage: event.stage, text: event.line });
@@ -221,6 +310,13 @@ export const useBuildStore = create<BuildState>()((set, get) => {
     cancelled: false,
     abort: null,
 
+    // Enhanced progress tracking
+    stageProgress: new Map<string, StageProgress>(),
+    currentStage: undefined,
+    connectionHealth: undefined,
+    errorContexts: [],
+    operationTraces: new Map(),
+
     run: async (options?: { provider?: string; model?: string; revisionInstruction?: string }) => {
       const { graph } = useGraphStore.getState();
       const { brief: rawBrief, llmOptions, answers, specGraph } = useDesignSession.getState();
@@ -328,7 +424,21 @@ export const useBuildStore = create<BuildState>()((set, get) => {
     clear: () => {
       clearPersisted(BUILD_PERSIST_KEY);
       clearPersisted(JOB_PERSIST_KEY);
-      set({ lines: [], reports: {}, result: null, progress: null, error: null, jobId: null, seq: 0, cancelled: false });
+      set({ 
+        lines: [], 
+        reports: {}, 
+        result: null, 
+        progress: null, 
+        error: null, 
+        jobId: null, 
+        seq: 0, 
+        cancelled: false,
+        stageProgress: new Map(),
+        currentStage: undefined,
+        connectionHealth: undefined,
+        errorContexts: [],
+        operationTraces: new Map()
+      });
     },
 
     applyFileUpdates: (updates) => {

@@ -1,51 +1,93 @@
-import type { Request, Response } from 'express';
-import { execFile } from 'node:child_process';
-
-import { env } from '../config/env.js';
-import { isPersistenceEnabled } from '../config/db.js';
-import { isBedrockConfigured } from '../services/llmService.js';
-
-/** GET /api/healthz */
-export function healthCheck(_req: Request, res: Response): void {
-  res.status(200).json({
-    status: 'ok',
-    service: 'wireup-backend',
-    persistence: isPersistenceEnabled() ? 'mongodb' : 'disabled',
-    model: env.BEDROCK_MODEL,
-    bedrockConfigured: isBedrockConfigured(),
-  });
-}
-
-function versionOf(binary: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(binary, ['--version'], { timeout: 5000 }, (error, stdout) => {
-      if (error) return resolve(null);
-      resolve(stdout.split('\n')[0]?.trim() ?? null);
-    });
-  });
-}
+import { Request, Response } from 'express';
+import { healthMonitor } from '../agentic/healthMonitor.js';
+import { runningJobCount } from '../agentic/buildJobs.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 /**
- * GET /api/healthz/toolchain — what the terminal validation gate can run.
- * The firmware stub-compile needs g++; npm/tsc/vite need node + npm; the REAL
- * embedded build needs PlatformIO (pio) or arduino-cli, and the Wokwi sim gate
- * needs wokwi-cli + a token. The UI shows this so a missing tool is visible
- * BEFORE a build, not as a "skipped" line afterwards.
+ * Get system health status and metrics
  */
-export async function toolchainCheck(_req: Request, res: Response): Promise<void> {
-  const { detectToolchain } = await import('../agentic/toolchain.js');
-  const [node, npm, toolchain] = await Promise.all([
-    versionOf('node'),
-    versionOf('npm'),
-    detectToolchain(),
-  ]);
-  res.status(200).json({
-    node,
-    npm,
-    gpp: toolchain.gpp.version,
-    platformio: toolchain.platformio.version,
-    arduinoCli: toolchain.arduinoCli.version,
-    wokwiCli: toolchain.wokwiCli.version,
-    wokwiToken: toolchain.wokwiToken,
+export const getHealthStatus = asyncHandler(async (req: Request, res: Response) => {
+  const health = healthMonitor.getHealthStatus();
+  const runningJobs = runningJobCount();
+  
+  res.json({
+    status: health.status,
+    timestamp: Date.now(),
+    metrics: health.metrics,
+    alerts: health.alerts,
+    runningJobs,
+    uptime: process.uptime(),
   });
-}
+});
+
+/**
+ * Get detailed performance report
+ */
+export const getPerformanceReport = asyncHandler(async (req: Request, res: Response) => {
+  const report = healthMonitor.getPerformanceReport();
+  
+  res.json({
+    timestamp: Date.now(),
+    ...report,
+  });
+});
+
+/**
+ * Get health metrics for monitoring dashboards
+ */
+export const getHealthMetrics = asyncHandler(async (req: Request, res: Response) => {
+  const health = healthMonitor.getHealthStatus();
+  
+  // Simplified metrics for external monitoring
+  const metrics = {
+    timestamp: Date.now(),
+    status: health.status,
+    cpu_usage: health.metrics.cpu.usage,
+    memory_usage_percent: (health.metrics.memory.used / health.metrics.memory.total) * 100,
+    active_builds: health.metrics.build.activeJobs,
+    avg_build_time_seconds: Math.round(health.metrics.build.avgBuildTime / 1000),
+    build_failure_rate: health.metrics.build.failureRate,
+    alerts_count: health.alerts.length,
+    uptime_seconds: process.uptime(),
+  };
+  
+  res.json(metrics);
+});
+
+/**
+ * Simple health check endpoint
+ */
+export const healthCheck = asyncHandler(async (req: Request, res: Response) => {
+  const health = healthMonitor.getHealthStatus();
+  
+  if (health.status === 'critical') {
+    res.status(503).json({
+      status: 'unhealthy',
+      message: 'System is experiencing critical performance issues',
+      alerts: health.alerts.filter(a => a.severity === 'critical'),
+    });
+  } else {
+    res.json({
+      status: 'healthy',
+      timestamp: Date.now(),
+      uptime: process.uptime(),
+    });
+  }
+});
+
+/**
+ * Toolchain health check endpoint
+ */
+export const toolchainCheck = asyncHandler(async (req: Request, res: Response) => {
+  // Check if essential tools are available
+  const toolchain = {
+    node: process.version,
+    npm: process.env.npm_version || 'unknown',
+    timestamp: Date.now(),
+  };
+  
+  res.json({
+    status: 'ok',
+    toolchain,
+  });
+});

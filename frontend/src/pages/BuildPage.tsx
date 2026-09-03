@@ -3,10 +3,15 @@ import { Link } from 'react-router-dom';
 
 import CodeBlock from '../components/CodeBlock';
 import WokwiBench from '../components/WokwiBench';
+import { EnhancedBuildProgress } from '../components/EnhancedBuildProgress';
+import { DebugConsole } from '../components/DebugConsole';
+import '../styles/enhanced-progress.css';
+import '../styles/debug-console.css';
 import { samplesFromLog } from '../sim/diagram';
 import { downloadZip } from '../lib/zip';
 import { api } from '../services/api';
 import { useBuildStore, type TerminalLine } from '../store/useBuildStore';
+import { useDebugStore } from '../store/useDebugStore';
 import { useGraphStore } from '../store/useGraphStore';
 import { useDesignSession } from '../store/useDesignSession';
 import { toast } from '../store/useToastStore';
@@ -354,6 +359,19 @@ export default function BuildPage() {
   const run = useBuildStore((state) => state.run);
   const cancel = useBuildStore((state) => state.cancel);
   const clear = useBuildStore((state) => state.clear);
+
+  // Enhanced progress tracking
+  const stageProgress = useBuildStore((state) => state.stageProgress);
+  const currentStage = useBuildStore((state) => state.currentStage);
+  const connectionHealth = useBuildStore((state) => state.connectionHealth);
+  const errorContexts = useBuildStore((state) => state.errorContexts);
+
+  // Debug console
+  const isConsoleOpen = useDebugStore((state) => state.isConsoleOpen);
+  const debugEvents = useDebugStore((state) => state.events);
+  const debugErrorContexts = useDebugStore((state) => state.errorContexts);
+  const toggleConsole = useDebugStore((state) => state.toggleConsole);
+
   const sessionLlmOptions = useDesignSession((state) => state.llmOptions);
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -482,12 +500,16 @@ export default function BuildPage() {
                 </select>
                 <span className="chatbot-status-tag" title={progress?.stage}>
                   {running
-                    ? progress?.website?.ready
-                      ? 'FIRMWARE…'
-                      : 'WEBSITE…'
+                    ? currentStage 
+                      ? `${currentStage.toUpperCase()}${progress?.website?.ready ? ' (Website Live)' : ''}${progress?.firmware?.ready ? ' (Firmware Ready)' : ''}`
+                      : progress?.website?.ready
+                        ? 'FIRMWARE BUILD...'
+                        : 'BUILDING WEBSITE...'
                     : cancelled
                       ? 'CANCELLED'
-                      : 'READY'}
+                      : result 
+                        ? 'COMPLETED ✅'
+                        : 'READY'}
                 </span>
               </div>
             </div>
@@ -498,6 +520,75 @@ export default function BuildPage() {
                 <span className="chat-sender">AI Build Agent</span>
                 Welcome! I am your Wireup hardware & firmware agent. Ask me any question or tell me what to refine in the build!
               </div>
+
+            {/* Enhanced Progress Display */}
+            {running && (
+              <div className="build-progress-card">
+                <div className="progress-header">
+                  <span className="progress-title">
+                    {currentStage ? `${currentStage.toUpperCase()} STAGE` : 'BUILDING...'}
+                  </span>
+                  <span className="progress-status">
+                    {progress?.website?.ready ? '🌐 Website Live' : ''}
+                    {progress?.firmware?.ready ? ' | 🔧 Firmware Ready' : ''}
+                  </span>
+                </div>
+                
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{
+                    width: progress?.website?.ready && progress?.firmware?.ready ? '100%' :
+                           progress?.website?.ready ? '60%' :
+                           currentStage === 'software-validate' ? '40%' :
+                           currentStage === 'firmware' ? '70%' : '20%',
+                    transition: 'width 0.5s ease-in-out'
+                  }} />
+                </div>
+                
+                <div className="progress-details">
+                  {currentStage === 'software-validate' && (
+                    <div className="stage-detail">
+                      <span className="spinner">⚡</span>
+                      Building MERN project (this takes 1-3 minutes)...
+                    </div>
+                  )}
+                  {currentStage === 'firmware-validate' && (
+                    <div className="stage-detail">
+                      <span className="spinner">🔧</span>
+                      Compiling firmware (30-60 seconds)...
+                    </div>
+                  )}
+                  {currentStage === 'retrieve' && (
+                    <div className="stage-detail">
+                      <span className="spinner">📚</span>
+                      Loading device knowledge...
+                    </div>
+                  )}
+                  {!currentStage && (
+                    <div className="stage-detail">
+                      <span className="spinner">⚙️</span>
+                      Starting build process...
+                    </div>
+                  )}
+                  
+                  {/* Show most recent important log message */}
+                  {lines.length > 0 && (
+                    <div className="recent-log">
+                      Last: {lines[lines.length - 1]?.text?.slice(0, 60)}...
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Enhanced Progress Display */}
+            {(running || currentStage) && (
+              <EnhancedBuildProgress 
+                stageProgress={currentStage ? stageProgress.get(currentStage) : undefined}
+                connectionHealth={connectionHealth}
+                errorContext={errorContexts.filter(e => e.stage === currentStage).slice(-5)}
+                isRunning={running}
+              />
+            )}
 
               {lines.length === 0 && (
                 <div className="chat-bubble system">
@@ -658,6 +749,58 @@ export default function BuildPage() {
         </div>
 
       </div>
+
+      {/* Debug Console */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          zIndex: 1000,
+        }}>
+          <button 
+            onClick={() => {
+              try {
+                const debugStore = require('./store/useDebugStore').useDebugStore;
+                debugStore.getState().toggleConsole();
+              } catch (e) {
+                console.log('Debug console not available');
+              }
+            }}
+            style={{
+              background: '#1f2937',
+              color: 'white',
+              border: '1px solid #374151',
+              borderRadius: '6px',
+              padding: '8px 12px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontFamily: 'monospace'
+            }}
+          >
+            🔧 Debug
+          </button>
+          
+          <div style={{
+            background: '#1f2937',
+            border: '1px solid #374151',
+            borderRadius: '6px',
+            padding: '8px',
+            color: 'white',
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            minWidth: '200px'
+          }}>
+            <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>Build Status</div>
+            <div>Stage: {currentStage || 'idle'}</div>
+            <div>Errors: {errorContexts.length}</div>
+            <div>Connection: {connectionHealth?.connected ? '🟢' : '🔴'}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

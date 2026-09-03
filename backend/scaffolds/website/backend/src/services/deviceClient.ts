@@ -50,7 +50,7 @@ async function fetchDevice(
     if (!response.ok) {
       throw new Error(`Device returned ${response.status}`);
     }
-    const text = await response.text();
+    const text = await (response as any).text();
     return safeJson(text);
   } finally {
     clearTimeout(timer);
