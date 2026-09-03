@@ -55,6 +55,16 @@ export class ErrorContextTracker {
     this.emitFn = emit;
   }
 
+  /**
+   * Emit a build event on this tracker's channel.
+   *
+   * Collaborators (e.g. {@link DetailedLogger}) go through this instead of
+   * reaching into `emitFn`, which stays private.
+   */
+  emit(event: BuildEvent): void {
+    this.emitFn(event);
+  }
+
   /** Start tracking an operation */
   startOperation(stage: string, operation: string, metadata?: Record<string, any>): string {
     const id = this.generateId();
@@ -239,8 +249,10 @@ export class ErrorContextTracker {
 
   /** Convert ValidationFindings to enhanced error contexts */
   processValidationReport(report: ValidationReport): void {
-    const { stage } = report;
-    
+    // A report has no `stage` field — it is scoped by `target`, which is the
+    // stage name for reporting purposes ('firmware' | 'software' | ...).
+    const stage: string = report.target;
+
     for (const finding of report.findings) {
       const errorId = this.addError(stage, 'validation', finding.message, {
         severity: finding.severity,
@@ -373,7 +385,7 @@ export class ErrorContextTracker {
   }
 
   private formatTime(): string {
-    return new Date().toTimeString().split(' ')[0];
+    return new Date().toTimeString().slice(0, 8);
   }
 
   private getCurrentOperation(stage: string): OperationTrace | null {
@@ -404,7 +416,7 @@ export class DetailedLogger {
 
   /** Log a command execution with full context */
   logCommand(stage: string, cmd: string, cwd?: string): void {
-    this.errorTracker.emitFn({
+    this.errorTracker.emit({
       type: 'command',
       stage,
       cmd,
@@ -420,7 +432,7 @@ export class DetailedLogger {
     output: string,
     durationMs: number,
   ): void {
-    this.errorTracker.emitFn({
+    this.errorTracker.emit({
       type: 'command_result',
       stage,
       cmd,
@@ -445,7 +457,7 @@ export class DetailedLogger {
     const tone = success ? 'ok' : 'error';
     const status = success ? '✅' : '❌';
     
-    this.errorTracker.emitFn({
+    this.errorTracker.emit({
       type: 'log',
       stage,
       line: `[${new Date().toTimeString().split(' ')[0]}] ${status} ${operation}: ${path}${details ? ` (${details})` : ''}`,
@@ -467,7 +479,7 @@ export class DetailedLogger {
     const status = success ? '🌐' : '🚫';
     const durationInfo = duration ? ` (${duration}ms)` : '';
     
-    this.errorTracker.emitFn({
+    this.errorTracker.emit({
       type: 'log',
       stage,
       line: `[${new Date().toTimeString().split(' ')[0]}] ${status} ${operation}: ${url}${durationInfo}`,

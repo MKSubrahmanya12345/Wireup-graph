@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 interface HealthMetrics {
   status: 'healthy' | 'warning' | 'critical';
@@ -17,12 +17,10 @@ interface Props {
 
 export function PerformanceMonitor({ isVisible = false }: Props) {
   const [metrics, setMetrics] = useState<HealthMetrics | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchMetrics = async () => {
     try {
-      setLoading(true);
       const response = await fetch('/api/health/metrics');
       if (!response.ok) throw new Error('Failed to fetch metrics');
       const data = await response.json();
@@ -30,8 +28,6 @@ export function PerformanceMonitor({ isVisible = false }: Props) {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
-    } finally {
-      setLoading(false);
     }
   };
 
