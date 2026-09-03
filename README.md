@@ -249,6 +249,46 @@ as part of a hosted product.
 5. **Multi-turn revision** — a follow-up change request (e.g. *"make the relay active-low"*) is applied to the current firmware via the same gated edit path, then re-compiled. Iteration survives the terminal gauntlet too.
 6. **Pin-safety engine** — the planner never assigns strapping pins (GPIO0/2/5/12/15), input-only ADC pins (34–39) or flash pins (6–11) to modules; a human-drawn graph that tries is rejected with the reason. GPIO12 held high at boot bricks an ESP32 — the compiler can never catch that.
 
+## Hardware Spec Graph (pages 01 → 02)
+
+Before anything is built, the free-text brief is decomposed by the LLM into a
+**spec graph**: a graph of generic nodes with *freeform* domains (a drone brief
+spawns `flight_control`/`companion_compute` branches an LED project never
+would), two distinct edge types — `requires` (dependency, drives ordering and
+dirty propagation) and `spawned` (lineage only, never propagated) — and a hard
+**ask/decide gate**: a question reaches the user only if it is blocking AND
+multi-valued with no safe default AND not inferable; everything else is
+resolved silently and logged as an auditable assumption. Questions are batched
+once (≤5 per round), answers flip their nodes to `user_confirmed`, and changes
+propagate over the reverse-`requires` graph only.
+
+Deterministic code — never the model — then validates the graph: requires
+integrity, dependency cycles, rail voltage consistency, power-budget sums, and
+shared-resource contention (I2C addresses, GPIO pins, buses, rails). A genuine
+collision spawns a `resource_allocation` node that *actually resolves* the
+conflict (re-map a configurable part to an address it declares, insert a
+multiplexer at the reserved `0x70`, re-assign pins, re-balance rails onto
+declared headroom) and records every move — or, when no resolution exists,
+raises a blocking issue instead of silently shipping a broken wiring diagram.
+`known_uncertainty` entries (field-tuning, lighting robustness) are disclosed
+and never block validation.
+
+The root manifest holds only *pointers* (`question_queue`, `assumption_log`)
+into per-node files (`SPEC_GRAPH_DIR/<project>/manifest.json + nodes/*.json`)
+— the AI loads one branch plus its direct `requires` neighbours, never the
+whole graph. The build pipeline accepts the graph as its **§7 handoff
+artifact**: it refuses to run unless every node is validated with an empty
+question queue, persists the full graph into the build workspace, and carries
+every preserved assumption and disclosed uncertainty into the generated
+instructions so the coding agent — and the user — can see what was decided on
+their behalf.
+
+Endpoints: `POST /api/architecture/spec-graph` (decompose),
+`POST /api/architecture/spec-graph/answer` (apply answers + re-validate),
+`GET /api/architecture/spec-graph/:projectId` (manifest),
+`GET /api/architecture/spec-graph/:projectId/nodes/:branchId` (branch-local
+load). Unit-tested in `backend/test/specGraph.test.mjs`.
+
 ### Multi-turn builds
 
 `POST /api/build/agentic/stream` accepts an optional `revisionInstruction`. On a

@@ -11,6 +11,7 @@ import {
   type BuildJobSnapshot,
 } from '../agentic/buildJobs.js';
 import { runAgenticPipeline } from '../agentic/pipeline.js';
+import { specGraphProjectSchema, type SpecGraphProject } from '../agentic/specGraph.js';
 import type { AgenticBuildResult, BuildEvent, PipelineInput } from '../agentic/types.js';
 import { ApiError, asyncHandler } from '../middleware/errorHandler.js';
 import { normaliseGraph } from '../schemas/architecture.js';
@@ -70,6 +71,9 @@ const bodySchema = z.object({
   brief: z.string().trim().min(1, 'A brief is required.').max(6000),
   projectName: z.string().trim().max(120).optional(),
   graph: z.unknown(),
+  // §7: the validated spec graph may ride along with the build. Parsed with
+  // the spec-graph schema below — a malformed graph is a 400, never a guess.
+  specGraph: z.unknown().optional(),
   provider: z.enum(['bedrock']).optional(),
   model: z.string().optional(),
   // Page-01's sample-interval answer — honored in firmware/config.h.
@@ -92,6 +96,23 @@ async function parseBuildRequest(req: Request): Promise<ParsedBuildRequest> {
   }
   const { brief, projectName, provider, model, sampleIntervalMs, revisionInstruction } = parsed.data;
   const { graph } = normaliseGraph(parsed.data.graph ?? {});
+
+  // §7 — normalise the attached spec graph through the schema. The pipeline
+  // itself runs the hard readiness gate (every node validated, empty queue);
+  // here we only refuse payloads that are not spec graphs at all.
+  let specGraph: SpecGraphProject | null = null;
+  const rawSpecGraph = parsed.data.specGraph;
+  if (rawSpecGraph !== undefined && rawSpecGraph !== null) {
+    const specParsed = specGraphProjectSchema.safeParse(rawSpecGraph);
+    if (!specParsed.success) {
+      throw ApiError.badRequest(
+        'The attached specGraph is not a valid wireup-spec-graph project.',
+        specParsed.error.flatten(),
+      );
+    }
+    specGraph = specParsed.data;
+  }
+
   // The paying tier decides which model tier the build gets (M2).
   const userPlan = req.user && !req.user.guest ? await planForUser(req.user.sub) : 'free';
 
@@ -100,6 +121,7 @@ async function parseBuildRequest(req: Request): Promise<ParsedBuildRequest> {
       brief,
       projectName,
       graph,
+      specGraph,
       provider,
       model,
       sampleIntervalMs,

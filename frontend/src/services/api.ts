@@ -257,6 +257,12 @@ export interface AgenticBuildRequest {
   brief: string;
   projectName?: string;
   graph: unknown;
+  /**
+   * §7: the validated spec graph from the design session. The backend refuses
+   * to build unless it passes the handoff gate (every node validated, empty
+   * question queue, no error-severity issues).
+   */
+  specGraph?: unknown;
   provider?: string;
   model?: string;
   /** Follow-up change request from the page-03 chatbot. */

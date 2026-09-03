@@ -19,6 +19,14 @@ export function buildInstructions(input: {
   hardwareSim?: SimResult | null;
   softwareReady: boolean;
   softwareFileCount: number;
+  /**
+   * §7 export contract: decisions the spec graph made silently on the user's
+   * behalf, preserved so the coding agent — and the user — can see what was
+   * decided (and override it), not just what was asked.
+   */
+  specDecisions?: Array<{ node: string; claim: string; why: string }>;
+  /** §6 disclosures: real-world variance that never blocked validation. */
+  specUncertainties?: Array<{ node: string; note: string }>;
 }): string {
   const { plan, firmware, bom, hardwareSim } = input;
   const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
@@ -144,6 +152,34 @@ export function buildInstructions(input: {
     lines.push('## 7. Troubleshooting');
     lines.push('');
     lines.push(...firmwareNotes);
+    lines.push('');
+  }
+
+  // 8. Spec-graph decisions made on the user's behalf (§7 export contract).
+  if (input.specDecisions && input.specDecisions.length > 0) {
+    lines.push('## 8. Decisions made on your behalf');
+    lines.push('');
+    lines.push(
+      'The spec graph resolved these forks silently — every one is a recorded assumption you can override on the spec-graph page:',
+    );
+    lines.push('');
+    for (const decision of input.specDecisions) {
+      lines.push(`- **${decision.node}** — ${decision.claim} _(${decision.why})_`);
+    }
+    lines.push('');
+  }
+
+  // 9. Known real-world uncertainties — disclosed, never blocking (§6).
+  if (input.specUncertainties && input.specUncertainties.length > 0) {
+    lines.push('## 9. Known real-world uncertainties (non-blocking)');
+    lines.push('');
+    lines.push(
+      'The spec is internally consistent and complete enough to build from; these are the parts no amount of spec-writing can pin down — expect field tuning:',
+    );
+    lines.push('');
+    for (const entry of input.specUncertainties) {
+      lines.push(`- **${entry.node}** — ${entry.note}`);
+    }
     lines.push('');
   }
 

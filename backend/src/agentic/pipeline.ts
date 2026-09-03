@@ -25,6 +25,7 @@ import {
   reviseFirmwareWithLlm,
 } from './repairAgent.js';
 import { createWorkDir } from './terminal.js';
+import { isSpecGraphReadyForHandoff, saveSpecGraphToDisk } from './specGraph.js';
 import { newPreviewId, previewApiBaseFor, previewBaseFor, publishPreview } from './preview.js';
 import type {
   AgenticBuildResult,
@@ -77,6 +78,13 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
   const previewId = newPreviewId();
   let preview: Awaited<ReturnType<typeof publishPreview>> = null;
   let result: AgenticBuildResult | null = null;
+  /** §7 handoff snapshot — filled by stage 0 when a validated spec graph rides along. */
+  let specHandoff: {
+    nodeCount: number;
+    decisions: { node: string; claim: string; why: string }[];
+    uncertainties: { node: string; note: string }[];
+    dir: string;
+  } | null = null;
 
   // ── Live progress: which half of the build is usable right now ──────────
   // Page 04 reads this to run the website while the firmware is still being
@@ -105,6 +113,49 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
   };
 
   try {
+    // ── Stage 0: spec-graph handoff gate (design doc §7) ──────────────────────
+    // The coding agent accepts the full node graph ONLY when every node is
+    // validated, the question queue is empty and no error-severity issue is
+    // open. A not-ready graph fails the build loudly — never a silent build
+    // from half-resolved specs.
+    if (input.specGraph) {
+      if (!isSpecGraphReadyForHandoff(input.specGraph)) {
+        say(
+          'spec-graph',
+          'spec graph is NOT ready for handoff (open questions, unresolved nodes or error-severity issues) — refusing to build',
+          'error',
+        );
+        emit({
+          type: 'error',
+          message:
+            'The spec graph is not ready for handoff: every node must be validated with an empty question queue before the build can run. Answer the open questions on the spec-graph page first.',
+        });
+        markProgress({ status: 'error', stage: 'spec-graph' });
+        return;
+      }
+      emit({ type: 'stage', stage: 'spec-graph', title: 'Spec graph handoff — validated graph accepted' });
+      markProgress({ stage: 'spec-graph' });
+      const specDir = path.join(work.root, 'spec-graph');
+      saveSpecGraphToDisk(input.specGraph, specDir);
+      const specNodes = Object.values(input.specGraph.nodes);
+      const decisions = specNodes.flatMap((node) =>
+        node.assumptions.map((assumption) => ({
+          node: node.title,
+          claim: assumption.claim,
+          why: assumption.why,
+        })),
+      );
+      const uncertainties = specNodes.flatMap((node) =>
+        node.known_uncertainty.map((note) => ({ node: node.title, note })),
+      );
+      specHandoff = { nodeCount: specNodes.length, decisions, uncertainties, dir: specDir };
+      say(
+        'spec-graph',
+        `handoff accepted: ${specNodes.length} validated node(s), ${decisions.length} preserved assumption(s), ${uncertainties.length} disclosed known-uncertaint${uncertainties.length === 1 ? 'y' : 'ies'} → ${specDir} (manifest.json + nodes/*.json)`,
+        'ok',
+      );
+    }
+
     // ── Stage 1: retrieval ──────────────────────────────────────────────────
     emit({ type: 'stage', stage: 'retrieve', title: 'Retrieving device knowledge (RAG)' });
     say('retrieve', `pipeline ${PIPELINE_VERSION} · workdir ${work.root}`);
@@ -574,6 +625,8 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       hardwareSim,
       softwareReady,
       softwareFileCount: software.files.length,
+      specDecisions: specHandoff?.decisions,
+      specUncertainties: specHandoff?.uncertainties,
     });
     const instructionsPath = `INSTRUCTIONS-${slug}.md`;
     // Ship the instructions inside the firmware zip too, so the document
@@ -617,6 +670,14 @@ export async function runAgenticPipeline(input: PipelineInput, emit: EmitFn): Pr
       instructions: { path: instructionsPath, content: instructionsContent },
       bom,
       preview,
+      specGraphHandoff: specHandoff
+        ? {
+            nodeCount: specHandoff.nodeCount,
+            assumptions: specHandoff.decisions.length,
+            uncertainties: specHandoff.uncertainties.length,
+            dir: specHandoff.dir,
+          }
+        : undefined,
     };
 
     // The single line an operator can grep for: which provider actually ran.

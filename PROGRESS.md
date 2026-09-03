@@ -132,6 +132,38 @@ by a running Velxio.
 
 ---
 
+## M8 — Hardware Spec Graph: the algorithm made fully spec-true ✅
+
+The spec-graph engine (`backend/src/agentic/specGraph.ts`, endpoints under
+`/api/architecture/spec-graph*`, UI on the spec-graph page) was audited against
+its design doc and every deviation was fixed — the goal was *algorithm
+correctness*, not "it runs":
+
+| # | Fix | Where |
+| - | --- | ----- |
+| 1 | §2 **pointer manifests** — `question_queue` and `assumption_log` are deduped pointers into `node.open_questions` / `node.assumptions`, never copies; the log is *derived* on every pass so it can never drift or hold a stale overridden assumption | `collectQuestionQueue`, `buildAssumptionLog`, frontend `resolveQuestionQueue`/`resolveAssumptionLog` |
+| 2 | §2 **persistence is live**, not dead code — every generate/answer call writes `SPEC_GRAPH_DIR/<project>/manifest.json + nodes/*.json`; new GET endpoints return the manifest, or ONE branch + its direct `requires` neighbours only | `saveSpecGraphToDisk`, `loadSpecGraphBranchFromDisk`, `architectureController` |
+| 3 | §5 **globally-unique question ids** — duplicate/missing LLM ids used to silently dedupe real questions in the queue and misroute answers; now namespaced + collision-rewritten deterministically | `normaliseQuestionIds` |
+| 4 | §5 **exact answer routing** — `question.q.includes(key)` substring matching could write an answer into the wrong node; now exact-by-id, then exact-by-verbatim-text, and the decision is logged as an assumption ON the node | `matchQuestion`, `applyUserAnswersToSpecGraph` |
+| 5 | §5 **no caller mutation** — an answer round deep-copies the graph instead of mutating the client's persisted session in place | `applyUserAnswersToSpecGraph` |
+| 6 | §6 **real cross-node validation** — requires-cycle detection (error), self-requires (error), dangling `spawned` lineage (warning), consumer-voltage-vs-rail (warning), and the doc's power-budget check: rail draw summed against the budget declared ON that rail (error) — no more "any power-domain node" fallback | `runSpecValidationPass`, `auditRails` |
+| 7 | §6a **idempotent contention** — re-running detection (which answer-apply does) used to reset the allocator counter, overwrite `node_resource_allocation_01` and duplicate log entries; now signature-keyed and stable | `spawnResourceAllocator` |
+| 8 | §6a **allocators that actually resolve** — "Resolved via multiplexer…" was a claim string; now: configurable parts re-map to an address they *declare* (claim-provenance aware — a part's own alternates are options, not collisions), fixed-address collisions get a TCA9548A-class mux at reserved `0x70` only if genuinely free, collided pins/channels re-assign within their family, overloaded rails re-balance smallest-load-first onto voltage-compatible rails with declared headroom. Every move is applied to the node spec AND recorded. No deterministic resolution → `resolution_status: 'unresolvable'` → blocking validation issue instead of a silent broken diagram | `resolveIdentityContention`, `resolveRailOverload`, `i2cAddressClaimants` |
+| 9 | §6a **third trigger implemented** — bus-bandwidth contention (`bus_id` + `bus_bandwidth_pct` > 100%) spawns the allocator and surfaces as blocking: who yields is exactly the decision no individual node can make | `detectResourceContention` |
+| 10 | §7 **handoff gate in the pipeline** — builds accept the spec graph (`specGraph` on the build body, schema-validated 400 on garbage); stage 0 refuses to build unless every node is validated with an empty queue, persists manifest + nodes into the workspace, and the result records the handoff snapshot | `pipeline.ts` stage 0, `agenticController` |
+| 11 | §7 **assumptions reach the coding agent** — the generated instructions gained "Decisions made on your behalf" (every silent assumption, overridable) and "Known real-world uncertainties" (disclosed, non-blocking) sections | `instructions.ts` |
+| 12 | **Status coherence** — project status now agrees with the handoff gate: no questions but blocking issues ⇒ `blocked`, not `ready_for_build` | `projectStatusFor` |
+| 13 | **Docs** — README section for the spec-graph stage; this file | `README.md` |
+
+`backend/test/specGraph.test.mjs` was rewritten to the corrected contracts
+(16 checks: pointer manifests, id uniqueness, exact routing + substring
+misroute regression, requires-only propagation, mux/remap/no-collision,
+pin re-assignment, rail re-balance + unresolvable blocking, bandwidth
+contention, cycles, self/dangling edges, twin conversion, §2 round-trip).
+
+---
+
+
 ## ⛔ Blocked — needs a human, not code
 
 | Blocker | What is already built | Exactly what to set to go live |

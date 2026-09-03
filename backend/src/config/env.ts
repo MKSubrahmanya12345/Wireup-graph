@@ -75,6 +75,9 @@ const envSchema = z.object({
   AGENTIC_COMMAND_TIMEOUT_MS: z.coerce.number().int().positive().default(240_000),
   // Where validation sandboxes are materialised.
   AGENTIC_WORKDIR: z.string().min(1).default('/tmp/wireup-agentic'),
+  // Where spec graphs are persisted in the §2 layout (manifest.json +
+  // nodes/*.json per project). This is the durable §7 handoff artifact store.
+  SPEC_GRAPH_DIR: z.string().min(1).default('/tmp/wireup-spec-graphs'),
   // Set to '0' to skip terminal validation entirely (not recommended).
   AGENTIC_TERMINAL_VALIDATION: z.string().default('1'),
   // Runtime smoke test: boots the generated backend against a stub device

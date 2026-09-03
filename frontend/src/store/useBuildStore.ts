@@ -223,7 +223,7 @@ export const useBuildStore = create<BuildState>()((set, get) => {
 
     run: async (options?: { provider?: string; model?: string; revisionInstruction?: string }) => {
       const { graph } = useGraphStore.getState();
-      const { brief: rawBrief, llmOptions, answers } = useDesignSession.getState();
+      const { brief: rawBrief, llmOptions, answers, specGraph } = useDesignSession.getState();
       const brief = rawBrief.trim();
       if (!brief) {
         set({ error: 'Write the prompt on page 01 first.' });
@@ -267,6 +267,9 @@ export const useBuildStore = create<BuildState>()((set, get) => {
           brief,
           projectName: graph.project,
           graph,
+          // §7: the validated spec graph rides along; the backend's stage-0
+          // gate refuses to build from a graph that is not fully validated.
+          specGraph: specGraph ?? undefined,
           provider: options?.provider ?? llmOptions.provider,
           model: options?.model ?? llmOptions.model,
           revisionInstruction: options?.revisionInstruction,
