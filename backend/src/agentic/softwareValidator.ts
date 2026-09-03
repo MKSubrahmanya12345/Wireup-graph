@@ -325,7 +325,7 @@ export async function validateSoftware(
 
     if (pkg === 'backend') {
       // 2a. Type-check + compile the API (dist also feeds the smoke gate).
-      const beTsc = await runCommand([...pkgBase, 'exec', 'tsc', '-p', 'tsconfig.json', '--noEmit'], {
+      const beTsc = await runCommand([...pkgBase, 'exec', '--', 'tsc', '-p', 'tsconfig.json', '--noEmit'], {
         cwd: pkgDir,
         timeoutMs: 180_000,
       });
