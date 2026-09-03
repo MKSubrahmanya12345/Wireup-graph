@@ -10,6 +10,10 @@ import type {
   RequirementsSpec,
 } from '../types/session';
 import type {
+  SpecGraphProject,
+  SpecGraphResponse,
+} from '../types/specGraph';
+import type {
   AdminOverview,
   AdminUser,
   AgenticEvent,
@@ -184,15 +188,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // ??$$$ Hardware Spec Graph API methods
-  generateSpecGraph: (body: { prompt: string; answers?: Record<string, string> }) =>
-    request<{ specGraph: any; archGraph: ArchitectureGraph; isReady: boolean }>('/architecture/spec-graph', {
+  // ??$$$ Hardware Spec Graph API methods — AI-powered decomposition, no fallback.
+  generateSpecGraph: (body: {
+    prompt: string;
+    answers?: Record<string, string>;
+    provider?: string;
+    model?: string;
+  }) =>
+    request<SpecGraphResponse>('/architecture/spec-graph', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
-  answerSpecGraph: (body: { specGraph: any; answers: Record<string, string> }) =>
-    request<{ specGraph: any; archGraph: ArchitectureGraph; isReady: boolean }>('/architecture/spec-graph/answer', {
+  answerSpecGraph: (body: { specGraph: SpecGraphProject; answers: Record<string, string> }) =>
+    request<SpecGraphResponse>('/architecture/spec-graph/answer', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

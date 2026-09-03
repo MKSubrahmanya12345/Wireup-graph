@@ -1,128 +1,187 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-// Old imports commented out per Rule 2:
-// const {
-//   decomposePromptToSpecGraph,
-//   specGraphToArchitectureGraph,
-//   specGraphProjectSchema,
-// } = await import('../src/agentic/specGraph.ts');
-
-// ??$$$ Updated imports including dirty propagation and handoff contract functions
 const {
-  decomposePromptToSpecGraph,
-  specGraphToArchitectureGraph,
   specGraphProjectSchema,
+  finalizeSpecGraph,
   applyUserAnswersToSpecGraph,
   isSpecGraphReadyForHandoff,
+  specGraphToArchitectureGraph,
+  buildRequiredByIndex,
+  detectResourceContention,
 } = await import('../src/agentic/specGraph.ts');
 
-describe('SpecGraph Decomposition Engine', () => {
-  it('decomposes the autonomous follow-me drone prompt into the complete dual-compute stack and meta-nodes', () => {
-    const prompt =
-      'I want to build a drone that can autonomously follow a person using a camera, avoid obstacles, and send live video + battery status to my phone app.';
+/** A hand-built Arduino Uno project: connectivity gap → an unresolved question. */
+function arduinoFixture() {
+  return {
+    format: 'wireup-spec-graph',
+    version: 1,
+    project_id: 'proj_arduino',
+    title: 'Arduino Uno Web Status Monitor',
+    raw_prompt: 'arduino uno + led + external website status + button',
+    domain: 'embedded-iot',
+    status: 'draft',
+    branches: [],
+    question_queue: [],
+    assumption_log: [],
+    nodes: {
+      node_power_01: {
+        id: 'node_power_01',
+        domain: 'power',
+        title: '5V Regulated Power Rail',
+        status: 'validated',
+        spec: { voltage_v: 5, rail_budget_ma: 500, supply_rail: '5v' },
+        requires: [],
+        spawned: [],
+        assumptions: [],
+        open_questions: [],
+        known_uncertainty: [],
+        validation: { checked: false, issues: [] },
+      },
+      node_board_01: {
+        id: 'node_board_01',
+        domain: 'controller',
+        title: 'Arduino Uno R3 Board',
+        status: 'validated',
+        spec: { mcu: 'ATmega328P', logic_v: 5, wifi: false, supply_rail: '5v', power_draw_ma: 100 },
+        requires: ['node_power_01'],
+        spawned: ['node_connectivity_01'],
+        assumptions: [],
+        open_questions: [],
+        known_uncertainty: [],
+        validation: { checked: false, issues: [] },
+      },
+      node_connectivity_01: {
+        id: 'node_connectivity_01',
+        domain: 'connectivity',
+        title: 'Wi-Fi Module for Status Reporting',
+        status: 'unresolved',
+        spec: {},
+        requires: ['node_power_01', 'node_board_01'],
+        spawned: ['node_firmware_wifi_01'],
+        assumptions: [],
+        open_questions: [
+          {
+            id: 'connectivity_module',
+            q: 'Do you already have an ESP8266/ESP32, or should the Uno stay wifi-less and use an Ethernet shield instead?',
+            why_blocking: 'wiring diagram and firmware differ completely between the two paths',
+            options: ['ESP8266 (serial bridge)', 'ESP32 (replaces Uno)', 'Ethernet shield', 'none of these'],
+            default: 'ESP8266 (serial bridge)',
+          },
+        ],
+        known_uncertainty: [],
+        validation: { checked: false, issues: [] },
+      },
+      node_firmware_wifi_01: {
+        id: 'node_firmware_wifi_01',
+        domain: 'firmware',
+        title: 'Arduino WiFi HTTP Post Firmware Loop',
+        status: 'validated',
+        spec: { loop_hz: 10 },
+        requires: ['node_connectivity_01'],
+        spawned: [],
+        assumptions: [],
+        open_questions: [],
+        known_uncertainty: ['HTTP endpoint reachability depends on the user network'],
+        validation: { checked: false, issues: [] },
+      },
+    },
+  };
+}
 
-    const specGraph = decomposePromptToSpecGraph({ prompt });
-
-    // Validate against schema
-    const parsed = specGraphProjectSchema.safeParse(specGraph);
+describe('SpecGraph engine — deterministic validation, propagation and handoff', () => {
+  it('finalizes a flattened manifest: branches, question queue, statuses', () => {
+    const graph = finalizeSpecGraph(arduinoFixture());
+    const parsed = specGraphProjectSchema.safeParse(graph);
     assert.equal(parsed.success, true);
 
-    // Assert project metadata
-    assert.equal(specGraph.project.title, 'Autonomous Follow-Me Drone');
-    assert.equal(specGraph.project.domain, 'autonomous-drone');
-
-    // Assert exact nodes created
-    const nodeIds = Object.keys(specGraph.nodes);
-    assert.ok(nodeIds.includes('node_airframe'));
-    assert.ok(nodeIds.includes('node_flight_controller'));
-    assert.ok(nodeIds.includes('node_companion_compute'));
-    assert.ok(nodeIds.includes('node_perception'));
-    assert.ok(nodeIds.includes('node_autonomy_software'));
-    assert.ok(nodeIds.includes('node_comms_link'));
-    assert.ok(nodeIds.includes('node_ground_station_app'));
-    assert.ok(nodeIds.includes('node_power_battery'));
-    assert.ok(nodeIds.includes('node_propulsion'));
-
-    // Assert auto-spawned cardinality meta-nodes
-    assert.ok(nodeIds.includes('node_bridge_fc_companion'));
-    assert.ok(nodeIds.includes('node_power_buck_12v'));
-    assert.ok(nodeIds.includes('node_power_bec_5v'));
-
-    // Assert companion compute chosen as Jetson Orin Nano with rationale
-    const companionNode = specGraph.nodes['node_companion_compute'];
-    assert.equal(companionNode.spec.board, 'NVIDIA Jetson Orin Nano (8GB)');
-    assert.ok(companionNode.assumptions.some((a) => a.claim.includes('Jetson Orin Nano')));
-
-    // Assert inter-compute bridge has MAVLink 2.0
-    const bridgeNode = specGraph.nodes['node_bridge_fc_companion'];
-    assert.equal(bridgeNode.spec.protocol, 'MAVLink 2.0');
-
-    // Assert questions generated follow the 4-part gate (mobility, perception, flight time)
-    const questionIds = specGraph.question_queue.map((q) => q.id);
-    assert.ok(questionIds.includes('mobility_type'));
-    assert.ok(questionIds.includes('perception_type'));
-    assert.ok(questionIds.includes('target_flight_time'));
-
-    // Assert 2D/3D ArchitectureGraph twin conversion works cleanly
-    const arch = specGraphToArchitectureGraph(specGraph);
-    assert.ok(arch.nodes.length >= 10);
-    assert.ok(arch.connections.length >= 5);
-    assert.equal(arch.project, 'Autonomous Follow-Me Drone');
+    assert.equal(graph.status, 'awaiting_user');
+    assert.equal(graph.question_queue.length, 1);
+    assert.equal(graph.question_queue[0].id, 'connectivity_module');
+    assert.ok(graph.branches.length >= 4);
+    // The unresolved connectivity node keeps its question and stays unresolved.
+    assert.equal(graph.nodes.node_connectivity_01.status, 'unresolved');
   });
 
-  it('decomposes standard IoT sensing project into mcu, sensor, and dashboard nodes', () => {
-    const prompt = 'esp32 with dht22 sensor and a 5v relay to control a fan, web dashboard on pc';
-
-    const specGraph = decomposePromptToSpecGraph({ prompt });
-
-    assert.equal(specGraph.project.domain, 'embedded-iot');
-    const nodeIds = Object.keys(specGraph.nodes);
-    assert.ok(nodeIds.includes('node_mcu'));
-    assert.ok(nodeIds.includes('node_temp_sensor'));
-    assert.ok(nodeIds.includes('node_relay'));
-    assert.ok(nodeIds.includes('node_software_dashboard'));
-
-    const arch = specGraphToArchitectureGraph(specGraph);
-    assert.ok(arch.nodes.length >= 4);
-  });
-
-  // ??$$$ Test generic freestyle capability decomposition, Ask/Decide gate, dirty propagation & handoff contract
-  it('decomposes Arduino Uno + LED + external website status + button with gap detection and Ask/Decide gate', () => {
-    const prompt = 'arduino uno + led + external website status + button';
-    const specGraph = decomposePromptToSpecGraph({ prompt });
-
-    // Validate root manifest branches structure (Section 2)
-    assert.ok(Array.isArray(specGraph.branches));
-    assert.ok(specGraph.branches.length >= 4);
-
-    // Verify nodes created
-    const nodeIds = Object.keys(specGraph.nodes);
-    assert.ok(nodeIds.includes('node_board_01'));
-    assert.ok(nodeIds.includes('node_connectivity_01'));
-    assert.ok(nodeIds.includes('node_led_01'));
-    assert.ok(nodeIds.includes('node_button_01'));
-    assert.ok(nodeIds.includes('node_firmware_wifi_01'));
-    // Enclosure not implied -> never spawned
-    assert.equal(nodeIds.includes('node_enclosure_01'), false);
-
-    // Verify Ask/Decide gate: connectivity module question asked because it passes 3 rules
-    const connNode = specGraph.nodes['node_connectivity_01'];
-    assert.equal(connNode.open_questions.length, 1);
-    assert.equal(connNode.open_questions[0].id, 'connectivity_module');
-
-    // Verify Ask/Decide gate: LED resistor failed gate test #2 (safe default exists) -> assumption logged, never asked!
-    const ledNode = specGraph.nodes['node_led_01'];
-    assert.equal(ledNode.open_questions.length, 0);
-    assert.ok(ledNode.assumptions.some((a) => a.claim.includes('220Ω')));
-
-    // Test dirty propagation & answer resolution (Section 5 & 6)
-    const updatedGraph = applyUserAnswersToSpecGraph(specGraph, {
+  it('walks dirty propagation over `requires` only — `spawned` edges play no part', () => {
+    const graph = finalizeSpecGraph(arduinoFixture());
+    const updated = applyUserAnswersToSpecGraph(graph, {
       connectivity_module: 'ESP8266 (serial bridge)',
     });
 
-    assert.equal(updatedGraph.question_queue.length, 0);
-    assert.equal(updatedGraph.nodes['node_connectivity_01'].status, 'user_confirmed');
-    assert.equal(isSpecGraphReadyForHandoff(updatedGraph), true);
+    assert.equal(updated.nodes.node_connectivity_01.status, 'user_confirmed');
+    assert.equal(updated.question_queue.length, 0);
+    assert.equal(isSpecGraphReadyForHandoff(updated), true);
+    // firmware required connectivity, so it re-validated cleanly.
+    assert.equal(updated.nodes.node_firmware_wifi_01.status, 'validated');
+  });
+
+  it('builds the reverse `requires` index used for propagation', () => {
+    const index = buildRequiredByIndex(arduinoFixture().nodes);
+    assert.deepEqual(index.get('node_power_01').sort(), ['node_board_01', 'node_connectivity_01']);
+    assert.deepEqual(index.get('node_connectivity_01'), ['node_firmware_wifi_01']);
+  });
+
+  it('spawns a resource_allocation node on a genuine I2C address collision', () => {
+    const fixture = arduinoFixture();
+    // Two nodes pinned to the same fixed I2C address → contention.
+    fixture.nodes.node_sensor_a = {
+      id: 'node_sensor_a', domain: 'sensor', title: 'Sensor A', status: 'validated',
+      spec: { i2c_address: '0x29' }, requires: ['node_power_01'], spawned: [],
+      assumptions: [], open_questions: [], known_uncertainty: [],
+      validation: { checked: false, issues: [] },
+    };
+    fixture.nodes.node_sensor_b = {
+      id: 'node_sensor_b', domain: 'sensor', title: 'Sensor B', status: 'validated',
+      spec: { i2c_address: '0x29' }, requires: ['node_power_01'], spawned: [],
+      assumptions: [], open_questions: [], known_uncertainty: [],
+      validation: { checked: false, issues: [] },
+    };
+
+    const log = [];
+    detectResourceContention(fixture.nodes, log);
+
+    const allocNode = Object.values(fixture.nodes).find((n) => n.domain === 'resource_allocation');
+    assert.ok(allocNode, 'expected a resource_allocation node');
+    assert.ok(allocNode.requires.includes('node_sensor_a'));
+    assert.ok(allocNode.requires.includes('node_sensor_b'));
+    assert.equal(allocNode.status, 'assumed');
+    assert.equal(log.length, 1);
+  });
+
+  it('does NOT spawn a resource_allocation node when two I2C devices do not collide', () => {
+    const fixture = arduinoFixture();
+    fixture.nodes.node_sensor_a = {
+      id: 'node_sensor_a', domain: 'sensor', title: 'Sensor A', status: 'validated',
+      spec: { i2c_address: '0x29' }, requires: [], spawned: [],
+      assumptions: [], open_questions: [], known_uncertainty: [],
+      validation: { checked: false, issues: [] },
+    };
+    fixture.nodes.node_sensor_b = {
+      id: 'node_sensor_b', domain: 'sensor', title: 'Sensor B', status: 'validated',
+      spec: { i2c_address: '0x76' }, requires: [], spawned: [],
+      assumptions: [], open_questions: [], known_uncertainty: [],
+      validation: { checked: false, issues: [] },
+    };
+
+    const log = [];
+    detectResourceContention(fixture.nodes, log);
+    assert.equal(
+      Object.values(fixture.nodes).some((n) => n.domain === 'resource_allocation'),
+      false,
+    );
+  });
+
+  it('converts the spec graph into an architecture twin with requires + spawned edges', () => {
+    const graph = finalizeSpecGraph(arduinoFixture());
+    const arch = specGraphToArchitectureGraph(graph);
+
+    assert.equal(arch.project, 'Arduino Uno Web Status Monitor');
+    assert.ok(arch.nodes.length >= 4);
+
+    const requires = arch.connections.filter((c) => c.label === 'requires' && c.kind === 'dependency');
+    const spawned = arch.connections.filter((c) => c.label === 'spawned' && c.kind === 'other');
+    assert.ok(requires.length >= 3);
+    assert.ok(spawned.length >= 1);
   });
 });
