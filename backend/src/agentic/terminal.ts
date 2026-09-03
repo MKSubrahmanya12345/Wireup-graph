@@ -25,6 +25,35 @@ export interface CommandResult {
 
 const MAX_OUTPUT_CHARS = 12_000;
 
+const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * Windows-only cmd.exe metacharacters that force quoting when they appear in
+ * an argument. Whitespace also forces quoting so multi-word args survive.
+ */
+const CMD_SPECIAL_CHARS = /[\s&|<>^()%!"]/;
+
+/**
+ * Quote a single argv entry for a `cmd.exe /c <line>` command line. Doubles
+ * embedded double-quotes and wraps the whole argument in quotes whenever it
+ * contains whitespace or a cmd.exe metacharacter. Arguments that need no
+ * special handling are passed through untouched to keep logs readable.
+ */
+function quoteForCmd(arg: string): string {
+  if (arg.length > 0 && !CMD_SPECIAL_CHARS.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/** Build the full command line cmd.exe /c should run for a given argv. */
+function buildCmdLine(argv: string[]): string {
+  return argv.map(quoteForCmd).join(' ');
+}
+
+/** True for the two spawn failure modes CVE-2024-27980 hardening produces for .cmd shims. */
+function isCmdShimSpawnError(code: unknown): boolean {
+  return code === 'ENOENT' || code === 'EINVAL';
+}
+
 export async function runCommand(
   argv: string[],
   options: { cwd?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
@@ -44,66 +73,119 @@ export async function runCommand(
     });
   }
 
-  return new Promise((resolve) => {
-    let timedOut = false;
-    let output = '';
-    let child: ChildProcess;
-    try {
-      child = spawn(executable, argv.slice(1), {
-        cwd: options.cwd,
-        env: { ...process.env, ...options.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      });
-    } catch (error) {
-      resolve({
-        cmd,
-        exitCode: null,
-        output: `spawn failed: ${error instanceof Error ? error.message : String(error)}`,
-        durationMs: Date.now() - startedAt,
-        timedOut: false,
-      });
-      return;
-    }
+  /**
+   * Run one spawn attempt. `viaShell` selects the Windows cmd.exe retry mode
+   * (only ever used on win32, after a direct spawn hit ENOENT/EINVAL — see
+   * the caller below). POSIX always takes the `viaShell: false` path, which
+   * is byte-identical to the pre-existing behaviour.
+   */
+  const attempt = (viaShell: boolean): Promise<CommandResult | { retryable: true }> =>
+    new Promise((resolve) => {
+      let timedOut = false;
+      let settled = false;
+      let output = '';
+      let child: ChildProcess;
 
-    const append = (chunk: Buffer) => {
-      if (output.length < MAX_OUTPUT_CHARS) {
-        output += chunk.toString('utf8');
-        if (output.length > MAX_OUTPUT_CHARS) {
-          output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n…[output truncated]`;
+      const spawnExecutable = viaShell ? (process.env.ComSpec ?? process.env.comspec ?? 'cmd.exe') : executable;
+      const spawnArgs = viaShell ? ['/d', '/s', '/c', buildCmdLine(argv)] : argv.slice(1);
+
+      try {
+        child = spawn(spawnExecutable, spawnArgs, {
+          cwd: options.cwd,
+          env: { ...process.env, ...options.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+          ...(viaShell ? { windowsVerbatimArguments: true } : {}),
+        });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (!viaShell && IS_WINDOWS && isCmdShimSpawnError(code)) {
+          resolve({ retryable: true });
+          return;
         }
+        resolve({
+          cmd,
+          exitCode: null,
+          output: `spawn failed: ${error instanceof Error ? error.message : String(error)}`,
+          durationMs: Date.now() - startedAt,
+          timedOut: false,
+        });
+        return;
       }
+
+      const append = (chunk: Buffer) => {
+        if (output.length < MAX_OUTPUT_CHARS) {
+          output += chunk.toString('utf8');
+          if (output.length > MAX_OUTPUT_CHARS) {
+            output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n…[output truncated]`;
+          }
+        }
+      };
+      child.stdout?.on('data', append);
+      child.stderr?.on('data', append);
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeoutMs);
+
+      // Node fires `close` even after a spawn that never really started (the
+      // ENOENT/EINVAL case). `settled` makes sure only the first of
+      // error/close for THIS attempt can resolve — a late event from an
+      // attempt we've already abandoned (attempt 1, after we decided to
+      // retry) must never settle the promise or race attempt 2.
+      child.on('error', (error: Error) => {
+        if (settled) return;
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (!viaShell && IS_WINDOWS && isCmdShimSpawnError(code)) {
+          settled = true;
+          clearTimeout(timer);
+          resolve({ retryable: true });
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          cmd,
+          exitCode: null,
+          output: `spawn error: ${error.message}`,
+          durationMs: Date.now() - startedAt,
+          timedOut: false,
+        });
+      });
+
+      child.on('close', (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          cmd,
+          exitCode: code,
+          output: output.trim(),
+          durationMs: Date.now() - startedAt,
+          timedOut,
+        });
+      });
+    });
+
+  const first = await attempt(false);
+  if (!('retryable' in first)) return first;
+
+  // Windows only: the direct spawn couldn't resolve a .cmd shim (pnpm, npm,
+  // tsc, etc. all ship as .cmd on Windows). Retry once through cmd.exe so
+  // PATHEXT resolution kicks in. POSIX never reaches here.
+  const second = await attempt(true);
+  if ('retryable' in second) {
+    // Should not happen (cmd.exe itself missing) — surface a clean error.
+    return {
+      cmd,
+      exitCode: null,
+      output: 'spawn error: could not locate cmd.exe to resolve a .cmd shim on Windows',
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
     };
-    child.stdout?.on('data', append);
-    child.stderr?.on('data', append);
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-
-    child.on('error', (error: Error) => {
-      clearTimeout(timer);
-      resolve({
-        cmd,
-        exitCode: null,
-        output: `spawn error: ${error.message}`,
-        durationMs: Date.now() - startedAt,
-        timedOut: false,
-      });
-    });
-
-    child.on('close', (code: number | null) => {
-      clearTimeout(timer);
-      resolve({
-        cmd,
-        exitCode: code,
-        output: output.trim(),
-        durationMs: Date.now() - startedAt,
-        timedOut,
-      });
-    });
-  });
+  }
+  return second;
 }
 
 // ── Work directories ────────────────────────────────────────────────────────
