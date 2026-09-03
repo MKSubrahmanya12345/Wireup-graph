@@ -9,11 +9,13 @@ import { api } from '../services/api';
 import { useDesignSession } from '../store/useDesignSession';
 import { useGraphStore } from '../store/useGraphStore';
 import type { ArchitectureGraph } from '../types/architecture';
-import type {
-  SpecGraphProject,
-  SpecGraphResponse,
-  SpecNode,
-  SpecQuestion,
+import {
+  resolveAssumptionLog,
+  resolveQuestionQueue,
+  type SpecGraphProject,
+  type SpecGraphResponse,
+  type SpecNode,
+  type SpecQuestion,
 } from '../types/specGraph';
 
 const LOADER_STEPS = [
@@ -103,7 +105,7 @@ export default function SpecGraphPage() {
 
         // Pre-select the recommended default for every open question.
         const defaults: Record<string, string> = { ...(answers ?? {}) };
-        for (const question of res.specGraph.question_queue ?? []) {
+        for (const { question } of resolveQuestionQueue(res.specGraph)) {
           defaults[questionKey(question)] =
             answers?.[questionKey(question)] ??
             question.default ??
@@ -140,9 +142,11 @@ export default function SpecGraphPage() {
     });
   }, [specGraph]);
 
-  const questions = specGraph?.question_queue ?? [];
+  // §2: the manifest's queue holds pointers — dereference against live nodes.
+  const questions = specGraph ? resolveQuestionQueue(specGraph) : [];
   const allAnswered =
-    questions.length > 0 && questions.every((q) => effectiveAnswer(q, selectedAnswers));
+    questions.length > 0 &&
+    questions.every(({ question }) => effectiveAnswer(question, selectedAnswers));
 
   const applyAnswers = async () => {
     if (!specGraph || !allAnswered) return;
@@ -152,7 +156,7 @@ export default function SpecGraphPage() {
       const merged = { ...answers, ...selectedAnswers };
       const res = await api.answerSpecGraph({ specGraph, answers: merged });
 
-      for (const question of questions) {
+      for (const { question } of questions) {
         const value = effectiveAnswer(question, selectedAnswers);
         if (value) setAnswer(questionKey(question), value);
       }
@@ -372,8 +376,8 @@ export default function SpecGraphPage() {
               <div className="sg-audit">
                 <div className="sg-section-label">Audit log of assumptions</div>
                 <ul>
-                  {(specGraph?.assumption_log ?? []).map((entry, index) => (
-                    <li key={index}>
+                  {resolveAssumptionLog(specGraph).map((entry, index) => (
+                    <li key={`${entry.node_id}-${index}`}>
                       <code>[{entry.node_id}]</code>
                       <span>{entry.claim} — {entry.why}</span>
                     </li>
@@ -413,14 +417,20 @@ export default function SpecGraphPage() {
             </p>
 
             <div className="sg-modal-questions">
-              {questions.map((question, questionIndex) => {
+              {questions.map(({ node_id, question }, questionIndex) => {
                 const selected = effectiveAnswer(question, selectedAnswers);
+                const askingNode = specGraph?.nodes[node_id];
                 return (
                   <div key={questionKey(question)} className="sg-question">
                     <div className="sg-question-head">
                       <span className="sg-question-index">{questionIndex + 1}</span>
                       <h3>{question.q}</h3>
                     </div>
+                    {askingNode && (
+                      <p className="sg-question-why">
+                        <strong>Node:</strong> {askingNode.title} <code>({node_id})</code>
+                      </p>
+                    )}
                     {question.why_blocking && (
                       <p className="sg-question-why">
                         <strong>Why blocking:</strong> {question.why_blocking}

@@ -4,6 +4,7 @@
 
 import type { ArchitectureGraph } from '../schemas/architecture.js';
 import type { BuildFile, FirmwareResult, WebsiteRequirements } from '../schemas/build.js';
+import type { SpecGraphProject } from './specGraph.js';
 
 /** One structured finding produced by a validator (terminal or static). */
 export interface ValidationFinding {
@@ -141,6 +142,18 @@ export interface AgenticBuildResult {
   bom: import('./bom.js').Bom;
   /** Null when the dashboard build produced nothing servable. */
   preview: BuildPreviewSummary | null;
+  /**
+   * §7 spec-graph handoff snapshot — present when a validated spec graph rode
+   * along with the build. The artifact itself (manifest.json + nodes/*.json)
+   * is persisted inside the build workspace; the durable copy lives in
+   * SPEC_GRAPH_DIR, written by the spec-graph endpoints.
+   */
+  specGraphHandoff?: {
+    nodeCount: number;
+    assumptions: number;
+    uncertainties: number;
+    dir: string;
+  };
 }
 
 /** The resolved, build-ready device model the generators consume. */
@@ -248,6 +261,16 @@ export interface PipelineInput {
    * to the exact same terminal gate as a first draft.
    */
   revisionInstruction?: string;
+  /**
+   * The validated Hardware Spec Graph (design doc §7 export contract). When
+   * present, the pipeline REFUSES to run unless the graph passes
+   * isSpecGraphReadyForHandoff (every node validated, empty question queue,
+   * no error-severity issues); the full node graph + manifest are persisted
+   * into the build workspace, and every preserved assumption and disclosed
+   * known-uncertainty is carried into the generated instructions so the
+   * coding agent — and the user — can see what was decided on their behalf.
+   */
+  specGraph?: SpecGraphProject | null;
   /**
    * Cancellation. A build runs as a server-side job, so the human can leave
    * the page, come back, or stop it explicitly — the pipeline checks this

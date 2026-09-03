@@ -1,5 +1,8 @@
 import mongoose from 'mongoose';
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { isPersistenceEnabled } from '../config/db.js';
 import { Project } from '../models/Project.js';
 import { claimOwnership } from './projectController.js';
@@ -31,8 +34,21 @@ import {
   applyUserAnswersToSpecGraph,
   specGraphToArchitectureGraph,
   isSpecGraphReadyForHandoff,
-  type SpecGraphProject,
+  saveSpecGraphToDisk,
+  loadSpecGraphBranchFromDisk,
+  specGraphProjectSchema,
 } from '../agentic/specGraph.js';
+
+/**
+ * §2 — persisted spec-graph storage. Every generate/answer call writes the
+ * full §2 layout (manifest.json + nodes/*.json); the GET endpoints read it
+ * back without ever handing the client a graph it did not ask for.
+ */
+const SPEC_GRAPH_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function specGraphDirFor(projectId: string): string {
+  return path.join(env.SPEC_GRAPH_DIR, projectId);
+}
 
 /**
  * POST /api/architecture/plan
@@ -295,6 +311,9 @@ export const generateSpecGraph = asyncHandler(async (req: Request, res: Response
     model,
   });
 
+  // §2 — persist manifest + per-node files (the durable §7 handoff artifact).
+  saveSpecGraphToDisk(specGraph, specGraphDirFor(specGraph.project_id));
+
   const archGraph = specGraphToArchitectureGraph(specGraph);
   const isReady = isSpecGraphReadyForHandoff(specGraph);
 
@@ -308,10 +327,24 @@ export const answerSpecGraph = asyncHandler(async (req: Request, res: Response) 
     throw ApiError.badRequest('Both specGraph project object and answers map are required.');
   }
 
+  // The graph comes from the client — normalise it through the schema instead
+  // of casting, so a malformed or stale payload is a 400, never a guess.
+  const parsedGraph = specGraphProjectSchema.safeParse(specGraph);
+  if (!parsedGraph.success) {
+    throw ApiError.badRequest(
+      'The specGraph payload is not a valid wireup-spec-graph project.',
+      parsedGraph.error.flatten(),
+    );
+  }
+
   const updatedSpecGraph = applyUserAnswersToSpecGraph(
-    specGraph as SpecGraphProject,
+    parsedGraph.data,
     answers as Record<string, string>,
   );
+
+  // §2 — the persisted graph always reflects the latest resolved state.
+  saveSpecGraphToDisk(updatedSpecGraph, specGraphDirFor(updatedSpecGraph.project_id));
+
   const archGraph = specGraphToArchitectureGraph(updatedSpecGraph);
   const isReady = isSpecGraphReadyForHandoff(updatedSpecGraph);
 
@@ -320,6 +353,42 @@ export const answerSpecGraph = asyncHandler(async (req: Request, res: Response) 
     archGraph,
     isReady,
   });
+});
+
+// ??$$$ GET /api/architecture/spec-graph/:projectId — the persisted root manifest (§2).
+// The manifest NEVER holds full node content — pointers only, by construction.
+export const getSpecGraphManifest = asyncHandler(async (req: Request, res: Response) => {
+  const projectId = String(req.params.projectId ?? '');
+  if (!SPEC_GRAPH_ID_PATTERN.test(projectId)) {
+    throw ApiError.badRequest('Invalid spec-graph project id.');
+  }
+  const dir = specGraphDirFor(projectId);
+  const manifestPath = path.join(dir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new ApiError(404, `No spec graph is persisted for project "${projectId}".`);
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+  res.status(200).json({ projectId, dir, manifest });
+});
+
+// ??$$$ GET /api/architecture/spec-graph/:projectId/nodes/:branchId — ONE branch
+// plus its direct `requires` neighbours ONLY (§2's tractability rule: the AI
+// loads the branch it is working on, never the whole graph).
+export const getSpecGraphBranch = asyncHandler(async (req: Request, res: Response) => {
+  const projectId = String(req.params.projectId ?? '');
+  const branchId = String(req.params.branchId ?? '');
+  if (!SPEC_GRAPH_ID_PATTERN.test(projectId) || !SPEC_GRAPH_ID_PATTERN.test(branchId)) {
+    throw ApiError.badRequest('Invalid spec-graph project or branch id.');
+  }
+  const dir = specGraphDirFor(projectId);
+  if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
+    throw new ApiError(404, `No spec graph is persisted for project "${projectId}".`);
+  }
+  const { manifest, branchNodes } = loadSpecGraphBranchFromDisk(dir, branchId);
+  if (!(branchId in branchNodes)) {
+    throw new ApiError(404, `No node "${branchId}" in project "${projectId}".`);
+  }
+  res.status(200).json({ projectId, branchId, manifest, branchNodes });
 });
 
 /** Kept exported for parity with the frontend client, which never calls it. */
