@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import titleArt from '../assets/wireup-title.png';
 import { api } from '../services/api';
 import { useBuildStore } from '../store/useBuildStore';
 import { useDesignSession } from '../store/useDesignSession';
@@ -112,6 +113,11 @@ export default function ProjectsPage() {
   return (
     <div className="page projects-page">
       <section className="projects-hero">
+        <img
+          className="projects-title-art"
+          src={titleArt}
+          alt="Wireup — prompt to shipped hardware"
+        />
         <div className="eyebrow">your workbench · every build its own project</div>
         <h1>
           What are we <span className="accent-text">wiring up</span>?
