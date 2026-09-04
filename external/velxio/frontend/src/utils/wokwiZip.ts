@@ -26,7 +26,7 @@ interface WokwiPart {
   attrs: Record<string, unknown>;
 }
 
-interface WokwiDiagram {
+export interface WokwiDiagram {
   version: number;
   author: string;
   editor: string;
@@ -454,21 +454,50 @@ export function retargetBoardWires(wires: Wire[], fromId: string, toId: string):
 
 // ── Import ────────────────────────────────────────────────────────────────────
 
-export async function importFromWokwiZip(file: File): Promise<ImportResult> {
-  const zip = await JSZip.loadAsync(file);
+/** Circuit-only subset of ImportResult: what a diagram.json alone says.
+ *  The zip importer returns this plus the code files and libraries it finds
+ *  next to the diagram; the editor's diagram.json view applies it directly to
+ *  the canvas — the reverse direction of buildWokwiDiagram. */
+export interface DiagramParseResult {
+  /** The board kind the diagram declares, or null when it declares none. */
+  boardType: string | null;
+  boardPosition: { x: number; y: number };
+  components: VelxioComponent[];
+  wires: Wire[];
+  warnings: string[];
+}
 
-  // diagram.json is required
-  const diagramEntry = zip.file('diagram.json');
-  if (!diagramEntry) throw new Error('No diagram.json found in the zip file.');
-
-  const diagramText = await diagramEntry.async('string');
-  const diagram: WokwiDiagram = JSON.parse(diagramText);
-
+/**
+ * Convert a parsed Wokwi diagram.json into Velxio circuit state.
+ *
+ * This is the exact conversion importFromWokwiZip performs, extracted so the
+ * editor's diagram.json view can push hand edits back onto the canvas through
+ * the SAME rules (board detection, pin normalisation, #268 dangling checks)
+ * instead of a second, drifting copy of them. Callers that did not come from
+ * a zip simply pass no chip sources.
+ *
+ * Hand-edited JSON gets three guards the zip path never needed: parts and
+ * connections that are not the right shape are dropped (the Python MCP port
+ * already did this for connections), and coordinates are coerced — valid
+ * diagrams parse identically either way.
+ */
+export function parseWokwiDiagramToCircuit(
+  diagram: WokwiDiagram,
+  chipFiles: Map<string, { c?: string; json?: string }> = new Map(),
+): DiagramParseResult {
   const warnings: string[] = [];
+
+  const parts = diagram.parts.filter(
+    (p): p is WokwiPart => Boolean(p && typeof p === 'object' && typeof p.type === 'string'),
+  );
+  const connections = diagram.connections.filter(
+    (conn): conn is [string, string, string, string[]] =>
+      Array.isArray(conn) && conn.length >= 2 && typeof conn[0] === 'string' && typeof conn[1] === 'string',
+  );
 
   // Detect the board. Parts that name a board come first; anything else is a
   // component.
-  const boardParts = diagram.parts.filter((p) => wokwiTypeToBoardKind(p.type) !== null);
+  const boardParts = parts.filter((p) => wokwiTypeToBoardKind(p.type) !== null);
   const boardPart = boardParts[0] ?? null;
   const boardType = boardPart ? wokwiTypeToBoardKind(boardPart.type) : null;
 
@@ -476,9 +505,9 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
     // Do NOT invent an Uno. A diagram whose board type we do not know is a
     // diagram whose board we would silently replace, and the user would see a
     // circuit wired to the wrong chip with no hint why.
-    const unknown = [...new Set(diagram.parts.map((p) => p.type))].join(', ');
+    const unknown = [...new Set(parts.map((p) => p.type))].join(', ');
     warnings.push(
-      diagram.parts.length === 0
+      parts.length === 0
         ? 'The diagram has no parts, so no board could be identified.'
         : `No board recognised in the diagram (parts: ${unknown}). The circuit was imported; add the board yourself and its wires will attach.`,
     );
@@ -510,8 +539,8 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
   // raw origin to MIN_OFFSET while leaving the offsets at 0 (what this did
   // before) put the board 50px from the corner and the circuit somewhere else.
   const MIN_OFFSET = 50;
-  const rawBoardX = boardPart?.left ?? 0;
-  const rawBoardY = boardPart?.top ?? 0;
+  const rawBoardX = Number(boardPart?.left) || 0;
+  const rawBoardY = Number(boardPart?.top) || 0;
   const offsetX = rawBoardX < MIN_OFFSET ? MIN_OFFSET - rawBoardX : 0;
   const offsetY = rawBoardY < MIN_OFFSET ? MIN_OFFSET - rawBoardY : 0;
   const boardPosition = {
@@ -519,24 +548,9 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
     y: rawBoardY + offsetY,
   };
 
-  // Custom chip sources: a `chip-<name>` part's code lives in sibling
-  // <name>.chip.c / <name>.chip.json files. Load them up front so the part
-  // mapping below can be synchronous.
-  const chipFiles = new Map<string, { c?: string; json?: string }>();
-  for (const [filename, entry] of Object.entries(zip.files)) {
-    if (entry.dir) continue;
-    const basename = filename.split('/').pop() ?? filename;
-    const m = basename.match(/^(.+)\.chip\.(c|json)$/);
-    if (!m) continue;
-    const slot = chipFiles.get(m[1]) ?? {};
-    if (m[2] === 'c') slot.c = await entry.async('string');
-    else slot.json = await entry.async('string');
-    chipFiles.set(m[1], slot);
-  }
-
   // Convert non-board parts to Velxio components.
   // Apply the same offset so components keep their relative position to the board.
-  const components: VelxioComponent[] = diagram.parts
+  const components: VelxioComponent[] = parts
     .filter((p) => wokwiTypeToBoardKind(p.type) === null)
     .map((p) => {
       // Wokwi custom chip part → Velxio custom-chip component. The part's
@@ -554,8 +568,8 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
         return {
           id: p.id,
           metadataId: 'custom-chip',
-          x: p.left + offsetX,
-          y: p.top + offsetY,
+          x: (Number(p.left) || 0) + offsetX,
+          y: (Number(p.top) || 0) + offsetY,
           properties: {
             chipName: name,
             sourceC: src?.c ?? '',
@@ -569,8 +583,8 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
       return {
         id: p.id,
         metadataId: wokwiTypeToMetadataId(p.type),
-        x: p.left + offsetX,
-        y: p.top + offsetY,
+        x: (Number(p.left) || 0) + offsetX,
+        y: (Number(p.top) || 0) + offsetY,
         // Wokwi stores rotation as a top-level `rotate` (degrees), not an
         // attr — map it onto properties.rotation or every rotated part
         // imports lying flat.
@@ -582,8 +596,11 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
     });
 
   // Convert connections to Velxio wires
-  const wires: Wire[] = diagram.connections.map((conn, i) => {
-    const [startStr, endStr, color, path] = conn;
+  const wires: Wire[] = connections.map((conn, i) => {
+    const [startStr, endStr, rawColor, path] = conn;
+    // A hand-typed 2-tuple connection carries no color; Wokwi's own default
+    // is green. '' must survive as '' — it marks breadboard seating below.
+    const color = typeof rawColor === 'string' ? rawColor : 'green';
     // Wokwi persists parts seated ON a breadboard as one hidden connection
     // per pin: empty color + the special "$bb" token in the path slot.
     // Import them as velxio breadboard-seating wires (bb: true) so they
@@ -629,9 +646,9 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
   // allowed set with that kind (what this did first) let a wire that literally
   // names the kind pass as defined — which is exactly the wire a second board
   // on the canvas writes. The check went quiet on the one case worth catching.
-  const definedIds = new Set(diagram.parts.map((p) => p.id));
+  const definedIds = new Set(parts.map((p) => p.id));
   const dangling = new Set<string>();
-  for (const [a, b] of diagram.connections) {
+  for (const [a, b] of connections) {
     for (const ref of [a, b]) {
       const id = ref.includes(':') ? ref.slice(0, ref.indexOf(':')) : ref;
       if (id && !definedIds.has(id)) dangling.add(id);
@@ -642,6 +659,39 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
       `Some wires refer to parts the diagram does not contain (${[...dangling].join(', ')}); they were imported but attach to nothing.`,
     );
   }
+
+  return { boardType, boardPosition, components, wires, warnings };
+}
+
+export async function importFromWokwiZip(file: File): Promise<ImportResult> {
+  const zip = await JSZip.loadAsync(file);
+
+  // diagram.json is required
+  const diagramEntry = zip.file('diagram.json');
+  if (!diagramEntry) throw new Error('No diagram.json found in the zip file.');
+
+  const diagramText = await diagramEntry.async('string');
+  const diagram: WokwiDiagram = JSON.parse(diagramText);
+
+  // Custom chip sources: a `chip-<name>` part's code lives in sibling
+  // <name>.chip.c / <name>.chip.json files. Load them up front so the part
+  // mapping below can be synchronous.
+  const chipFiles = new Map<string, { c?: string; json?: string }>();
+  for (const [filename, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue;
+    const basename = filename.split('/').pop() ?? filename;
+    const m = basename.match(/^(.+)\.chip\.(c|json)$/);
+    if (!m) continue;
+    const slot = chipFiles.get(m[1]) ?? {};
+    if (m[2] === 'c') slot.c = await entry.async('string');
+    else slot.json = await entry.async('string');
+    chipFiles.set(m[1], slot);
+  }
+
+  // Board detection, part/wire conversion, dangling checks — everything the
+  // diagram itself says — lives in parseWokwiDiagramToCircuit, shared with the
+  // editor's diagram.json view so the two directions cannot drift apart.
+  const circuit = parseWokwiDiagramToCircuit(diagram, chipFiles);
 
   // Read code files. The export writes every file in the project verbatim, so
   // this list is the one that decides what comes back — and it used to admit
@@ -681,5 +731,5 @@ export async function importFromWokwiZip(file: File): Promise<ImportResult> {
     libraries.push(...parseLibrariesTxt(await libEntry.async('string')));
   }
 
-  return { boardType, boardPosition, components, wires, files, libraries, warnings };
+  return { ...circuit, files, libraries };
 }
