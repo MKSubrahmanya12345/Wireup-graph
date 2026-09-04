@@ -124,6 +124,9 @@ export const specNodeQuestionSchema = z.object({
   why_blocking: textWithFallback(''),
   options: stringList,
   default: optionalText,
+  resolves_field: textWithFallback(''),
+  depends_on_question: optionalText,
+  applies_when: stringList,
 });
 
 export const specNodeValidationIssueSchema = z.object({
@@ -328,12 +331,16 @@ OUTPUT — return JSON ONLY (no markdown), shaped exactly like this:
       "requires": ["id", "id"],
       "spawned": ["id"],
       "assumptions": [ { "claim": "what I decided", "why": "reasoning incl. rejected alternatives" } ],
-      "open_questions": [ { "id": "kebab-case-globally-unique", "q": "the question", "why_blocking": "what changes with the answer", "options": ["opt A", "opt B"], "default": "opt A" } ],
+      "open_questions": [ { "id": "kebab-case-globally-unique", "q": "the question", "why_blocking": "what changes with the answer", "options": ["opt A", "opt B"], "default": "opt A", "resolves_field": "short_snake_case_spec_key_this_answer_sets", "depends_on_question": "id of another open_question in this batch, ONLY if this question is meaningless unless that one resolves a specific way — omit otherwise", "applies_when": ["which values of that question's resolved field keep this question relevant — omit if depends_on_question is omitted"] } ],
       "known_uncertainty": ["short phrase"],
       "validation": { "checked": false, "issues": [] }
     }
   }
 }
+
+OPEN QUESTION RESOLUTION:
+  - Every open_question MUST set "resolves_field" to the actual "spec" key its answer will populate — not a restatement of the question, but a short stable identifier such as "module", "mobility", or "bridge_host_os".
+  - If a question only makes sense for specific resolutions of another question already in the same batch, it MUST set "depends_on_question" to that question's id and "applies_when" to the option values that keep it relevant instead of being emitted unconditionally.
 
 HARD LIMITS:
   - Ask AT MOST 5 questions total across the whole graph. Prefer 0-2. If you would ask more,
@@ -1278,6 +1285,7 @@ export function applyUserAnswersToSpecGraph(
   // mutated by an answer round either.
   const nodes: Record<string, SpecNode> = normaliseSpecNodes(specGraph.nodes ?? {});
   const changedNodeIds = new Set<string>();
+  const resolvedQuestions = new Map<string, { node: SpecNode; question: SpecQuestion }>();
 
   // 1. Write each answer into the node whose open question it answers, flip
   //    that node to user_confirmed, and record the decision as an assumption
@@ -1289,8 +1297,15 @@ export function applyUserAnswersToSpecGraph(
     for (const node of Object.values(nodes)) {
       const question = matchQuestion(node, key);
       if (!question) continue;
-      const specKey = question.id ?? key;
+      const specKey = question.resolves_field || question.id || key;
       node.spec = { ...node.spec, [specKey]: value };
+      if (specKey === 'module' || specKey === 'board' || specKey === 'part') {
+        node.spec = { ...node.spec, part: value };
+      }
+      node.title = `${node.domain}: ${value}`;
+      if (question.id) {
+        resolvedQuestions.set(question.id, { node, question });
+      }
       node.assumptions = [
         ...node.assumptions,
         { claim: `${specKey} = ${value}`, why: `User-confirmed answer to: ${question.q}` },
@@ -1328,10 +1343,33 @@ export function applyUserAnswersToSpecGraph(
   //    so previously allocated contentions are neither re-spawned nor duplicated.
   detectResourceContention(nodes);
 
-  // 4. Re-validate everything.
+  // 4. A resolved sibling can make a conditional question meaningless. Keep
+  //    questions whose dependency is still open; otherwise remove them when
+  //    the answer is outside the values that keep the dependent relevant.
+  const stillOpenQuestionIds = new Set(
+    Object.values(nodes).flatMap((node) =>
+      node.open_questions.map((question) => question.id).filter((id): id is string => Boolean(id)),
+    ),
+  );
+  for (const node of Object.values(nodes)) {
+    node.open_questions = node.open_questions.filter((question) => {
+      const dependencyId = question.depends_on_question;
+      if (!dependencyId || stillOpenQuestionIds.has(dependencyId)) return true;
+
+      const resolved = resolvedQuestions.get(dependencyId);
+      if (!resolved) return true;
+      const resolvedField = resolved.question.resolves_field || resolved.question.id || dependencyId;
+      const resolvedValue = resolved.node.spec[resolvedField];
+      return question.applies_when.includes(
+        typeof resolvedValue === 'string' ? resolvedValue.trim() : String(resolvedValue ?? ''),
+      );
+    });
+  }
+
+  // 5. Re-validate everything.
   runSpecValidationPass(nodes);
 
-  // 5. Re-derive the (still-open) question queue and the assumption log.
+  // 6. Re-derive the (still-open) question queue and the assumption log.
   const questionQueue = collectQuestionQueue(nodes);
 
   return {
