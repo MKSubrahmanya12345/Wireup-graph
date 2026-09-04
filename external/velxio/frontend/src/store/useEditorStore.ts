@@ -149,6 +149,14 @@ interface EditorState {
    *  libraries.json entry; the Library Manager modal is what edits the manifest. */
   manifestViewBoardId: string | null;
   setManifestView: (boardId: string | null) => void;
+  /** When set, the editor shows a READ-ONLY `diagram.json` view instead of
+   *  the active file: this board's circuit serialised in Wokwi diagram
+   *  format, generated live from the canvas by the same builder the Wokwi-zip
+   *  export uses (frontend/src/utils/wokwiZip.ts). Cleared whenever a real
+   *  file is opened/activated. Managed by the explorer's diagram.json entry;
+   *  the canvas is the only thing that edits the circuit. */
+  diagramViewBoardId: string | null;
+  setDiagramView: (boardId: string | null) => void;
   theme: 'vs-dark' | 'light';
   fontSize: number;
   viewMode: EditorViewMode;
@@ -244,7 +252,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   activeFileId: MAIN_ID,
   openFileIds: [MAIN_ID],
   manifestViewBoardId: null,
-  setManifestView: (boardId: string | null) => set({ manifestViewBoardId: boardId }),
+  // The two generated views are mutually exclusive: opening one leaves the
+  // other, so exactly one pane is ever showing (and opening any real file
+  // clears both — see openFile/setActiveFile).
+  setManifestView: (boardId: string | null) =>
+    set({ manifestViewBoardId: boardId, diagramViewBoardId: null }),
+  diagramViewBoardId: null,
+  setDiagramView: (boardId: string | null) =>
+    set({ diagramViewBoardId: boardId, manifestViewBoardId: null }),
   theme: 'vs-dark',
   fontSize: 14,
   viewMode: 'both',
@@ -407,6 +422,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         openFileIds: s.openFileIds.includes(id) ? s.openFileIds : [...s.openFileIds, id],
         activeFileId: id,
         manifestViewBoardId: null, // opening a real file exits the libraries.json view
+        diagramViewBoardId: null, // …and the diagram.json view
         openGroupFileIds: {
           ...s.openGroupFileIds,
           [groupId]: groupOpenIds.includes(id) ? groupOpenIds : [...groupOpenIds, id],
@@ -441,6 +457,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return {
         activeFileId: id,
         manifestViewBoardId: null, // activating a real file exits the libraries.json view
+        diagramViewBoardId: null, // …and the diagram.json view
         activeGroupFileId: { ...s.activeGroupFileId, [groupId]: id },
       };
     });

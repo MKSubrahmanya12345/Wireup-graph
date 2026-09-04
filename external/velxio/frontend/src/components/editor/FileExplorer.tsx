@@ -523,6 +523,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
     setActiveGroup,
     manifestViewBoardId,
     setManifestView,
+    diagramViewBoardId,
+    setDiagramView,
   } = useEditorStore();
   const boards = useSimulatorStore((s) => s.boards);
   const activeBoardId = useSimulatorStore((s) => s.activeBoardId);
@@ -1215,6 +1217,46 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ onSaveClick, onNewCl
                       />
                     </div>
                   )}
+
+                  {/* diagram.json — THIS board's circuit in the Wokwi diagram
+                      format, generated live from the canvas. One per board:
+                      click to read or edit it. It is a view, not a file on
+                      disk — the canvas is the source of truth, so the live
+                      view can never go stale, and edits go back through Apply
+                      (same converter as a Wokwi-zip import). Export → Wokwi
+                      .zip downloads the exact same document. No Pi exception
+                      (unlike libraries.json): every board has a circuit worth
+                      diagramming. */}
+                  <div
+                    className={`file-explorer-item fe-file-item${
+                      diagramViewBoardId === board.id ? ' file-explorer-item-active' : ''
+                    }`}
+                    onClick={() => {
+                      switchToBoard(board.id, groupId);
+                      // Open the diagram.json view (not a file on disk).
+                      setDiagramView(board.id);
+                    }}
+                    title={`diagram.json — ${boardDisplayName(board)}'s circuit in Wokwi diagram format (live from the canvas; edit it and Apply pushes the changes back — Export → Wokwi .zip downloads it)`}
+                  >
+                    <span className="file-explorer-icon" style={{ color: '#5c9ded' }}>
+                      <FileIcon name="diagram.json" />
+                    </span>
+                    <span className="file-explorer-name">diagram.json</span>
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        fontSize: 9,
+                        lineHeight: '14px',
+                        color: '#9d9d9d',
+                        background: '#2d2d2d',
+                        borderRadius: 7,
+                        padding: '0 5px',
+                      }}
+                      title={`Live parts count: the board plus ${components.length} component(s) and their wires; the view regenerates as the canvas changes`}
+                    >
+                      {components.length + 1}
+                    </span>
+                  </div>
 
                   {/* velxio.json — THIS board's declared library manifest
                       (compile scope), grouped with the board's code so it is
