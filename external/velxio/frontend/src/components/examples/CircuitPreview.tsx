@@ -30,6 +30,8 @@ interface CompDef {
   h: number; // natural height in canvas-space pixels
 }
 
+export type { CompDef };
+
 const COMP_DEFS: Record<string, CompDef> = {
   // Boards
   'wokwi-arduino-uno': { svg: 'arduino-uno.svg', w: 274, h: 202 },
@@ -107,7 +109,7 @@ const Attiny85InlinePreview: React.FC<{ w: number; h: number }> = ({ w, h }) => 
 // appear here, otherwise the gallery card falls back to "No components" and
 // the user sees an empty preview. New board kinds must be added in BOTH
 // places (the type union and this map).
-const BOARD_DEFS: Record<string, CompDef> = {
+export const BOARD_DEFS: Record<string, CompDef> = {
   'arduino-uno': { svg: 'arduino-uno.svg', w: 274, h: 202 },
   'arduino-nano': { svg: 'arduino-nano.svg', w: 170, h: 67 },
   'arduino-mega': { svg: 'arduino-mega.svg', w: 388, h: 192 },
@@ -139,7 +141,7 @@ const LED_COLOR_SVG: Record<string, string> = {
   yellow: 'led-yellow.svg',
 };
 
-function getCompDef(type: string, props: Record<string, any>): CompDef {
+export function getCompDef(type: string, props: Record<string, any>): CompDef {
   if (type === 'wokwi-led') {
     const colorSvg = LED_COLOR_SVG[(props.color as string)?.toLowerCase()] ?? 'wokwi-led.svg';
     return { ...COMP_DEFS['wokwi-led'], svg: colorSvg };
