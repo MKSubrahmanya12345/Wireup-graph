@@ -2,17 +2,17 @@
  * Simulation3D — the "lifted bench" (Stage 1) view.
  *
  * A second, orthographic renderer over the SAME Zustand stores the 2D canvas
- * uses (`useSimulatorStore.boards / components / wires`). Boards and parts
- * become flat cards textured with their real SVG art and lifted off a grid
- * bench; wires become polylines running underneath. Nothing here touches the
- * emulators — avr8js / rp2040js / QEMU / ngspice keep mutating the stores
- * exactly as before.
+ * uses (`useSimulatorStore.boards / components / wires`). Boards and parts are
+ * drawn as real volumetric parametric bodies (src/three/Parts3D.tsx) and wires
+ * as round conductors (src/three/Wire3D.tsx), placed on a grid bench. Nothing
+ * here touches the emulators — avr8js / rp2040js / QEMU / ngspice keep mutating
+ * the stores exactly as before, and the parts animate off that store state.
  *
  * Lazy-loaded from SimulatorCanvas (React.lazy) so three.js stays out of the
  * main bundle until the user flips the 3D toggle.
  *
  * When `gallery` is set, the Scene ignores the live circuit and instead lays
- * out EVERY available component in the registry as a grid of cards — a pure
+ * out EVERY available component in the registry as a grid of bodies — a pure
  * "show me all the parts in 3D" showcase that never touches the user's bench.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -21,7 +21,7 @@ import { Grid, OrbitControls, Text } from '@react-three/drei';
 import type { OrthographicCamera } from 'three';
 import { useSimulatorStore } from '../store/useSimulatorStore';
 import { ComponentRegistry } from '../services/ComponentRegistry';
-import { Card3D } from './Card3D';
+import { Part3D } from './Parts3D';
 import { Wire3D } from './Wire3D';
 import { resolveBoardArt, resolveComponentArt } from './partArt';
 import { BOARD_KIND_LABELS } from '../types/board';
@@ -50,6 +50,7 @@ interface GalleryCard {
   x: number;
   y: number;
   rotation: number;
+  properties?: Record<string, unknown>;
 }
 
 interface ResolvedArt { url: string | null; w: number; h: number; label: string }
@@ -143,7 +144,13 @@ function Scene({ gallery }: { gallery: boolean }) {
 
   const boardCards = useMemo(
     () =>
-      boards.map((b) => ({ id: b.id, art: resolveBoardArt(b.boardKind), x: b.x, y: b.y })),
+      boards.map((b) => ({
+        id: b.id,
+        kind: b.boardKind,
+        art: resolveBoardArt(b.boardKind),
+        x: b.x,
+        y: b.y,
+      })),
     [boards],
   );
 
@@ -151,6 +158,8 @@ function Scene({ gallery }: { gallery: boolean }) {
     () =>
       components.map((c) => ({
         id: c.id,
+        kind: c.metadataId,
+        properties: (c.properties ?? {}) as Record<string, unknown>,
         art: registryReady
           ? resolveComponentArt(c.metadataId, c.properties as Record<string, unknown> | undefined)
           : null,
@@ -173,7 +182,14 @@ function Scene({ gallery }: { gallery: boolean }) {
         if (!art) return null;
         const col = i % COLS;
         const row = Math.floor(i / COLS);
-        return { id: meta.id, art, x: col * CELL_W, y: row * CELL_H, rotation: 0 };
+        return {
+          id: meta.id,
+          art,
+          x: col * CELL_W,
+          y: row * CELL_H,
+          rotation: 0,
+          properties: (meta.defaultValues ?? {}) as Record<string, unknown>,
+        };
       })
       .filter((c): c is GalleryCard => c !== null);
   }, [gallery, registryReady]);
@@ -215,17 +231,18 @@ function Scene({ gallery }: { gallery: boolean }) {
 
       {gallery ? (
         galleryCards.map((c) => (
-          <Card3D
+          <group
             key={`gallery:${c.id}`}
-            x={c.x}
-            y={c.y}
-            w={c.art.w}
-            h={c.art.h}
-            lift={COMP_LIFT}
-            artUrl={c.art.url}
-            label={c.art.label}
-            rotationDeg={c.rotation}
-          />
+            position={[c.x + c.art.w / 2, 0, c.y + c.art.h / 2]}
+            rotation={[0, -(c.rotation * Math.PI) / 180, 0]}
+          >
+            <Part3D
+              kind={c.id}
+              lift={COMP_LIFT}
+              properties={c.properties}
+              label={c.art.label}
+            />
+          </group>
         ))
       ) : (
         <>
@@ -234,34 +251,30 @@ function Scene({ gallery }: { gallery: boolean }) {
           ))}
 
           {boardCards.map((b) => (
-            <Card3D
-              key={`board:${b.id}`}
-              x={b.x}
-              y={b.y}
-              w={b.art.w}
-              h={b.art.h}
-              lift={BOARD_LIFT}
-              artUrl={b.art.url}
-              label={b.art.label}
-              slabColor="#14402f"
-            />
+            <group key={`board:${b.id}`} position={[b.x + b.art.w / 2, 0, b.y + b.art.h / 2]}>
+              <Part3D kind={b.kind} board lift={BOARD_LIFT} label={b.art.label} />
+            </group>
           ))}
 
-          {componentCards.map((c) =>
-            c.art ? (
-              <Card3D
-                key={`comp:${c.id}`}
-                x={c.x}
-                y={c.y}
-                w={c.art.w}
-                h={c.art.h}
-                lift={COMP_LIFT}
-                artUrl={c.art.url}
-                label={c.art.label}
-                rotationDeg={c.rotation}
-              />
-            ) : null,
-          )}
+          {componentCards.map((c) => (
+            <group
+              key={`comp:${c.id}`}
+              position={[
+                c.x + (c.art?.w ?? 40) / 2,
+                0,
+                c.y + (c.art?.h ?? 40) / 2,
+              ]}
+              rotation={[0, -(c.rotation * Math.PI) / 180, 0]}
+            >
+            <Part3D
+              kind={c.kind}
+              lift={COMP_LIFT}
+              properties={c.properties}
+              liveSourceId={c.id}
+              label={c.art?.label}
+            />
+            </group>
+          ))}
 
           {isEmpty ? (
             <Text
