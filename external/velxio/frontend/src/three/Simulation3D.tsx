@@ -10,6 +10,10 @@
  *
  * Lazy-loaded from SimulatorCanvas (React.lazy) so three.js stays out of the
  * main bundle until the user flips the 3D toggle.
+ *
+ * When `gallery` is set, the Scene ignores the live circuit and instead lays
+ * out EVERY available component in the registry as a grid of cards — a pure
+ * "show me all the parts in 3D" showcase that never touches the user's bench.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
@@ -20,6 +24,7 @@ import { ComponentRegistry } from '../services/ComponentRegistry';
 import { Card3D } from './Card3D';
 import { Wire3D } from './Wire3D';
 import { resolveBoardArt, resolveComponentArt } from './partArt';
+import { BOARD_KIND_LABELS } from '../types/board';
 
 // Lifts (world = canvas px; +Y is up). Boards hug the bench, parts stand a
 // little taller so their bodies read above the boards, wires run underneath.
@@ -38,6 +43,16 @@ interface Bounds {
   cy: number;
   radius: number;
 }
+
+interface GalleryCard {
+  id: string;
+  art: ResolvedArt;
+  x: number;
+  y: number;
+  rotation: number;
+}
+
+interface ResolvedArt { url: string | null; w: number; h: number; label: string }
 
 function computeBounds(rects: Rect[]): Bounds | null {
   if (rects.length === 0) return null;
@@ -95,7 +110,19 @@ function FitCamera({ bounds }: { bounds: Bounds }) {
   );
 }
 
-function Scene() {
+/**
+ * Every registry component that the component picker actually offers (same
+ * filter: board kinds and the unsimulated board shell never render as parts).
+ */
+function galleryComponents() {
+  // 'nano-rp2040-connect' is a wokwi board shell with no simulator — omitted
+  // from the picker; keep the gallery in lock-step.
+  return ComponentRegistry.getInstance()
+    .getAllComponents()
+    .filter((c) => !(c.id in BOARD_KIND_LABELS) && c.id !== 'nano-rp2040-connect');
+}
+
+function Scene({ gallery }: { gallery: boolean }) {
   const boards = useSimulatorStore((s) => s.boards);
   const components = useSimulatorStore((s) => s.components);
   const wires = useSimulatorStore((s) => s.wires);
@@ -134,12 +161,33 @@ function Scene() {
     [components, registryReady],
   );
 
+  // Gallery mode: a fixed grid of every available component.
+  const galleryCards = useMemo<GalleryCard[]>(() => {
+    if (!gallery || !registryReady) return [];
+    const COLS = 8;
+    const CELL_W = 240;
+    const CELL_H = 210;
+    return galleryComponents()
+      .map((meta, i) => {
+        const art = resolveComponentArt(meta.id, meta.defaultValues);
+        if (!art) return null;
+        const col = i % COLS;
+        const row = Math.floor(i / COLS);
+        return { id: meta.id, art, x: col * CELL_W, y: row * CELL_H, rotation: 0 };
+      })
+      .filter((c): c is GalleryCard => c !== null);
+  }, [gallery, registryReady]);
+
   const bounds = useMemo(() => {
     const rects: Rect[] = [];
-    for (const b of boardCards) rects.push({ x: b.x, y: b.y, w: b.art.w, h: b.art.h });
-    for (const c of componentCards) if (c.art) rects.push({ x: c.x, y: c.y, w: c.art.w, h: c.art.h });
+    if (gallery) {
+      for (const c of galleryCards) rects.push({ x: c.x, y: c.y, w: c.art.w, h: c.art.h });
+    } else {
+      for (const b of boardCards) rects.push({ x: b.x, y: b.y, w: b.art.w, h: b.art.h });
+      for (const c of componentCards) if (c.art) rects.push({ x: c.x, y: c.y, w: c.art.w, h: c.art.h });
+    }
     return computeBounds(rects);
-  }, [boardCards, componentCards]);
+  }, [gallery, galleryCards, boardCards, componentCards]);
 
   const visibleWires = useMemo(() => wires.filter((w) => !w.bb), [wires]);
   const isEmpty = boards.length === 0 && components.length === 0;
@@ -165,28 +213,10 @@ function Scene() {
 
       {bounds ? <FitCamera bounds={bounds} /> : null}
 
-      {visibleWires.map((w) => (
-        <Wire3D key={w.id} wire={w} />
-      ))}
-
-      {boardCards.map((b) => (
-        <Card3D
-          key={`board:${b.id}`}
-          x={b.x}
-          y={b.y}
-          w={b.art.w}
-          h={b.art.h}
-          lift={BOARD_LIFT}
-          artUrl={b.art.url}
-          label={b.art.label}
-          slabColor="#14402f"
-        />
-      ))}
-
-      {componentCards.map((c) =>
-        c.art ? (
+      {gallery ? (
+        galleryCards.map((c) => (
           <Card3D
-            key={`comp:${c.id}`}
+            key={`gallery:${c.id}`}
             x={c.x}
             y={c.y}
             w={c.art.w}
@@ -196,26 +226,67 @@ function Scene() {
             label={c.art.label}
             rotationDeg={c.rotation}
           />
-        ) : null,
-      )}
+        ))
+      ) : (
+        <>
+          {visibleWires.map((w) => (
+            <Wire3D key={w.id} wire={w} />
+          ))}
 
-      {isEmpty ? (
-        <Text
-          position={[0, 30, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          fontSize={44}
-          color="#5b6673"
-          anchorX="center"
-          anchorY="middle"
-        >
-          Nothing on the bench yet — add parts in the 2D view
-        </Text>
-      ) : null}
+          {boardCards.map((b) => (
+            <Card3D
+              key={`board:${b.id}`}
+              x={b.x}
+              y={b.y}
+              w={b.art.w}
+              h={b.art.h}
+              lift={BOARD_LIFT}
+              artUrl={b.art.url}
+              label={b.art.label}
+              slabColor="#14402f"
+            />
+          ))}
+
+          {componentCards.map((c) =>
+            c.art ? (
+              <Card3D
+                key={`comp:${c.id}`}
+                x={c.x}
+                y={c.y}
+                w={c.art.w}
+                h={c.art.h}
+                lift={COMP_LIFT}
+                artUrl={c.art.url}
+                label={c.art.label}
+                rotationDeg={c.rotation}
+              />
+            ) : null,
+          )}
+
+          {isEmpty ? (
+            <Text
+              position={[0, 30, 0]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              fontSize={44}
+              color="#5b6673"
+              anchorX="center"
+              anchorY="middle"
+            >
+              Nothing on the bench yet — add parts in the 2D view
+            </Text>
+          ) : null}
+        </>
+      )}
     </>
   );
 }
 
-export default function Simulation3D() {
+interface Simulation3DProps {
+  /** Show a grid of every available component instead of the live circuit. */
+  gallery?: boolean;
+}
+
+export default function Simulation3D({ gallery = false }: Simulation3DProps) {
   return (
     <Canvas
       orthographic
@@ -225,7 +296,7 @@ export default function Simulation3D() {
       style={{ width: '100%', height: '100%' }}
     >
       <color attach="background" args={['#101318']} />
-      <Scene />
+      <Scene gallery={gallery} />
     </Canvas>
   );
 }
