@@ -413,6 +413,10 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // stores — the 2D world stays mounted (display:none) so the simulation and
   // wire geometry keep ticking untouched while in 3D.
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  // "3D gallery" — the 3D view lays out every available component in a grid
+  // (see Simulation3D gallery prop) instead of the live circuit. Off by
+  // default and reset whenever the user leaves 3D via the plain 2D/3D toggle.
+  const [threeGallery, setThreeGallery] = useState(false);
   // Use refs during active pan to avoid setState lag
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, panX: 0, panY: 0 });
@@ -3481,7 +3485,11 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             )}
             <button
               className="zoom-btn view3d-toggle"
-              onClick={() => setViewMode((m) => (m === '2d' ? '3d' : '2d'))}
+              onClick={() => {
+                setViewMode((m) => (m === '2d' ? '3d' : '2d'));
+                // Leaving 3D through the normal toggle also exits the gallery.
+                if (viewMode === '3d') setThreeGallery(false);
+              }}
               title={viewMode === '2d' ? '3D view' : 'Back to 2D view'}
               aria-pressed={viewMode === '3d'}
               style={{
@@ -3492,6 +3500,28 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
               }}
             >
               {viewMode === '2d' ? '3D' : '2D'}
+            </button>
+            <button
+              className="zoom-btn view3d-gallery-toggle"
+              onClick={() => {
+                if (threeGallery && viewMode === '3d') {
+                  setViewMode('2d');
+                  setThreeGallery(false);
+                } else {
+                  setThreeGallery(true);
+                  setViewMode('3d');
+                }
+              }}
+              title="Show every component in 3D"
+              aria-pressed={threeGallery && viewMode === '3d'}
+              style={{
+                width: 52,
+                fontWeight: 700,
+                fontSize: 11,
+                color: threeGallery && viewMode === '3d' ? '#7ac0ff' : undefined,
+              }}
+            >
+              3D all
             </button>
           </div>
 
@@ -3525,7 +3555,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   background: '#101318',
                 }}
               >
-                <Simulation3D />
+                <Simulation3D gallery={threeGallery} />
               </div>
             </React.Suspense>
           )}
