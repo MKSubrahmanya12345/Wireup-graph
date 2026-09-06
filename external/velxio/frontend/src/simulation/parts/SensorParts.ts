@@ -20,6 +20,7 @@
 import { PartSimulationRegistry } from './PartSimulationRegistry';
 import { setAdcVoltage, emitPropertyChange, analogRailVolts } from './partUtils';
 import { registerSensorUpdate, unregisterSensorUpdate } from '../SensorUpdateRegistry';
+import { usePartRenderStore } from '../../store/usePartRenderStore';
 
 // ─── Tilt Switch ─────────────────────────────────────────────────────────────
 
@@ -372,12 +373,20 @@ PartSimulationRegistry.register('small-sound-sensor', {
  * accumulates the shaft angle (1.8° per step = 200 steps per revolution).
  */
 PartSimulationRegistry.register('stepper-motor', {
-  attachEvents: (element, simulator, getArduinoPinHelper) => {
+  attachEvents: (element, simulator, getArduinoPinHelper, componentId) => {
     const pinManager = (simulator as any).pinManager;
     if (!pinManager) return () => {};
 
     const el = element as any;
     const STEP_ANGLE = 1.8; // degrees per step
+
+    // Mirror the live rotor angle into usePartRenderStore so the 3D view can
+    // animate without reading the (possibly unmounted) 2D DOM element. The
+    // native element property is still set below so 2D keeps working.
+    const setAngle = (angle: number) => {
+      el.angle = angle;
+      if (componentId) usePartRenderStore.getState().setValue(componentId, { angle });
+    };
 
     const pinAMinus = getArduinoPinHelper('A-');
     const pinAPlus = getArduinoPinHelper('A+');
@@ -411,7 +420,7 @@ PartSimulationRegistry.register('stepper-motor', {
 
       // One quarter electrical turn (90°, π/2 rad) = one full mechanical step.
       cumAngle += (delta / (Math.PI / 2)) * STEP_ANGLE;
-      el.angle = ((cumAngle % 360) + 360) % 360;
+      setAngle(((cumAngle % 360) + 360) % 360);
     }
 
     const unsubscribers: (() => void)[] = [];
