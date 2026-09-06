@@ -1,83 +1,51 @@
 /**
- * ComponentMesh.tsx
- * Renders one ArchitectureNode as a 3D mesh.
- * Geometry and material are memoized — they are NOT recreated on every render.
+ * ComponentMesh.tsx — one graph node as a true-scale parametric part.
  *
- * mesh selection syncs to useGraphStore.selectNode so both views share state.
- * drag logic lives here in local state; moveNode3D fires only on drag-stop
- *         (mirrors the GraphCanvas.tsx → onNodeDragStop pattern exactly).
+ * The visible body comes from PartModel (real outlines, live animation).
+ * Interaction lives here: hover highlight + tag, click select, XZ drag with
+ * commit-on-release (mirrors GraphCanvas onNodeDragStop). Pressable caps and
+ * knobs inside the body stopPropagation, so pressing a button never drags
+ * the part — that was the "pushbutton does nothing" class of bug.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { ArchitectureNode, NodeType } from '../types/architecture';
-import { paletteFor } from '../lib/palette';
-import { resolveBoxDimensions, resolvePosition3d, resolveRotation3d } from './partGeometry';
+import type { ArchitectureNode } from '../types/architecture';
+import PartModel, { partKeyForNode } from './PartModel';
+import { dimForKey } from './dimensions';
+import { resolvePosition3d, resolveRotation3d } from './partGeometry';
 import { useGraphStore } from '../store/useGraphStore';
 
 interface ComponentMeshProps {
   node: ArchitectureNode;
   isSelected: boolean;
-  onDragStart?: (id: string) => void;
-  onDragEnd?: (id: string) => void;
 }
 
-// Material is created ONCE per node type (22 types × 2 states = ~44 objects max)
-// using a module-level cache so they survive re-renders.
-const materialCache = new Map<string, THREE.MeshStandardMaterial>();
-
-function getMaterial(type: NodeType, selected: boolean): THREE.MeshStandardMaterial {
-  const key = `${type}-${selected ? 'sel' : 'base'}`;
-  if (materialCache.has(key)) return materialCache.get(key)!;
-
-  const palette = paletteFor(type);
-  // Parse hex color from palette stroke
-  const color = new THREE.Color(selected ? palette.stroke : palette.fill);
-  const emissive = new THREE.Color(selected ? palette.stroke : '#000000');
-
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    emissive,
-    emissiveIntensity: selected ? 0.25 : 0,
-    roughness: 0.45,
-    metalness: 0.3,
-  });
-  materialCache.set(key, mat);
-  return mat;
-}
-
-export default function ComponentMesh({ node, isSelected, onDragStart, onDragEnd }: ComponentMeshProps) {
+export default function ComponentMesh({ node, isSelected }: ComponentMeshProps) {
   const selectNode = useGraphStore((s) => s.selectNode);
   const moveNode3D = useGraphStore((s) => s.moveNode3D);
 
-  const dims = useMemo(
-    () => resolveBoxDimensions(node.type, node.spatial),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [node.type, node.spatial?.dimensions?.w, node.spatial?.dimensions?.h, node.spatial?.dimensions?.d],
-  );
+  const partKey = useMemo(() => partKeyForNode(node), [node]);
+  const dims = useMemo(() => dimForKey(partKey), [partKey]);
 
   const pos = useMemo(
     () => resolvePosition3d(node.x, node.y, node.spatial),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [node.x, node.y, node.spatial?.position3d?.x, node.spatial?.position3d?.y, node.spatial?.position3d?.z],
   );
-
   const rot = useMemo(
     () => resolveRotation3d(node.spatial),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [node.spatial?.rotation3d?.x, node.spatial?.rotation3d?.y, node.spatial?.rotation3d?.z],
   );
 
-  // local transient position during drag; committed on drag-stop.
+  const [hovered, setHovered] = useState(false);
   const [localPos, setLocalPos] = useState<{ x: number; y: number; z: number } | null>(null);
-  const isDragging = useRef(false);
+  const dragging = useRef(false);
   const dragPlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
   const dragOffset = useRef(new THREE.Vector3());
-  const intersectVec = useRef(new THREE.Vector3());
-
-  const baseMat = useMemo(() => getMaterial(node.type, false), [node.type]);
-  const selMat = useMemo(() => getMaterial(node.type, true), [node.type]);
+  const hit = useRef(new THREE.Vector3());
 
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
@@ -90,32 +58,24 @@ export default function ComponentMesh({ node, isSelected, onDragStart, onDragEnd
   const handlePointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
-      // Only handle left-click drag
       if (e.button !== 0) return;
-      isDragging.current = true;
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-
-      // Calculate offset from mesh centre to click point
+      dragging.current = true;
       const meshPos = new THREE.Vector3(pos.x, pos.y, pos.z);
       dragOffset.current.copy(meshPos).sub(e.point);
-      onDragStart?.(node.id);
     },
-    [pos, node.id, onDragStart],
+    [pos],
   );
 
   const handlePointerMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      if (!isDragging.current) return;
+      if (!dragging.current) return;
       e.stopPropagation();
-      // Ray → plane intersection for XZ drag (Y is fixed)
-      const ray = e.ray;
-      if (ray.intersectPlane(dragPlane.current, intersectVec.current)) {
-        const newPos = {
-          x: intersectVec.current.x + dragOffset.current.x,
-          y: pos.y, // keep vertical fixed during XZ drag
-          z: intersectVec.current.z + dragOffset.current.z,
-        };
-        setLocalPos(newPos);
+      if (e.ray.intersectPlane(dragPlane.current, hit.current)) {
+        setLocalPos({
+          x: hit.current.x + dragOffset.current.x,
+          y: pos.y,
+          z: hit.current.z + dragOffset.current.z,
+        });
       }
     },
     [pos.y],
@@ -123,48 +83,47 @@ export default function ComponentMesh({ node, isSelected, onDragStart, onDragEnd
 
   const handlePointerUp = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      if (!isDragging.current) return;
-      isDragging.current = false;
+      if (!dragging.current) return;
+      dragging.current = false;
       e.stopPropagation();
       if (localPos) {
-        // commit to store ONLY on drag-stop (exact mirror of moveNode pattern)
         moveNode3D(node.id, localPos);
         setLocalPos(null);
       }
-      onDragEnd?.(node.id);
     },
-    [localPos, moveNode3D, node.id, onDragEnd],
+    [localPos, moveNode3D, node.id],
   );
 
   const displayPos = localPos ?? pos;
+  // Hit volume covers the whole true outline + lift so small parts stay grabbable,
+  // with a minimum 12 mm touch target for 0402-class bodies.
+  const hitW = Math.max(dims.w + 0.004, 0.012);
+  const hitH = Math.max(dims.h + dims.lift + 0.004, 0.012);
+  const hitD = Math.max(dims.d + 0.004, 0.012);
 
   return (
     <group position={[displayPos.x, displayPos.y, displayPos.z]} rotation={[rot.x, rot.y, rot.z]}>
-      {/* Main body box */}
+      <PartModel node={node} liveId={node.id} selected={isSelected} hovered={hovered} />
+      {/* invisible grab volume — the body owns the visuals */}
       <mesh
-        castShadow
-        receiveShadow
-        material={isSelected ? selMat : baseMat}
+        position={[0, dims.lift + dims.h / 2, 0]}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          setHovered(true);
+          document.body.style.cursor = 'grab';
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          document.body.style.cursor = '';
+        }}
       >
-        <boxGeometry args={[dims.w, dims.h, dims.d]} />
+        <boxGeometry args={[hitW, hitH, hitD]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-
-      {/* Selection halo — slightly larger transparent box */}
-      {isSelected && (
-        <mesh>
-          <boxGeometry args={[dims.w + 0.006, dims.h + 0.006, dims.d + 0.006]} />
-          <meshBasicMaterial
-            color={paletteFor(node.type).stroke}
-            transparent
-            opacity={0.18}
-            side={THREE.BackSide}
-          />
-        </mesh>
-      )}
     </group>
   );
 }

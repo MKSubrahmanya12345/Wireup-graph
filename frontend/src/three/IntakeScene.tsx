@@ -48,7 +48,7 @@ export default function IntakeScene({
           </div>
         ) : (
           <Suspense fallback={<div className="terminal-empty" style={{ padding: 24 }}>Loading the 3D bench…</div>}>
-            <SceneCanvas nodes={nodes} selectedNodeId={selectedNodeId} onSelectNode={selectNode} />
+            <SceneCanvas nodes={nodes} connections={[]} selectedNodeId={selectedNodeId} onSelectNode={selectNode} />
           </Suspense>
         )}
       </div>
