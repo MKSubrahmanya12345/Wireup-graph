@@ -1,0 +1,10 @@
+[project]
+name = "bedrock-blender-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "boto3>=1.43.89",
+    "mcp>=2.1.1",
+]

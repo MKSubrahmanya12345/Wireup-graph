@@ -1,10 +1,30 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 export_glb.py — convert a CAD part into the GLB the 3D view needs.
 
 Blender 5.x has NO native STEP importer, so this script takes an **STL** mesh
 (convert your .STEP -> .stl in FreeCAD or CAD Assistant once) and produces the
 GLB with the named pin empties.
+
+    blender --background --python export_glb.py -- \
+        --input "arduino-uno.stl" \
+        --out   "external/velxio/frontend/public/models3d/arduino-uno/arduino-uno.glb" \
+        --key   arduino-uno \
+        --pins-json pins.json \
+        --manifest "external/velxio/frontend/public/models3d/manifest.json"
+
+It:
+  1. imports the STL mesh,
+  2. sets the scene unit to millimetres,
+  3. centres the part so its bounding-box centre sits at the origin,
+  4. creates one EMPTY per pin (named EXACTLY as wire endpoints use) — these are
+     the `getObjectByName` pin anchors; they are hidden from render,
+  5. writes/merges /models3d/manifest.json,
+  6. exports a single GLB with Draco OFF (the web viewer loads it with a plain
+     GLTFLoader — no CDN decoder needed).
+
+Pins live in the part's LOCAL mm coordinates measured from the part's origin
+(the origin after centring). Supply them as --pins (name:x:y:z) or --pins-json.
 """
 
 import argparse
@@ -22,14 +42,22 @@ def parse_args():
     else:
         argv = []
     p = argparse.ArgumentParser(description="Export a CAD part to a GLB for the 3D view.")
+    # --input and --step both map to input_path so your existing command still works.
     p.add_argument("--input", "--step", dest="input_path", required=True,
                    help=".stl (or .step/.stp if your Blender has a STEP importer).")
     p.add_argument("--out", required=True, help="Output .glb path.")
     p.add_argument("--key", required=True, help="Manifest key (boardKind / metadataId).")
-    p.add_argument("--pins-json", default=None,
-                   help="JSON file: [{'name': 'D0', 'x': 0, 'y': 0, 'z': 0}, ...] in local mm.")
-    p.add_argument("--pins", nargs="*", default=None,
-                   help="Space-separated name:x:y:z entries (e.g. SIGNAL:5:0:0 VCC:0:5:0).")
+    p.add_argument(
+        "--pins-json",
+        default=None,
+        help="JSON file: [{'name': 'D0', 'x': 0, 'y': 0, 'z': 0}, ...] in local mm.",
+    )
+    p.add_argument(
+        "--pins",
+        nargs="*",
+        default=None,
+        help="Space-separated name:x:y:z entries (e.g. SIGNAL:5:0:0 VCC:0:5:0).",
+    )
     p.add_argument("--manifest", required=True, help="Path to /models3d/manifest.json.")
     return p.parse_args(argv)
 
@@ -43,8 +71,10 @@ def set_scene_mm():
 def import_mesh(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".step", ".stp"):
+        # Only reachable if the user's Blender has a STEP importer available.
         bpy.ops.import_scene.import_step(filepath=path)
     else:
+        # STL is natively supported by Blender.
         bpy.ops.import_mesh.stl(filepath=path)
 
 
@@ -57,6 +87,7 @@ def add_empty(name, co):
 
 def center_scene_at_origin():
     from mathutils import Vector
+
     objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     if not objs:
         return
@@ -78,6 +109,7 @@ def center_scene_at_origin():
 
 
 def main():
+    # Start with an empty scene (no default Cube/Light/Camera).
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     set_scene_mm()
@@ -97,10 +129,11 @@ def main():
             name, x, y, z = (entry.split(":") + ["0", "0", "0"])[:4]
             pins.append({"name": name, "x": float(x), "y": float(y), "z": float(z)})
 
-    center_scene_at_origin()
+    center_scene_at_origin()  # empties are placed after this, in local coords
+
     for p in pins:
         add_empty(p["name"], (p["x"], p["y"], p["z"]))
-        bpy.context.object.hide_render = True
+        bpy.context.object.hide_render = True  # name anchors only, not geometry
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     bpy.ops.export_scene.gltf(
