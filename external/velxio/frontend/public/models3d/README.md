@@ -11,8 +11,10 @@ crashing.
 ```
 public/models3d/
   manifest.json          # the registry table (this file)
-  export_glb.py          # Blender script: STEP -> GLB + pins + manifest entry
-  <key>/<key>.glb        # the actual model assets (produced by Blender)
+  build_models3d.py      # one-command STEP -> GLB builder (cascadio, no Blender)
+  build-models3d.ps1     # Windows PowerShell wrapper for the same builder
+  requirements.txt       # Python deps for the builder
+  <key>/<key>.glb        # the actual model assets (produced by build_models3d.py)
   <key>/textures/        # optional PBR textures (referenced by manifest)
 ```
 
@@ -74,18 +76,37 @@ Important notes:
 
 ## Verify an export
 
-After producing a GLB, reopen it and list every object name before committing:
+`python build_models3d.py --all` runs a self-check at the end (every contract pin
+name must round-trip, no Draco, bounding box centred). To list the node names of
+an existing GLB by hand:
 
 ```bash
-# Blender
-blender --background --python-expr "import bpy; [print(repr(o.name)) for o in bpy.data.objects]"
+python - <<'EOF'
+import json, struct
+data = open("sg90/sg90.glb", "rb").read()
+n, = struct.unpack_from("<I", data, 12)          # JSON chunk length
+glb = json.loads(data[20:20 + n])
+for node in glb.get("nodes", []):
+    print(repr(node.get("name")))
+EOF
 ```
 
 then in the running app, open the 3D view and confirm wires draw between the two
 registered parts.
 
-## Produce the assets (Blender host)
+## Produce the assets (one command, no Blender)
 
-The export script is `export_glb.py`. It imports the STEP, adds the pin empties,
-writes the manifest entry, and exports an uncompressed GLB (no Draco, so no CDN
-decoder is needed). See the script header for a runnable example.
+`build_models3d.py` reads the STEP natively through OpenCASCADE (`cascadio`),
+exports an uncompressed GLB (no Draco, so no CDN decoder is needed), wires in
+the pin empties and the `servo_horn` animation group, and refreshes
+`manifest.json` (merge — never clobbers other keys). It self-verifies that the
+contract pin names round-trip and the bounding box is centred.
+
+```bash
+pip install -r requirements.txt
+python build_models3d.py --all
+# Windows:  py -3 build_models3d.py --all            (or build-models3d.ps1)
+```
+
+The old `export_glb.py` (Blender host) is obsolete: Blender 5.2.1 has no STEP
+importer, so the cascadio pipeline replaces it.
