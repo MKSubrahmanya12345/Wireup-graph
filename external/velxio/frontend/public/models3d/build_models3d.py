@@ -139,6 +139,24 @@ SERVO_HORN = {
     "mesh_suffixes": (".2_", ".3_", ".4_", ".6_"),
 }
 
+# DHT22 (AM2302) breakout, measured from cad/dht22/dht22.stl.
+# The STL is already in a Y-up frame (pins run +Y, sensor grille faces +Z,
+# PCB vertical), so the FreeCAD-style Z-up reading of the same anchors is
+# (X, -Z, Y) and the doc's (X,Y,Z)->(X,Z,-Y) conversion yields these again.
+# Right-angle header: 3 populated blades at 2.54 mm pitch (0.635 mm wide,
+# tips at Y=21.486, blade centre Z=5.544); pin-3 (NC) slot is unpopulated on
+# this breakout -> virtual anchor on the same 2.54 mm grid. Front view
+# (grille towards viewer) left->right = VCC, SDA, NC, GND (wokwi pinInfo
+# order, numbers 1..4). Anchors sit 0.4 mm below the blade tips so wires
+# land ON the pins. Raw CAD frame, like UNO_PINS/SERVO_PINS (the wrapper
+# recentres mesh and pins together).
+DHT22_PINS = {
+    "VCC": (-2.490, 21.086, 5.544),
+    "SDA": (0.050, 21.086, 5.544),
+    "NC": (1.320, 21.086, 5.544),
+    "GND": (2.590, 21.086, 5.544),
+}
+
 # Uno default colours (its STEP has no material data). Sorted longest-first
 # so specific names win.
 UNO_MATERIAL_HINTS = [
@@ -429,12 +447,28 @@ def update_manifest(key: str, out_path: str, pin_names: list[str]):
 
 def convert(step_path: str, out_path: str, key: str, spec: dict):
     if not os.path.exists(step_path):
-        sys.exit(f"STEP not found: {step_path}")
+        sys.exit(f"STEP/STL not found: {step_path}")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         raw = os.path.join(td, "raw.glb")
-        # native OpenCASCADE STEP -> glTF: no Blender, no FreeCAD, no Draco
-        cascadio.step_to_glb(step_path, raw, include_materials=True)
+        if step_path.lower().endswith((".stl",)):
+            # STL route (trimesh): the file is in mm, so pre-scale to the same
+            # "metres == mm/1000" frame cascadio produces for STEP; the wrapper
+            # below restores 1 raw unit = 1 mm. Axes pass through unchanged
+            # (the DHT22 STL is already Y-up: pins +Y, grille +Z).
+            try:
+                import trimesh
+            except ImportError:  # pragma: no cover - friendly error
+                sys.exit(
+                    "trimesh is required for STL sources.\\n"
+                    "Install it with:  pip install -r requirements.txt"
+                )
+            mesh = trimesh.load(step_path, force="mesh")
+            mesh.apply_scale(0.001)
+            mesh.export(raw, file_type="glb")
+        else:
+            # native OpenCASCADE STEP -> glTF: no Blender, no FreeCAD, no Draco
+            cascadio.step_to_glb(step_path, raw, include_materials=True)
         gltf, binary = read_glb(raw)
 
     mn, mx = world_bounds(gltf, binary)
@@ -497,7 +531,7 @@ def verify_glb(path: str, expected: list[str]):
 
 PART_SPECS = {
     "arduino-uno": {
-        "step": "cad/arduino-uno-r3-1.snapshot.5/arduino uno.STEP",
+        "step": "cad/arduino_uno/arduino uno.STEP",
         "out": ("external/velxio/frontend/public/models3d/"
                 "arduino-uno/arduino-uno.glb"),
         "pins": UNO_PINS,
@@ -514,6 +548,18 @@ PART_SPECS = {
         "aliases": SERVO_ALIASES,
         "materials": False,
     },
+    "dht22": {
+        "step": "cad/dht22/dht22.stl",
+        "out": ("external/velxio/frontend/public/models3d/"
+                "dht22/dht22.glb"),
+        # CONTRACT pins (names MUST equal the element's pinInfo:
+        # VCC, SDA, NC, GND — see wokwi-elements dht22-element.ts)
+        "pins": DHT22_PINS,
+        "aux": {},        # extra anchors (non-contract) if the part needs them
+        "aliases": {},    # e.g. {"PWM": "SIGNAL"}
+        "materials": False,   # STL carries no material info
+        "horn": None,         # no rotating assembly on a DHT22
+    },
 }
 
 
@@ -526,7 +572,7 @@ def main():
     ap.add_argument("--all", action="store_true", help="build both parts + manifest")
     ap.add_argument("--step", help="single STEP file to convert")
     ap.add_argument("--out", help="output .glb path (with --step)")
-    ap.add_argument("--key", choices=["arduino-uno", "servo"], help="manifest key")
+    ap.add_argument("--key", choices=sorted(PART_SPECS), help="manifest key")
     ap.add_argument("--no-verify", action="store_true")
     args = ap.parse_args()
 
