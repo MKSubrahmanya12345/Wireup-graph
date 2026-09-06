@@ -1,6 +1,7 @@
 import { PartSimulationRegistry } from './PartSimulationRegistry';
 import { useElectricalStore } from '../../store/useElectricalStore';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { usePartRenderStore } from '../../store/usePartRenderStore';
 import { emitPropertyChange } from './partUtils';
 
 /**
@@ -224,6 +225,14 @@ PartSimulationRegistry.register('led', {
 
     const el = element as any;
     const unsubs: (() => void)[] = [];
+    // Mirror the live LED brightness into usePartRenderStore so the 3D view
+    // can light up its emissive material without reading the (possibly
+    // unmounted) 2D DOM element. The native property is still set so 2D stays
+    // exactly as before.
+    const setBrightness = (brightness: number) => {
+      el.brightness = brightness;
+      if (componentId) usePartRenderStore.getState().setValue(componentId, { brightness });
+    };
     let anodeHigh = false;
     let cathodeLow = false;
 
@@ -254,7 +263,7 @@ PartSimulationRegistry.register('led', {
       // the solver reports next.
       if (burnt) {
         el.value = false;
-        el.brightness = 0;
+        setBrightness(0);
         return;
       }
       // SPICE is always active. Use real branch current for analog
@@ -296,7 +305,7 @@ PartSimulationRegistry.register('led', {
       if (raw !== undefined && !Number.isFinite(raw)) {
         burnt = true;
         el.value = false;
-        el.brightness = 0;
+        setBrightness(0);
         reportLedFault(
           componentId,
           'led-burnout',
@@ -313,19 +322,19 @@ PartSimulationRegistry.register('led', {
         if (current > LED_BURNOUT_A) {
           burnt = true;
           el.value = false;
-          el.brightness = 0;
+          setBrightness(0);
           reportLedBurnout(componentId, current);
           return;
         }
         lastSpiceBrightness = Math.min(1, current / LED_RATED_MAX_A);
         lastSpiceTs = Date.now();
         el.value = current > 1e-6;
-        el.brightness = lastSpiceBrightness;
+        setBrightness(lastSpiceBrightness);
         return;
       }
       if (Date.now() - lastSpiceTs < HOLD_MS && lastSpiceTs > 0 && Number.isFinite(lastSpiceBrightness)) {
         el.value = lastSpiceBrightness > 1e-3;
-        el.brightness = lastSpiceBrightness;
+        setBrightness(lastSpiceBrightness);
         return;
       }
       // No SPICE data yet — fall back to digital pin state so the LED
@@ -333,7 +342,7 @@ PartSimulationRegistry.register('led', {
       // the first solve lands.
       lastSpiceBrightness = 0;
       el.value = anodeHigh && cathodeLow;
-      el.brightness = el.value ? 1 : 0;
+      setBrightness(el.value ? 1 : 0);
     };
 
     // Cathode + anode pin subscriptions. PinResolver path is preferred

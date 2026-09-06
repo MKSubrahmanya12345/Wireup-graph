@@ -4,6 +4,7 @@ import { RP2040Simulator } from '../RP2040Simulator';
 import { getADC, setAdcVoltage, emitPropertyChange } from './partUtils';
 import { registerSensorUpdate, unregisterSensorUpdate } from '../SensorUpdateRegistry';
 import { LOG_SLIDER_STEPS, logSliderToValue } from '../sensorControlConfig';
+import { usePartRenderStore } from '../../store/usePartRenderStore';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -304,10 +305,18 @@ PartSimulationRegistry.register('analog-joystick', {
  * via requestAnimationFrame (less accurate but still functional).
  */
 PartSimulationRegistry.register('servo', {
-  attachEvents: (element, avrSimulator, getArduinoPinHelper) => {
+  attachEvents: (element, avrSimulator, getArduinoPinHelper, componentId) => {
     const pinSIG =
       getArduinoPinHelper('PWM') ?? getArduinoPinHelper('SIG') ?? getArduinoPinHelper('1');
     const el = element as any;
+
+    // Mirror the live horn angle into usePartRenderStore so the 3D view can
+    // animate without reading the (possibly unmounted) 2D DOM element. The
+    // native element property is still set below so 2D keeps working.
+    const setAngle = (angle: number) => {
+      el.angle = angle;
+      if (componentId) usePartRenderStore.getState().setValue(componentId, { angle });
+    };
 
     // Arduino Servo.h actual pulse range (544µs = 0°, 2400µs = 180°)
     const MIN_PULSE_US = 544;
@@ -345,13 +354,13 @@ PartSimulationRegistry.register('servo', {
           // Try standard range first
           if (pulseUs >= MIN_PULSE_US && pulseUs <= MAX_PULSE_US) {
             const angle = Math.round(((pulseUs - MIN_PULSE_US) / EXPECTED_SPREAD) * 180);
-            el.angle = Math.max(0, Math.min(180, angle));
+            setAngle(Math.max(0, Math.min(180, angle)));
           } else if (observedMin < Infinity) {
             // Self-calibrated range: use observedMin as 0° reference
             const rangeMax = observedMin + EXPECTED_SPREAD;
             if (pulseUs >= observedMin - 50 && pulseUs <= rangeMax + 200) {
               const angle = Math.round(((pulseUs - observedMin) / EXPECTED_SPREAD) * 180);
-              el.angle = Math.max(0, Math.min(180, angle));
+              setAngle(Math.max(0, Math.min(180, angle)));
             }
           }
         }
@@ -385,7 +394,7 @@ PartSimulationRegistry.register('servo', {
         const unsubscribe = pinManager.onPwmChange(pinSIG, (_pin, dutyCycle) => {
           if (dutyCycle < 0.01 || dutyCycle > 0.2) return; // ignore out-of-range
           const angle = Math.round(((dutyCycle - MIN_DC) / (MAX_DC - MIN_DC)) * 180);
-          el.angle = Math.max(0, Math.min(180, angle));
+          setAngle(Math.max(0, Math.min(180, angle)));
         });
         return () => {
           unsubscribe();
@@ -426,7 +435,7 @@ PartSimulationRegistry.register('servo', {
               const angle = Math.round(
                 ((pulseUs - MIN_PULSE_US) / (MAX_PULSE_US - MIN_PULSE_US)) * 180,
               );
-              el.angle = angle;
+              setAngle(angle);
             }
           }
         });
@@ -476,7 +485,7 @@ PartSimulationRegistry.register('servo', {
 
         const clamped = Math.max(MIN_PULSE_US, Math.min(MAX_PULSE_US, pulseUs));
         const angle = Math.round(((clamped - MIN_PULSE_US) / (MAX_PULSE_US - MIN_PULSE_US)) * 180);
-        el.angle = angle;
+        setAngle(angle);
       }
 
       rafId = requestAnimationFrame(poll);

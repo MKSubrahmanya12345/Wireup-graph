@@ -19,6 +19,7 @@ import {
   getBoardPinManager,
   getBoardSimulator,
 } from '../store/useSimulatorStore';
+import { usePartRenderStore } from '../store/usePartRenderStore';
 import { useElectricalStore } from '../store/useElectricalStore';
 import { useEditorStore } from '../store/useEditorStore';
 import { buildProjectSdImage, decodeSdFiles } from '../utils/sdCardFiles';
@@ -694,6 +695,9 @@ export const DynamicComponent: React.FC<DynamicComponentProps> = ({
     return () => {
       if (cleanupSimulationEvents) cleanupSimulationEvents();
       releasePartPins(id);
+      // Drop this part's transient render values (angle/brightness) so the
+      // render store never accumulates entries for unmounted parts.
+      usePartRenderStore.getState().clear(id);
 
       el.removeEventListener('button-press', onButtonPress);
       el.removeEventListener('button-release', onButtonRelease);

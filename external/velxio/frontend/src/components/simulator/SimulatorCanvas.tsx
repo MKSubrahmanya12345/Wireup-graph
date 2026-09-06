@@ -9,10 +9,13 @@ import { useElectricalStore } from '../../store/useElectricalStore';
 import { openDeviceGateway } from '../../lib/openDeviceGateway';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-// 3D view — a second renderer over the same stores (src/three/). Lazily
-// loaded so three.js stays out of the main bundle until the toggle is used.
-const Simulation3D = React.lazy(() => import('../../three/Simulation3D'));
 import { useTranslation } from 'react-i18next';
+// New CAD-based 3D view (Option A: registered GLBs only). Lazy-loaded so
+// three.js/react-three-fiber never enter the initial bundle. Rendered as an
+// overlay while the 2D tree stays mounted (hidden, not unmounted) so the
+// simulation and its per-part attachEvents keep running and feeding the
+// render store.
+const Cad3DScene = React.lazy(() => import('../../scene3d/Cad3DScene'));
 import { adcPinMapFor } from '../velxio-components/Esp32Element';
 import { ComponentPickerModal } from '../ComponentPickerModal';
 import { PartInspectorDialog, type InspectorAction } from './PartInspectorDialog';
@@ -409,14 +412,9 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
   // Pan & zoom state
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-  // 2D ⇄ 3D view. The 3D view (src/three/) is a second renderer over the same
-  // stores — the 2D world stays mounted (display:none) so the simulation and
-  // wire geometry keep ticking untouched while in 3D.
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-  // "3D gallery" — the 3D view lays out every available component in a grid
-  // (see Simulation3D gallery prop) instead of the live circuit. Off by
-  // default and reset whenever the user leaves 3D via the plain 2D/3D toggle.
-  const [threeGallery, setThreeGallery] = useState(false);
+  // New CAD-based 3D overlay. The 2D world stays mounted (display:none) so the
+  // sim keeps running; the 3D view reads the same stores + render store.
+  const [showCad3d, setShowCad3d] = useState(false);
   // Use refs during active pan to avoid setState lag
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, panX: 0, panY: 0 });
@@ -3272,12 +3270,13 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             })()}
 
           {/* Infinite world — pan+zoom applied here. Hidden (not unmounted)
-              while the 3D view is active so the 2D tree keeps its state. */}
+              while the CAD 3D view is active so the 2D tree keeps its state
+              and the simulation keeps running. */}
           <div
             className="canvas-world"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              display: viewMode === '3d' ? 'none' : undefined,
+              display: showCad3d ? 'none' : undefined,
             }}
           >
             {/* Wire Layer - Renders below all components */}
@@ -3423,111 +3422,83 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            {viewMode === '2d' && (
-              <>
-                <button
-                  className="zoom-btn"
-                  onClick={() =>
-                    handleWheel({
-                      deltaY: 100,
-                      clientX: 0,
-                      clientY: 0,
-                      preventDefault: () => {},
-                    } as any)
-                  }
-                  title={t('editor.canvas.zoomOut')}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  >
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
-                <button
-                  className="zoom-level"
-                  onClick={handleResetView}
-                  title={t('editor.canvas.resetView')}
-                >
-                  {Math.round(zoom * 100)}%
-                </button>
-                <button
-                  className="zoom-btn"
-                  onClick={() =>
-                    handleWheel({
-                      deltaY: -100,
-                      clientX: 0,
-                      clientY: 0,
-                      preventDefault: () => {},
-                    } as any)
-                  }
-                  title={t('editor.canvas.zoomIn')}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
-              </>
-            )}
-            <button
-              className="zoom-btn view3d-toggle"
-              onClick={() => {
-                setViewMode((m) => (m === '2d' ? '3d' : '2d'));
-                // Leaving 3D through the normal toggle also exits the gallery.
-                if (viewMode === '3d') setThreeGallery(false);
-              }}
-              title={viewMode === '2d' ? '3D view' : 'Back to 2D view'}
-              aria-pressed={viewMode === '3d'}
-              style={{
-                width: 36,
-                fontWeight: 700,
-                fontSize: 11,
-                color: viewMode === '3d' ? '#7ac0ff' : undefined,
-              }}
-            >
-              {viewMode === '2d' ? '3D' : '2D'}
-            </button>
-            <button
-              className="zoom-btn view3d-gallery-toggle"
-              onClick={() => {
-                if (threeGallery && viewMode === '3d') {
-                  setViewMode('2d');
-                  setThreeGallery(false);
-                } else {
-                  setThreeGallery(true);
-                  setViewMode('3d');
+            <>
+              <button
+                className="zoom-btn"
+                onClick={() =>
+                  handleWheel({
+                    deltaY: 100,
+                    clientX: 0,
+                    clientY: 0,
+                    preventDefault: () => {},
+                  } as any)
                 }
-              }}
-              title="Show every component in 3D"
-              aria-pressed={threeGallery && viewMode === '3d'}
-              style={{
-                width: 52,
-                fontWeight: 700,
-                fontSize: 11,
-                color: threeGallery && viewMode === '3d' ? '#7ac0ff' : undefined,
-              }}
-            >
-              3D all
-            </button>
+                title={t('editor.canvas.zoomOut')}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <button
+                className="zoom-level"
+                onClick={handleResetView}
+                title={t('editor.canvas.resetView')}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                className="zoom-btn"
+                onClick={() =>
+                  handleWheel({
+                    deltaY: -100,
+                    clientX: 0,
+                    clientY: 0,
+                    preventDefault: () => {},
+                  } as any)
+                }
+                title={t('editor.canvas.zoomIn')}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <button
+                className="zoom-btn view3d-toggle"
+                onClick={() => setShowCad3d((v) => !v)}
+                title={showCad3d ? 'Back to 2D' : '3D view'}
+                aria-pressed={showCad3d}
+                style={{
+                  width: 36,
+                  fontWeight: 700,
+                  fontSize: 11,
+                  color: showCad3d ? '#7ac0ff' : undefined,
+                }}
+              >
+                {showCad3d ? '2D' : '3D'}
+              </button>
+            </>
           </div>
 
-          {/* 3D view — replaces the 2D world visually while it stays mounted.
-              Lazy-loaded so three.js never enters the initial bundle. */}
-          {viewMode === '3d' && (
+          {/* CAD-based 3D view — overlay on top of the (still-mounted, hidden)
+              2D world so the simulation keeps running. Lazy-loaded. */}
+          {showCad3d && (
             <React.Suspense
               fallback={
                 <div
@@ -3555,7 +3526,7 @@ export const SimulatorCanvas = ({ headerSlot }: SimulatorCanvasProps = {}) => {
                   background: '#101318',
                 }}
               >
-                <Simulation3D gallery={threeGallery} />
+                <Cad3DScene />
               </div>
             </React.Suspense>
           )}
