@@ -1,0 +1,3 @@
+# Required by build_models3d.py (STEP -> GLB, no Blender/FreeCAD needed).
+cascadio>=0.1.1
+numpy>=1.24

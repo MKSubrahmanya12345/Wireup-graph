@@ -80,7 +80,10 @@ async function loadModel(key: string, def: CadModelDef): Promise<LoadedModel | n
   const cached = groupCache.get(key);
   if (cached) return cached;
   try {
-    const gltf = await gltfLoader.loadAsync(def.file);
+    // manifest `file` is a path UNDER /models3d/ (see CadModelDef), so resolve
+    // it against that folder — not against the page URL.
+    const modelUrl = def.file.startsWith('/') ? def.file : `/models3d/${def.file}`;
+    const gltf = await gltfLoader.loadAsync(modelUrl);
     const root = gltf.scene;
     // Normalize: bake transforms down and center the group at the origin.
     root.updateMatrixWorld(true);
