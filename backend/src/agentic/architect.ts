@@ -13,6 +13,7 @@ import {
   officialComponentCatalog,
 } from '../data/componentCatalog.js';
 import { runStructuralChecks } from '../data/architectureVerifier.js';
+import { spatialForPart } from '../data/spatialDims.js';
 import { hasBlockingIssue, runEngineeringChecks, type Issue } from '../data/engineeringRules.js';
 import type { PlanResult } from '../services/architectureService.js';
 import type {
@@ -220,10 +221,9 @@ function moduleNode(
     ports,
     details: [...device.wiringNotes],
     spatial: {
-      position3d: { x: (cx - 640) / 160, y: 0, z: (cy - 320) / 160 },
+      position3d: { x: (cx - 640) / 1600, y: 0, z: (cy - 320) / 1600 },
       rotation3d: { x: 0, y: 0, z: 0 },
-      dimensions: { w: 0.03, h: 0.012, d: 0.045 },
-      massGrams: 12,
+      ...spatialForPart(device.partNumber, device.name),
     },
   };
 }
@@ -260,8 +260,7 @@ function mcuNode(boardName: string, mcu: string, x = 640, y = 320): Architecture
     spatial: {
       position3d: { x: 0, y: 0, z: 0 },
       rotation3d: { x: 0, y: 0, z: 0 },
-      dimensions: { w: 0.055, h: 0.014, d: 0.028 },
-      massGrams: 10,
+      ...spatialForPart(mcu, boardName),
     },
   };
 }
@@ -285,10 +284,9 @@ function powerNode(x = 240, y = 320): ArchitectureNode {
     ],
     details: ['Any 5 V USB adapter ≥ 500 mA; add margin for relay/servo loads.'],
     spatial: {
-      position3d: { x: -2.2, y: 0, z: 0 },
+      position3d: { x: -0.25, y: 0, z: 0 },
       rotation3d: { x: 0, y: 0, z: 0 },
-      dimensions: { w: 0.02, h: 0.05, d: 0.02 },
-      massGrams: 40,
+      ...spatialForPart('USB-5V-2A', 'USB 5 V supply'),
     },
   };
 }
