@@ -1,0 +1,97 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #14161a;
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#viewport {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#panel {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  width: 260px;
+  padding: 18px 18px 14px;
+  background: rgba(24, 26, 31, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  color: #e8e9ec;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+#panel h1 {
+  margin: 0 0 2px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#panel .sub {
+  margin: 0 0 16px;
+  font-size: 11px;
+  color: #8a8f98;
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+.param {
+  margin-bottom: 14px;
+}
+
+.param label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #b6bac2;
+  margin-bottom: 6px;
+}
+
+.param label span {
+  color: #5b9bd5;
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+.param input[type="range"] {
+  width: 100%;
+  accent-color: #5b9bd5;
+  cursor: pointer;
+}
+
+.param select {
+  width: 100%;
+  padding: 6px 8px;
+  background: #22242a;
+  color: #e8e9ec;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.stat {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #5f636b;
+  font-family: "SF Mono", Menlo, monospace;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hint {
+  margin: 10px 0 0;
+  font-size: 10px;
+  color: #5f636b;
+  text-align: center;
+}

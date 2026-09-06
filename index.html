@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photoreal Parametric Viewer — Test</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
+    "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.9.14/build/index.module.js",
+    "three-bvh-csg": "https://unpkg.com/three-bvh-csg@0.0.16/build/index.module.js"
+  }
+}
+</script>
+</head>
+<body>
+  <canvas id="viewport"></canvas>
+
+  <div id="panel">
+    <h1>Starter Plate</h1>
+    <p class="sub">box(width, depth, height).subtract(cylinder)</p>
+
+    <div class="param">
+      <label>Width <span id="widthVal">80</span> mm</label>
+      <input type="range" id="width" min="40" max="140" value="80" step="1">
+    </div>
+    <div class="param">
+      <label>Depth <span id="depthVal">50</span> mm</label>
+      <input type="range" id="depth" min="30" max="90" value="50" step="1">
+    </div>
+    <div class="param">
+      <label>Height <span id="heightVal">18</span> mm</label>
+      <input type="range" id="height" min="8" max="40" value="18" step="1">
+    </div>
+    <div class="param">
+      <label>Hole Radius <span id="holeVal">6</span> mm</label>
+      <input type="range" id="hole" min="2" max="12" value="6" step="0.5">
+    </div>
+
+    <div class="param">
+      <label>Material</label>
+      <select id="material">
+        <option value="metal">Brushed Aluminum</option>
+        <option value="plastic" selected>Matte Plastic (ForgeCAD blue)</option>
+        <option value="glass">Glass</option>
+      </select>
+    </div>
+
+    <div class="stat">
+      <span id="triCount">— triangles</span>
+      <span id="csgTime">— ms CSG</span>
+    </div>
+
+    <p class="hint">Drag to orbit · scroll to zoom</p>
+  </div>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>
