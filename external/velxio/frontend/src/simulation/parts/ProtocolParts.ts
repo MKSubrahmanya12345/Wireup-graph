@@ -24,6 +24,7 @@ import type { I2CDevice } from '../I2CBusManager';
 import { HD44780Decoder } from '../HD44780Decoder';
 import { registerSensorUpdate, unregisterSensorUpdate } from '../SensorUpdateRegistry';
 import { useSimulatorStore } from '../../store/useSimulatorStore';
+import { usePartRenderStore } from '../../store/usePartRenderStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -712,14 +713,27 @@ PartSimulationRegistry.register('dht22', {
     const temperature = el.temperature ?? 25.0;
     const humidity = el.humidity ?? 50.0;
 
+    // Mirror the live reading into usePartRenderStore so the 3D view can read
+    // it without touching the (possibly unmounted) 2D DOM element. The native
+    // element properties are still set below so 2D keeps working.
+    const setReading = (t: number, h: number) => {
+      el.temperature = t;
+      el.humidity = h;
+      if (componentId)
+        usePartRenderStore.getState().setValue(componentId, { temperature: t, humidity: h });
+    };
+    setReading(temperature, humidity);
+
     const handledNatively =
       typeof (simulator as any).registerSensor === 'function' &&
       (simulator as any).registerSensor('dht22', pin, { temperature, humidity });
 
     if (handledNatively) {
       registerSensorUpdate(componentId, (values) => {
-        if ('temperature' in values) el.temperature = values.temperature as number;
-        if ('humidity' in values) el.humidity = values.humidity as number;
+        setReading(
+          'temperature' in values ? (values.temperature as number) : (el.temperature ?? 25.0),
+          'humidity' in values ? (values.humidity as number) : (el.humidity ?? 50.0),
+        );
         (simulator as any).updateSensor(pin, {
           temperature: el.temperature ?? 25.0,
           humidity: el.humidity ?? 50.0,
@@ -779,9 +793,10 @@ PartSimulationRegistry.register('dht22', {
 
     // SensorControlPanel: update temperature / humidity on the element
     registerSensorUpdate(componentId, (values) => {
-      const el = element as any;
-      if ('temperature' in values) el.temperature = values.temperature as number;
-      if ('humidity' in values) el.humidity = values.humidity as number;
+      setReading(
+        'temperature' in values ? (values.temperature as number) : (el.temperature ?? 25.0),
+        'humidity' in values ? (values.humidity as number) : (el.humidity ?? 50.0),
+      );
     });
 
     return () => {

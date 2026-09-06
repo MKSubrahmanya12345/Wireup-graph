@@ -17,7 +17,7 @@ workflow doc §2).
 | metadataId | status | assignee | source URL / licence | pin notes |
 | --- | --- | --- | --- | --- |
 | servo | ✅ done | — | CAD snapshot in `cad/` | SIGNAL/VCC/GND + PWM/V+ aliases; horn animates |
-| dht22 | open | | | VCC SDA NC GND |
+| dht22 | ✅ done | arena-agent | user-provided STL `cad/dht22/dht22.stl` (licence: as-provided) | VCC SDA NC GND; anchors on 2.54 mm header blades, NC = unpopulated slot; live temp/humidity mirrored to render store |
 | hc-sr04 | open | | | VCC TRIG ECHO GND |
 | pir-motion-sensor | open | | | VCC OUT GND |
 | ssd1306 | open | | | DATA CLK DC RST CS 3V3 VIN GND |

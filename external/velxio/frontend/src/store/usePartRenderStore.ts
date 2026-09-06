@@ -26,6 +26,16 @@ export interface PartRenderValue {
   angle?: number;
   /** LED brightness 0..1 (matches what el.brightness holds). */
   brightness?: number;
+  /** DHT22 (and other env sensors) live reading, as set on the element. */
+  temperature?: number;
+  /** DHT22 (and other env sensors) live reading, as set on the element. */
+  humidity?: number;
+  /**
+   * Phase-0 widen: open bag so future parts (pressed, position, digit, r/g/b,
+   * …) can be mirrored without reshaping the store again. Additive only —
+   * existing `angle` / `brightness` readers are unaffected.
+   */
+  [key: string]: number | boolean | string | undefined;
 }
 
 interface PartRenderState {
