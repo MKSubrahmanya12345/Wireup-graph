@@ -36,7 +36,7 @@ router.get(
  * GET /api/config/sim — what page 04 should run.
  *
  * `velxio.embedUrl` is set only when this deployment points at a Velxio
- * instance (self-hosted from the external/velxio submodule, or velxio.dev).
+ * instance (self-hosted from the vendored external/velxio tree, or velxio.dev).
  * Without it the page runs Wireup's own in-browser bench, which needs no
  * external service at all.
  */

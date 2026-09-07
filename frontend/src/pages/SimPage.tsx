@@ -353,7 +353,7 @@ export default function SimPage() {
                 <a href="https://github.com/davidmonterocrespo24/velxio" target="_blank" rel="noreferrer noopener">
                   github.com/davidmonterocrespo24/velxio
                 </a>
-                , vendored here as the <code>external/velxio</code> submodule.
+                , vendored here at <code>external/velxio</code> (committed files, no submodule).
               </p>
             )}
             {configError && <p className="sim-foot tiny bad">Simulator config unavailable: {configError}</p>}

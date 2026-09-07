@@ -107,11 +107,11 @@ webhook), `Plan` / `Admin` links in the top nav.
 
 Not verified: pixel rendering in a real browser — this sandbox has no Chrome/Playwright. Types, bundling, the AVR core and the diagram parsing are all covered by `frontend/npm test`; the visual layer is the standard @wokwi/elements web components.
 
-## M7 — Velxio submodule, simulator page, live website preview ✅
+## M7 — Velxio vendored source, simulator page, live website preview ✅
 
 | # | Item | Verified |
 | - | ---- | -------- |
-| 44 | Velxio vendored at `external/velxio` as a **git submodule** pinned to `2642ed7`, with `external/README.md` covering the AGPL-3.0 boundary | `git submodule status`; repo objects unchanged (upstream is 101 MB / 1,866 files) |
+| 44 | Velxio upstream source vendored at `external/velxio` — **committed directly as files and folders (no submodule, no `.gitmodules`)**, pinned to upstream `2642ed7`, embed-bridge patch applied, with `external/README.md` covering the AGPL-3.0 boundary | `git ls-files external/velxio` → 1,872 files committed; `.gitmodules` removed |
 | 45 | Every build emits a native Velxio project `simulation/<slug>.vlx` (`format: velxio-project`, v1: board + sketch + components + wires) | ✅ `npm test` → `velxioProject.test.mjs` 6/6, and end-to-end over `/api/build/agentic/stream` |
 | 46 | Plan nets translated to pin names the board element really has (`4`→`D4`, `GND.0`→`GND.1`, `5V`→`VIN`) — a wire to a non-existent pin is dropped silently on import | ✅ asserted per wire, plus a unit test of the translator |
 | 47 | Parts Velxio has no model for are reported, never substituted | ✅ test 4 of the suite |
@@ -197,7 +197,7 @@ contention, cycles, self/dangling edges, twin conversion, §2 round-trip).
 ```bash
 cd backend  && npm install && npm test       # 90 tests: gates + billing + providers
 cd frontend && npm install && npm test       # 16 tests: avr8js heartbeat, diagram parsing, page-04 sources
-git submodule update --init external/velxio  # the emulator source (AGPL-3.0, 101 MB)
+# external/velxio is vendored as committed files — no submodule, no fetch step
 cd backend && npx tsx src/server.ts          # boot banner proves which adapters are live
 # full loop against mocks:
 curl -X POST localhost:5000/api/auth/signup  -d '{"name":"A","email":"a@b.c","password":"password123"}' -H 'content-type: application/json'

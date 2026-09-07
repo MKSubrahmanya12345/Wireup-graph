@@ -1,8 +1,8 @@
 /**
  * Velxio project (.vlx) generation.
  *
- * Velxio (https://velxio.dev, source vendored as the `external/velxio`
- * submodule, AGPL-3.0) is an open-source multi-board emulator. Its native
+ * Velxio (https://velxio.dev, source vendored at `external/velxio`,
+ * AGPL-3.0) is an open-source multi-board emulator. Its native
  * project format is a single JSON file — `format: "velxio-project"`,
  * `version: 1` — carrying the boards, the source files, the placed components
  * and the wires between them. Its importer (`frontend/src/utils/vlxFile.ts`

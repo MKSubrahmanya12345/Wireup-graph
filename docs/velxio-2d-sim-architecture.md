@@ -1,8 +1,8 @@
 # Velxio — 2D Simulation Architecture & Interface Reference
 
 > **Scope.** This is a deep, code-level map of how the *2D* (canvas) simulation works in
-> `external/velxio` (pinned commit `2642ed7`), vendored as a submodule in
-> `Wireup-graph`. All three-dimensional/three.js rendering is deliberately **ignored**
+> `external/velxio` (pinned commit `2642ed7`), vendored in `Wireup-graph` as
+> committed files/folders — no submodule. All three-dimensional/three.js rendering is deliberately **ignored**
 > (the `frontend/src/three/` tree and the `viewMode === '3d'` branch are out of scope).
 >
 > **Purpose.** Another agent should be able to read this and (a) understand the exact

@@ -1,9 +1,9 @@
-# `external/` — third-party source vendored as submodules
+# `external/` — third-party source vendored in this repo
 
 ## `external/velxio` — Velxio emulator (AGPL-3.0)
 
 Upstream: <https://github.com/davidmonterocrespo24/velxio> · live at <https://velxio.dev>
-Pinned commit: `2642ed7` (2026-09-01)
+Pinned upstream commit: `2642ed7` (2026-09-01)
 
 Velxio is an open-source multi-board emulator and circuit simulator (40 boards,
 5 CPU families, 150+ interactive components). Wireup uses it two ways:
@@ -19,17 +19,25 @@ Velxio is an open-source multi-board emulator and circuit simulator (40 boards,
    it, `/sim` runs the native Wireup simulator (avr8js + `@wokwi/elements`) —
    no Docker, no Python, no external service.
 
-### Why a submodule, not a copy
+### How it is stored — a vendored copy, not a submodule
 
-The upstream tree is ~101 MB / 1,866 files. A submodule pins the exact commit
-without dragging those objects into this repository's history, and it keeps a
-clean licence boundary: Velxio's code stays Velxio's code, under its own
-licence, in its own repository.
+`external/velxio` is committed **directly into this repository as plain files
+and folders**. There is no `.git` directory inside it and no `.gitmodules`
+entry, so a fresh clone needs no submodule fetch step — the whole tree is
+already in this repo's history. The tree is the upstream source at the pinned
+commit above, with the embed-bridge patch (`patches/`) already applied and
+committed.
 
-```bash
-git submodule update --init --recursive external/velxio   # fetch it
-git -C external/velxio log -1                              # see the pinned commit
-```
+Trade-offs, stated plainly:
+
+- The repo's history carries the upstream tree (~101 MB / 1,872 files). A
+  submodule would not — that is the deliberate price of a single-checkout,
+  flat, forkable tree.
+- Updating Velxio means replacing the vendored files (and re-applying the
+  bridge patch if upstream hasn't merged it), **not** `git submodule update`.
+- The licence boundary is kept clean by leaving the upstream tree unmodified
+  apart from the one documented patch: Velxio's code stays Velxio's code,
+  under its own licence, clearly separated under `external/`.
 
 ### ⚠️ Licence — read before you ship
 
@@ -43,15 +51,17 @@ How Wireup stays clear of that today:
 - Wireup's own code (backend, frontend, the `/sim` page) contains **no Velxio
   source**. The native simulator is built on `avr8js` and `@wokwi/elements`,
   both MIT, which Velxio also uses — common upstream, not copied code.
-- The submodule is a *reference to* an external work, not a derivative of it.
+- The vendored copy is upstream source committed essentially unmodified (plus
+  the one documented bridge patch), not a derivative of it.
 - The integration is arm's-length: a file format (`.vlx`), an iframe +
   `postMessage` boundary, and Velxio's own public HTTP/WS API
   (`/api/compile`, `/api/simulation/ws`).
 - `patches/velxio-embed-bridge.patch` is a modification **to Velxio itself**
   (it adds a postMessage import/export bridge). It is published right here in
-  full, which satisfies AGPL for your own use; if you run the patched Velxio
-  as a public service, you must offer users that source (this repo's copy of
-  the patch + upstream is exactly that).
+  full — and already applied inside the committed `external/velxio` tree —
+  which satisfies AGPL for your own use; if you run the patched Velxio as a
+  public service, you must offer users that source (this repo's copy of the
+  patch + upstream is exactly that).
 
 If you later import Velxio source into Wireup's own bundle, or ship a modified
 Velxio as part of your hosted product, get the commercial licence or release
@@ -59,12 +69,10 @@ under AGPL. That is a decision for a human, not for the build.
 
 ### Running it locally (two terminals, no Docker)
 
+The vendored tree is already on disk — no fetch step, and the embed bridge is
+already applied:
+
 ```bash
-git submodule update --init external/velxio
-
-# one-time: give Velxio the embed bridge (bidirectional canvas for page 04)
-git -C external/velxio apply ../patches/velxio-embed-bridge.patch
-
 # terminal 1 — Velxio backend (FastAPI + arduino-cli + QEMU) on :8001
 cd external/velxio/backend
 pip install -r requirements.txt
@@ -92,10 +100,11 @@ What you get with that running:
   A compile error or boot hang is a red verdict with the real diagnostics in
   the build terminal; Velxio being unreachable is an explicit provider error
   that locks downloads.
-- **Page 04 embeds your Velxio** and, with the bridge patch applied, the
-  build's circuit lands on the canvas automatically (no manual .vlx import),
-  and **Pull canvas → diagram.json** folds your canvas edits back into the
-  build's `diagram.json` / `universal-diagram.json` / `.vlx` artifacts.
+- **Page 04 embeds your Velxio** and, with the bridge patch (already applied),
+  the build's circuit lands on the canvas automatically (no manual .vlx
+  import), and **Pull canvas → diagram.json** folds your canvas edits back
+  into the build's `diagram.json` / `universal-diagram.json` / `.vlx`
+  artifacts.
 
 Docker alternative (single origin, both roles on one URL):
 
@@ -103,4 +112,3 @@ Docker alternative (single origin, both roles on one URL):
 docker compose -f external/velxio/docker-compose.yml up -d
 # backend/.env → VELXIO_URL=http://localhost:3080  (VELXIO_EMBED_URL not needed)
 ```
-
